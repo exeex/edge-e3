@@ -282,6 +282,7 @@ module edge_scalar_pipe #(
   localparam [6:0] OPCODE_EDGE_CACHE = 7'b0001011;
   localparam [6:0] OPCODE_EDGE_DMA   = 7'b0101011;
   localparam [11:0] CSR_CYCLE     = 12'hc00;
+  localparam [11:0] CSR_INSTRET   = 12'hc02;
   localparam [3:0] ALU_OP_OP_IMM   = 4'd0;
   localparam [3:0] ALU_OP_OP       = 4'd1;
   localparam [3:0] ALU_OP_OP_IMM32 = 4'd2;
@@ -546,6 +547,7 @@ module edge_scalar_pipe #(
   reg [VALUE_WIDTH-1:0] gpr [0:31];
   reg [31:0] fpr [0:31];
   reg [VALUE_WIDTH-1:0] cycle_counter_q;
+  reg [VALUE_WIDTH-1:0] instret_counter_q;
 
   wire [6:0] opcode;
   wire [6:0] opcode1;
@@ -929,7 +931,8 @@ module edge_scalar_pipe #(
                      (rs1 == {REG_INDEX_WIDTH{1'b0}});
   assign is_cycle_csr_read = is_system_placeholder &&
                              (funct3 == 3'b010) &&
-                             (imm12 == CSR_CYCLE) &&
+                             ((imm12 == CSR_CYCLE) ||
+                              (imm12 == CSR_INSTRET)) &&
                              (rs1 == {REG_INDEX_WIDTH{1'b0}});
   assign cycle_csr_writes_gpr = is_cycle_csr_read &&
                                 (rd != {REG_INDEX_WIDTH{1'b0}});
@@ -2908,6 +2911,7 @@ module edge_scalar_pipe #(
 	      producer_queue_count_r <= {PRODUCER_QUEUE_COUNT_WIDTH{1'b0}};
       cache_op_pending_q <= 1'b0;
       cycle_counter_q <= {VALUE_WIDTH{1'b0}};
+      instret_counter_q <= {VALUE_WIDTH{1'b0}};
       csr_cycle_complete_valid_r <= 1'b0;
       csr_cycle_complete_seq_id_r <= {SEQ_ID_WIDTH{1'b0}};
       csr_cycle_complete_epoch_r <= {EPOCH_WIDTH{1'b0}};
@@ -2997,6 +3001,9 @@ module edge_scalar_pipe #(
 	      end
 	    end else begin
       cycle_counter_q <= cycle_counter_q + {{(VALUE_WIDTH-1){1'b0}}, 1'b1};
+      instret_counter_q <= instret_counter_q +
+        {{(VALUE_WIDTH-1){1'b0}}, ordered_retire0_valid} +
+        {{(VALUE_WIDTH-1){1'b0}}, ordered_retire1_valid};
 	      producer_valid_r <= 1'b0;
 	      retire_valid_r <= 1'b0;
       if (csr_cycle_complete_valid)
@@ -3065,7 +3072,8 @@ module edge_scalar_pipe #(
         csr_cycle_complete_epoch_r <= issue_epoch;
         csr_cycle_complete_rd_r <= rd;
         csr_cycle_complete_rd_bank_r <= scalar_def_bank;
-        csr_cycle_complete_value_r <= cycle_counter_q;
+        csr_cycle_complete_value_r <=
+          (imm12 == CSR_INSTRET) ? instret_counter_q : cycle_counter_q;
       end
 
       if (reverse_snapshot_complete_accept) begin
