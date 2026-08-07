@@ -154,6 +154,7 @@ reg [PAIR_WIDTH-1:0] output_data_fifo [0:OUTPUT_FIFO_DEPTH-1];
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_head_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_tail_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_count_q;
+reg [5:0] psum_stream_mode_pipe_q;
 reg host_rvalid_q;
 reg [BANK_INDEX_WIDTH-1:0] host_rsp_bank_q;
 reg scale_enable_q;
@@ -208,8 +209,7 @@ wire [PAIR_WIDTH-1:0] compute_psum_data;
 wire [VECTOR_COUNT_WIDTH-1:0] psum_target_count;
 wire psum_stream_mode;
 wire dot_ready;
-wire psum_fifo_has_credit;
-wire meta_fifo_has_credit;
+wire dot_needs_psum;
 wire tensor_output_valid;
 wire [PAIR_WIDTH-1:0] tensor_output_data;
 wire start_accept;
@@ -427,7 +427,6 @@ assign psum_candidate = compute_busy_q && stream_started_q
                      && (psum_stream_started_q
                          || (stream_cycle_q >= {1'b0, psum_offset_q}))
                      && (psum_issue_count_q < psum_target_count)
-                     && psum_fifo_has_credit
                      && psum_req_owned;
 assign output_candidate = busy_q && output_pending && out_req_owned;
 assign read_fire = read_candidate
@@ -451,10 +450,6 @@ assign input_head_valid = input_slot_valid_q[input_head_slot]
 assign input_compute_fire = compute_busy_q
                          && (input_consume_count_q < target_count_q)
                          && input_head_valid
-                         && meta_fifo_has_credit
-                         && (!psum_stream_mode
-                             || (input_consume_count_q
-                                 < psum_issue_count_q))
                          && (!scale_stream_enable_q || scale_stream_valid)
                          && (psum_stream_mode || compute_psum_valid)
                          && !((input_consume_count_q == 0)
@@ -479,6 +474,7 @@ assign psum_target_count = psum_none_mode_q ? {VECTOR_COUNT_WIDTH{1'b0}}
                            ? {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1}
                            : target_count_q;
 assign psum_stream_mode = !psum_none_mode_q && !psum_once_mode_q;
+assign dot_needs_psum = psum_stream_mode_pipe_q[5];
 assign compute_psum_valid = psum_none_mode_q ? 1'b1
                           : psum_once_mode_q ? psum_once_valid_q
                           : aligned_psum_valid;
@@ -489,13 +485,7 @@ assign compute_psum_data = psum_none_mode_q ? {PAIR_WIDTH{1'b0}}
 assign output_fifo_push = tensor_output_valid;
 assign output_fifo_pop = output_write_fire;
 assign psum_fifo_push = psum_rsp_valid_q && !psum_once_mode_q;
-assign psum_fifo_pop = psum_stream_mode ? (dot_ready && aligned_psum_valid)
-                                       : 1'b0;
-// Reserve FIFO space for the one-cycle SRAM response as well as data already
-// resident in the queue.  A same-cycle pop returns one credit immediately.
-assign psum_fifo_has_credit = psum_fifo_pop
-                           || ((psum_count_q + psum_rsp_valid_q)
-                               < PSUM_FIFO_DEPTH);
+assign psum_fifo_pop = dot_ready && dot_needs_psum && aligned_psum_valid;
 // RSUM produces one output for the whole run. Keep exactly one destination
 // metadata entry instead of one entry per consumed input vector.
 assign meta_fifo_push = compute_valid_q
@@ -503,8 +493,6 @@ assign meta_fifo_push = compute_valid_q
                          || (input_consume_count_q
                              == {VECTOR_COUNT_WIDTH{1'b0}}));
 assign meta_fifo_pop = tensor_output_valid;
-assign meta_fifo_has_credit = meta_fifo_pop
-                           || (meta_count_q < META_FIFO_DEPTH);
 assign handoff_ready_next = compute_busy_q
                          && (read_issue_count_q == target_count_q)
                          && (input_consume_count_q == target_count_q)
@@ -512,11 +500,7 @@ assign handoff_ready_next = compute_busy_q
                          && !iop_rsp_valid_q
                          && !psum_rsp_valid_q
                          && (input_slot_valid_q == {INPUT_FIFO_DEPTH{1'b0}})
-                         && (psum_count_q == 0)
-                         && (rsum_mode_q
-                             ? tensor_output_valid
-                             : ((meta_count_q == 0)
-                                && !tensor_output_valid));
+                         && (!rsum_mode_q || tensor_output_valid);
 assign drain_done_next = busy_q && !compute_busy_q && !output_pending
                       && (meta_count_q == 0) && (psum_count_q == 0)
                       && !output_fifo_push && !start_accept;
@@ -549,8 +533,8 @@ assign o_pair_wdata = output_data_fifo[output_head_q];
 
 edge_bf16_int8_dot8x8_psum x_tensor8x8 (
   .clk(clk), .rst_b(cpurst_b), .compute_valid(compute_valid_q),
-  .late_psum_mode_i(psum_stream_mode),
-  .late_psum_valid_i(psum_stream_mode ? aligned_psum_valid : 1'b1),
+  .late_psum_mode_i(dot_needs_psum),
+  .late_psum_valid_i(dot_needs_psum ? aligned_psum_valid : 1'b1),
   .input_bf16_i(input_compute_data), .psum_bf16_i(compute_psum_data),
   .scale_enable_i(scale_enable_q),
   .scale_bf16_i(scale_stream_enable_q ? scale_stream_data : scale_bf16_q),
@@ -616,6 +600,7 @@ always @(posedge clk or negedge cpurst_b) begin
     output_head_q <= 0;
     output_tail_q <= 0;
     output_count_q <= 0;
+    psum_stream_mode_pipe_q <= 6'b0;
     host_rvalid_q <= 1'b0;
     host_rsp_bank_q <= 0;
     scale_enable_q <= 1'b0;
@@ -645,6 +630,9 @@ always @(posedge clk or negedge cpurst_b) begin
       output_data_fifo[fifo_i] <= 0;
     end
   end else begin
+    psum_stream_mode_pipe_q <=
+        {psum_stream_mode_pipe_q[4:0],
+         input_compute_fire && psum_stream_mode};
     done_q <= 1'b0;
     handoff_ready_q <= 1'b0;
     iop_rsp_valid_q <= read_fire;
