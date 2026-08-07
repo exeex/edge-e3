@@ -67,6 +67,8 @@ module edge_accel_unit #(
 localparam [3:0] CMPU_REDUCE = 4'd0;
 localparam [3:0] CMPU_SELECT = 4'd3;
 localparam [3:0] CMPU_CMP_GT = 4'd4;
+localparam [3:0] CMPU_CMP_NE = 4'd8;
+localparam [3:0] CMPU_COPY = 4'd9;
 
 reg [3:0] actu_mode_q;
 reg [ADDR_WIDTH-1:0] actu_in_ptr_q;
@@ -89,7 +91,9 @@ wire shared_done_valid;
 wire start_fire = start_valid && start_ready;
 wire cmpu_is_reduce = (cmpu_mode_q == CMPU_REDUCE);
 wire cmpu_is_select = (cmpu_mode_q == CMPU_SELECT);
-wire cmpu_is_compare = (cmpu_mode_q >= CMPU_CMP_GT);
+wire cmpu_is_compare = (cmpu_mode_q >= CMPU_CMP_GT) &&
+                       (cmpu_mode_q <= CMPU_CMP_NE);
+wire cmpu_is_copy = (cmpu_mode_q == CMPU_COPY);
 
 assign actu_cmd_ready = 1'b1;
 assign cmpu_cmd_ready = 1'b1;
@@ -115,7 +119,7 @@ edge_accel_io_unit #(
   .src0_enable(1'b1),
   .src0_is_byte(1'b0),
   .src0_addr(start_owner ? cmpu_lhs_ptr_q : actu_in_ptr_q),
-  .src1_enable(start_owner && !cmpu_is_reduce),
+  .src1_enable(start_owner && !cmpu_is_reduce && !cmpu_is_copy),
   .src1_is_byte(1'b0),
   .src1_addr(cmpu_rhs_ptr_q),
   .src2_enable(start_owner && cmpu_is_select),

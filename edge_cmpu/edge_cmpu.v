@@ -34,6 +34,7 @@ localparam [3:0] MODE_CMP_GE = 4'd5;
 localparam [3:0] MODE_CMP_EQ = 4'd6;
 localparam [3:0] MODE_CMP_LE = 4'd7;
 localparam [3:0] MODE_CMP_NE = 4'd8;
+localparam [3:0] MODE_COPY = 4'd9;
 
 reg active_q;
 reg [3:0] mode_q;
@@ -99,6 +100,7 @@ always @* begin
     MODE_MIN: action_value = pair_min;
     MODE_MAX: action_value = pair_max;
     MODE_SELECT: action_value = (in_mask != 0) ? in_rhs : in_lhs;
+    MODE_COPY: action_value = in_lhs;
     MODE_CMP_GT: begin action_value = {15'b0, rel0_gt}; action_is_mask = 1'b1; end
     MODE_CMP_GE: begin action_value = {15'b0, rel0_gt || rel0_eq}; action_is_mask = 1'b1; end
     MODE_CMP_EQ: begin action_value = {15'b0, rel0_eq}; action_is_mask = 1'b1; end
