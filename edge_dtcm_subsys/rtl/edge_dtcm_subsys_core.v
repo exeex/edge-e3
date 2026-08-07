@@ -373,6 +373,11 @@ wire                          tensor_sld_req;
 wire                          tensor_sld_ready;
 wire [127:0]                  tensor_sld_rdata;
 wire                          tensor_sld_rvalid;
+wire [15:0]                   tensor_wld_addr;
+wire                          tensor_wld_req;
+wire                          tensor_wld_ready;
+wire [127:0]                  tensor_wld_rdata;
+wire                          tensor_wld_rvalid;
 function dtcm_addr_hit;
   input [39:0] pa;
 begin
@@ -476,6 +481,11 @@ edge_tensor_unit_bank16 #(
   .tensor_sld_ready(tensor_sld_ready),
   .tensor_sld_rdata(tensor_sld_rdata[127:0]),
   .tensor_sld_rvalid(tensor_sld_rvalid),
+  .tensor_wld_addr(tensor_wld_addr[15:0]),
+  .tensor_wld_req(tensor_wld_req),
+  .tensor_wld_ready(tensor_wld_ready),
+  .tensor_wld_rdata(tensor_wld_rdata[127:0]),
+  .tensor_wld_rvalid(tensor_wld_rvalid),
   .tensor_wld_fill_done(tensor_wld_fill_done),
   .tensor_wld_tile_words(tensor_wld_tile_words[4:0]),
   .tensor_sync_stall(tensor_sync_stall),
@@ -638,6 +648,11 @@ edge_dtcm_arb #(
   .sld_ready     (tensor_sld_ready),
   .sld_req       (tensor_sld_req),
   .sld_rvalid    (tensor_sld_rvalid),
+  .wld_addr      (tensor_wld_addr[ADDR_WIDTH-1:0]),
+  .wld_rdata     (tensor_wld_rdata[127:0]),
+  .wld_ready     (tensor_wld_ready),
+  .wld_req       (tensor_wld_req),
+  .wld_rvalid    (tensor_wld_rvalid),
   .tensor_native_active_mask(tensor_native_active_mask[BANK_NUM-1:0]),
   .tensor_native_bank_addr(tensor_native_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
   .tensor_native_bank_req(tensor_native_bank_req[BANK_NUM-1:0]),

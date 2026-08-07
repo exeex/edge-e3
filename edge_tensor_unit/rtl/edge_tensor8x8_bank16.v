@@ -208,6 +208,8 @@ wire [PAIR_WIDTH-1:0] compute_psum_data;
 wire [VECTOR_COUNT_WIDTH-1:0] psum_target_count;
 wire psum_stream_mode;
 wire dot_ready;
+wire psum_fifo_has_credit;
+wire meta_fifo_has_credit;
 wire tensor_output_valid;
 wire [PAIR_WIDTH-1:0] tensor_output_data;
 wire start_accept;
@@ -425,6 +427,7 @@ assign psum_candidate = compute_busy_q && stream_started_q
                      && (psum_stream_started_q
                          || (stream_cycle_q >= {1'b0, psum_offset_q}))
                      && (psum_issue_count_q < psum_target_count)
+                     && psum_fifo_has_credit
                      && psum_req_owned;
 assign output_candidate = busy_q && output_pending && out_req_owned;
 assign read_fire = read_candidate
@@ -448,6 +451,10 @@ assign input_head_valid = input_slot_valid_q[input_head_slot]
 assign input_compute_fire = compute_busy_q
                          && (input_consume_count_q < target_count_q)
                          && input_head_valid
+                         && meta_fifo_has_credit
+                         && (!psum_stream_mode
+                             || (input_consume_count_q
+                                 < psum_issue_count_q))
                          && (!scale_stream_enable_q || scale_stream_valid)
                          && (psum_stream_mode || compute_psum_valid)
                          && !((input_consume_count_q == 0)
@@ -484,6 +491,11 @@ assign output_fifo_pop = output_write_fire;
 assign psum_fifo_push = psum_rsp_valid_q && !psum_once_mode_q;
 assign psum_fifo_pop = psum_stream_mode ? (dot_ready && aligned_psum_valid)
                                        : 1'b0;
+// Reserve FIFO space for the one-cycle SRAM response as well as data already
+// resident in the queue.  A same-cycle pop returns one credit immediately.
+assign psum_fifo_has_credit = psum_fifo_pop
+                           || ((psum_count_q + psum_rsp_valid_q)
+                               < PSUM_FIFO_DEPTH);
 // RSUM produces one output for the whole run. Keep exactly one destination
 // metadata entry instead of one entry per consumed input vector.
 assign meta_fifo_push = compute_valid_q
@@ -491,6 +503,8 @@ assign meta_fifo_push = compute_valid_q
                          || (input_consume_count_q
                              == {VECTOR_COUNT_WIDTH{1'b0}}));
 assign meta_fifo_pop = tensor_output_valid;
+assign meta_fifo_has_credit = meta_fifo_pop
+                           || (meta_count_q < META_FIFO_DEPTH);
 assign handoff_ready_next = compute_busy_q
                          && (read_issue_count_q == target_count_q)
                          && (input_consume_count_q == target_count_q)
@@ -498,7 +512,11 @@ assign handoff_ready_next = compute_busy_q
                          && !iop_rsp_valid_q
                          && !psum_rsp_valid_q
                          && (input_slot_valid_q == {INPUT_FIFO_DEPTH{1'b0}})
-                         && (!rsum_mode_q || tensor_output_valid);
+                         && (psum_count_q == 0)
+                         && (rsum_mode_q
+                             ? tensor_output_valid
+                             : ((meta_count_q == 0)
+                                && !tensor_output_valid));
 assign drain_done_next = busy_q && !compute_busy_q && !output_pending
                       && (meta_count_q == 0) && (psum_count_q == 0)
                       && !output_fifo_push && !start_accept;

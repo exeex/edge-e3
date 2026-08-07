@@ -50,6 +50,11 @@ module edge_tensor_unit_bank16 #(
   input  wire                         tensor_sld_ready,
   input  wire [127:0]                 tensor_sld_rdata,
   input  wire                         tensor_sld_rvalid,
+  output wire [ADDR_WIDTH-1:0]        tensor_wld_addr,
+  output wire                         tensor_wld_req,
+  input  wire                         tensor_wld_ready,
+  input  wire [127:0]                 tensor_wld_rdata,
+  input  wire                         tensor_wld_rvalid,
   output wire                         tensor_wld_fill_done,
   output wire [4:0]                   tensor_wld_tile_words,
   output wire                         tensor_sync_stall,
@@ -134,9 +139,6 @@ reg                           wld_active_bf16_q;
 reg  [ADDR_WIDTH-1:0]         wld_base_q;
 reg  [2:0]                    wld_issue_idx_q;
 reg  [3:0]                    wld_read_count_q;
-reg                           wld_rsp_valid_q;
-reg  [BANK_INDEX_WIDTH-1:0]   wld_rsp_bank0_q;
-reg  [BANK_INDEX_WIDTH-1:0]   wld_rsp_bank1_q;
 reg  [2:0]                    wld_rsp_idx_q;
 reg  [127:0]                  scale_buf_q [0:1];
 reg                           scale_active_sel_q;
@@ -527,23 +529,12 @@ assign wld_cmd_launch_bf16 =
 assign wld_req_addr[ADDR_WIDTH-1:0] =
     wld_base_q[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-4{1'b0}},
                                   wld_issue_idx_q[2:0], 1'b0};
-assign wld_req_mask[BANK_NUM-1:0] = pair_mask(wld_req_addr);
-assign lower_owned_mask[BANK_NUM-1:0] = tensor_phase[1] ? 16'hcccc : 16'h3333;
-assign wld_req_owned =
-    (wld_req_mask[BANK_NUM-1:0] & ~lower_owned_mask[BANK_NUM-1:0])
-    == {BANK_NUM{1'b0}};
-assign wld_bank_conflict =
-    (wld_req_mask[BANK_NUM-1:0] & engine_bank_req[BANK_NUM-1:0])
-    != {BANK_NUM{1'b0}};
-assign wld_read_fire = wld_active_q
-                    && (wld_read_count_q[3:0]
-                        < (wld_active_bf16_q ? 4'd8 : 4'd4))
-                    && !wld_rsp_valid_q
-                    && wld_req_owned
-                    && !wld_bank_conflict;
-assign wld_load_data[PAIR_WIDTH-1:0] =
-    {bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], wld_rsp_bank1_q),
-     bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], wld_rsp_bank0_q)};
+assign tensor_wld_addr[ADDR_WIDTH-1:0] = wld_req_addr[ADDR_WIDTH-1:0];
+assign tensor_wld_req = wld_active_q
+                     && (wld_read_count_q[3:0]
+                         < (wld_active_bf16_q ? 4'd8 : 4'd4));
+assign wld_read_fire = tensor_wld_req && tensor_wld_ready;
+assign wld_load_data[PAIR_WIDTH-1:0] = tensor_wld_rdata[PAIR_WIDTH-1:0];
 assign engine_host_bank_rdata[DATA_WIDTH-1:0] =
     bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_host_bank);
 assign engine_i_pair_rdata[PAIR_WIDTH-1:0] =
@@ -652,7 +643,7 @@ edge_tensor_wld8x8_fill #(
   .start_transpose(wld_cmd_launch_transpose),
   .busy(),
   .done(wld_fill_done),
-  .load_valid(wld_rsp_valid_q),
+  .load_valid(tensor_wld_rvalid),
   .load_idx(wld_rsp_idx_q[2:0]),
   .load_data(wld_load_data[PAIR_WIDTH-1:0]),
   .load_done(),
@@ -717,20 +708,14 @@ generate
         ? {BYTE_WIDTH{1'b1}}
       : {BYTE_WIDTH{1'b0}};
 
-    assign tensor_bank_req[bank_gen_i] =
-        engine_bank_req[bank_gen_i] || (wld_read_fire && wld_req_mask[bank_gen_i]);
-    assign tensor_bank_we[bank_gen_i] =
-        engine_bank_req[bank_gen_i] ? engine_bank_we[bank_gen_i] : 1'b0;
+    assign tensor_bank_req[bank_gen_i] = engine_bank_req[bank_gen_i];
+    assign tensor_bank_we[bank_gen_i] = engine_bank_we[bank_gen_i];
     assign tensor_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
-        engine_bank_req[bank_gen_i]
-        ? engine_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH]
-        : wld_req_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
+        engine_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH];
     assign tensor_bank_wdata[bank_gen_i*DATA_WIDTH +: DATA_WIDTH] =
         engine_bank_wdata[bank_gen_i*DATA_WIDTH +: DATA_WIDTH];
     assign tensor_bank_wstrb[bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH] =
-        engine_bank_req[bank_gen_i]
-        ? engine_bank_wstrb[bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH]
-        : {BYTE_WIDTH{1'b0}};
+        engine_bank_wstrb[bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH];
   end
 endgenerate
 
@@ -789,9 +774,6 @@ always @(posedge clk or negedge cpurst_b) begin
     wld_base_q <= {ADDR_WIDTH{1'b0}};
     wld_issue_idx_q <= 3'b0;
     wld_read_count_q <= 4'b0;
-    wld_rsp_valid_q <= 1'b0;
-    wld_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
-    wld_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
     wld_rsp_idx_q <= 3'b0;
     scale_buf_q[0] <= 128'b0;
     scale_buf_q[1] <= 128'b0;
@@ -814,8 +796,6 @@ always @(posedge clk or negedge cpurst_b) begin
     direct_sld_issued_q <= {VECTOR_COUNT_WIDTH{1'b0}};
     direct_sld_received_q <= {VECTOR_COUNT_WIDTH{1'b0}};
   end else begin
-    wld_rsp_valid_q <= wld_read_fire;
-
     if (cmd_sld_stream_setup_req && tensor_cmd_ready) begin
       direct_sld_setup_valid_q <= 1'b1;
       direct_sld_next_ptr_q <= cmd_sld_stream_setup_ptr[ADDR_WIDTH-1:0];
@@ -925,8 +905,6 @@ always @(posedge clk or negedge cpurst_b) begin
     end
 
     if (wld_read_fire) begin
-      wld_rsp_bank0_q <= wld_req_addr[BANK_INDEX_WIDTH-1:0];
-      wld_rsp_bank1_q <= next_bank(wld_req_addr[ADDR_WIDTH-1:0]);
       wld_rsp_idx_q <= wld_issue_idx_q[2:0];
       wld_issue_idx_q <= wld_issue_idx_q + 3'd1;
       wld_read_count_q <= wld_read_count_q + 4'd1;

@@ -26,6 +26,11 @@ module edge_dtcm_arb(
   sld_ready,
   sld_req,
   sld_rvalid,
+  wld_addr,
+  wld_rdata,
+  wld_ready,
+  wld_req,
+  wld_rvalid,
   tensor_native_active_mask,
   tensor_native_bank_addr,
   tensor_native_bank_req,
@@ -101,6 +106,11 @@ input                    sld_req;
 output [DMA_DATA_WIDTH-1:0] sld_rdata;
 output                   sld_ready;
 output                   sld_rvalid;
+input  [ADDR_WIDTH-1:0]  wld_addr;
+input                    wld_req;
+output [DMA_DATA_WIDTH-1:0] wld_rdata;
+output                   wld_ready;
+output                   wld_rvalid;
 input  [BANK_NUM-1:0]    tensor_native_active_mask;
 input  [BANK_NUM*SRAM_ADDR_WIDTH-1:0] tensor_native_bank_addr;
 input  [BANK_NUM-1:0]    tensor_native_bank_req;
@@ -164,6 +174,11 @@ wire [BANK_INDEX_WIDTH-1:0] other_sld_pair_bank0;
 wire [BANK_INDEX_WIDTH-1:0] other_sld_pair_bank1;
 wire [SRAM_ADDR_WIDTH-1:0] other_sld_pair_addr;
 wire [DMA_DATA_WIDTH-1:0] other_sld_pair_rdata;
+wire                     other_wld_pair_req;
+wire [BANK_INDEX_WIDTH-1:0] other_wld_pair_bank0;
+wire [BANK_INDEX_WIDTH-1:0] other_wld_pair_bank1;
+wire [SRAM_ADDR_WIDTH-1:0] other_wld_pair_addr;
+wire [DMA_DATA_WIDTH-1:0] other_wld_pair_rdata;
 wire [BANK_NUM*DATA_WIDTH-1:0] bank_rdata;
 wire [BANK_NUM-1:0]      bank_rvalid_unused;
 wire [BANK_INDEX_WIDTH-1:0] bank16_phase_unused;
@@ -174,6 +189,8 @@ reg  [BANK_INDEX_WIDTH-1:0] other_dma_rsp_bank0_q;
 reg  [BANK_INDEX_WIDTH-1:0] other_dma_rsp_bank1_q;
 reg  [BANK_INDEX_WIDTH-1:0] other_sld_rsp_bank0_q;
 reg  [BANK_INDEX_WIDTH-1:0] other_sld_rsp_bank1_q;
+reg  [BANK_INDEX_WIDTH-1:0] other_wld_rsp_bank0_q;
+reg  [BANK_INDEX_WIDTH-1:0] other_wld_rsp_bank1_q;
 
 genvar                    other_bank_gen_i;
 
@@ -245,6 +262,9 @@ assign other_dma_pair_rdata[DMA_DATA_WIDTH-1:0] =
 assign other_sld_pair_rdata[DMA_DATA_WIDTH-1:0] =
     {bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_sld_rsp_bank1_q),
      bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_sld_rsp_bank0_q)};
+assign other_wld_pair_rdata[DMA_DATA_WIDTH-1:0] =
+    {bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_wld_rsp_bank1_q),
+     bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_wld_rsp_bank0_q)};
 
 edge_dtcm_other_bank16_adapter #(
   .ADDR_WIDTH(ADDR_WIDTH),
@@ -299,6 +319,16 @@ edge_dtcm_other_bank16_adapter #(
   .sld_pair_bank1(other_sld_pair_bank1[BANK_INDEX_WIDTH-1:0]),
   .sld_pair_addr(other_sld_pair_addr[SRAM_ADDR_WIDTH-1:0]),
   .sld_pair_rdata(other_sld_pair_rdata[DMA_DATA_WIDTH-1:0]),
+  .wld_addr(wld_addr[ADDR_WIDTH-1:0]),
+  .wld_rdata(wld_rdata[DMA_DATA_WIDTH-1:0]),
+  .wld_ready(wld_ready),
+  .wld_req(wld_req),
+  .wld_rvalid(wld_rvalid),
+  .wld_pair_req(other_wld_pair_req),
+  .wld_pair_bank0(other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0]),
+  .wld_pair_bank1(other_wld_pair_bank1[BANK_INDEX_WIDTH-1:0]),
+  .wld_pair_addr(other_wld_pair_addr[SRAM_ADDR_WIDTH-1:0]),
+  .wld_pair_rdata(other_wld_pair_rdata[DMA_DATA_WIDTH-1:0]),
   .active_mask(),
   .bank16_conflict(other_conflict_unused)
 );
@@ -311,6 +341,8 @@ generate
     wire bank_is_dma1;
     wire bank_is_sld0;
     wire bank_is_sld1;
+    wire bank_is_wld0;
+    wire bank_is_wld1;
 
     assign bank_is_lsu =
         other_lsu_bank[BANK_INDEX_WIDTH-1:0]
@@ -327,11 +359,18 @@ generate
     assign bank_is_sld1 =
         other_sld_pair_bank1[BANK_INDEX_WIDTH-1:0]
         == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
+    assign bank_is_wld0 =
+        other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0]
+        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
+    assign bank_is_wld1 =
+        other_wld_pair_bank1[BANK_INDEX_WIDTH-1:0]
+        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
 
     // Fixed-channel clients are pair-disjoint in a cycle.
     assign other_bank_req[other_bank_gen_i] =
         (other_lsu_bank_req && bank_is_lsu)
      || (other_dma_pair_req && (bank_is_dma0 || bank_is_dma1))
+     || (other_wld_pair_req && (bank_is_wld0 || bank_is_wld1))
      || (other_sld_pair_req && (bank_is_sld0 || bank_is_sld1));
     assign other_bank_we[other_bank_gen_i] =
         other_lsu_bank_req && bank_is_lsu
@@ -344,6 +383,8 @@ generate
         ? other_lsu_bank_addr[SRAM_ADDR_WIDTH-1:0]
       : other_dma_pair_req && (bank_is_dma0 || bank_is_dma1)
         ? other_dma_pair_addr[SRAM_ADDR_WIDTH-1:0]
+      : other_wld_pair_req && (bank_is_wld0 || bank_is_wld1)
+        ? other_wld_pair_addr[SRAM_ADDR_WIDTH-1:0]
         : other_sld_pair_addr[SRAM_ADDR_WIDTH-1:0];
     assign other_bank_wdata[other_bank_gen_i*DATA_WIDTH +: DATA_WIDTH] =
         other_lsu_bank_req && bank_is_lsu
@@ -371,6 +412,8 @@ always @(posedge clk or negedge cpurst_b) begin
     other_dma_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
     other_sld_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
     other_sld_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
+    other_wld_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
+    other_wld_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
   end else begin
     if (other_lsu_bank_req && !other_lsu_bank_we)
       other_lsu_rsp_bank_q <= other_lsu_bank[BANK_INDEX_WIDTH-1:0];
@@ -381,6 +424,10 @@ always @(posedge clk or negedge cpurst_b) begin
     if (other_sld_pair_req) begin
       other_sld_rsp_bank0_q <= other_sld_pair_bank0[BANK_INDEX_WIDTH-1:0];
       other_sld_rsp_bank1_q <= other_sld_pair_bank1[BANK_INDEX_WIDTH-1:0];
+    end
+    if (other_wld_pair_req) begin
+      other_wld_rsp_bank0_q <= other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0];
+      other_wld_rsp_bank1_q <= other_wld_pair_bank1[BANK_INDEX_WIDTH-1:0];
     end
   end
 end
