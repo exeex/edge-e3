@@ -933,6 +933,11 @@ module edge_core_base #(
   reg [15:0]              tensor_circular_dma_total_fragments_q;
   reg [15:0]              tensor_circular_dma_inner_q;
   reg [15:0]              tensor_circular_dma_x_max_q;
+  // The stream engine accepts one 16-byte AXI/DTCM beat per command. Keep its
+  // position within a logical source item separate from the ring-entry offset:
+  // one source item can span beats, and one entry can gather several items.
+  reg [15:0]              tensor_circular_dma_source_offset_words_q;
+  reg [15:0]              tensor_circular_dma_fragment_words_q;
   reg                     tensor_circular_dma_use_xy_q;
   reg [31:0]              tensor_circular_dma_len_q;
   reg [31:0]              tensor_circular_dma_stride_q;
@@ -967,6 +972,7 @@ module edge_core_base #(
   wire                    tensor_circular_dma_done_pulse;
   wire                    tensor_circular_dma_launch;
   wire                    tensor_circular_entry_complete_on_done;
+  wire                    tensor_circular_source_item_complete_on_launch;
   wire                    tensor_circular_stream_drained;
   wire                    tensor_circular_wld_launch;
   wire                    tensor_wsld_group_claim;
@@ -1454,6 +1460,8 @@ module edge_core_base #(
       tensor_circular_dma_total_fragments_q[15:0] <= 16'd0;
       tensor_circular_dma_inner_q[15:0] <= 16'd0;
       tensor_circular_dma_x_max_q[15:0] <= 16'd0;
+      tensor_circular_dma_source_offset_words_q[15:0] <= 16'd0;
+      tensor_circular_dma_fragment_words_q[15:0] <= 16'd2;
       tensor_circular_dma_use_xy_q <= 1'b0;
       tensor_circular_dma_len_q[31:0] <= 32'd64;
       tensor_circular_dma_stride_q[31:0] <= 32'd64;
@@ -1504,13 +1512,18 @@ module edge_core_base #(
         tensor_circular_ring_capacity_entries_q[15:0] <=
           tensor_dma_start_circular_tiles[15:0];
         tensor_circular_dma_total_fragments_q[15:0] <=
-          tensor_dma_start_use_xy ? tensor_dma_start_xy_total[15:0] :
-                                    tensor_dma_start_circular_tiles[15:0];
+          (tensor_dma_start_use_xy ? tensor_dma_start_xy_total[15:0] :
+                                     tensor_dma_start_circular_tiles[15:0]) *
+          (tensor_dma_start_use_xy
+           ? tensor_dma_start_len[18:4]
+           : {12'b0, tensor_wld_tile_words[4:1]});
         tensor_circular_dma_inner_q[15:0] <= 16'd0;
         tensor_circular_dma_x_max_q[15:0] <=
           tensor_dma_start_use_xy ? tensor_dma_start_x[47:32] :
                                     tensor_dma_start_circular_tiles[15:0];
         tensor_circular_dma_use_xy_q <= tensor_dma_start_use_xy;
+        tensor_circular_dma_source_offset_words_q[15:0] <= 16'd0;
+        tensor_circular_dma_fragment_words_q[15:0] <= 16'd2;
         tensor_circular_dma_len_q[31:0] <=
           tensor_dma_start_use_xy
           ? tensor_dma_start_len[31:0]
@@ -1565,40 +1578,49 @@ module edge_core_base #(
         end else begin
           tensor_circular_producer_entry_offset_words_q[15:0] <=
             tensor_circular_producer_entry_offset_words_q[15:0] +
-            tensor_circular_dma_len_q[18:3];
+            tensor_circular_dma_fragment_words_q[15:0];
         end
         if ((tensor_circular_dma_issued_fragments_q[15:0] + 16'd1) >=
             tensor_circular_dma_total_fragments_q[15:0])
           tensor_circular_dma_active_q <= 1'b0;
-        if (tensor_circular_dma_use_xy_q) begin
-          if (tensor_circular_dma_inner_q[15:0] ==
-              (tensor_circular_dma_x_max_q[15:0] - 16'd1)) begin
-            tensor_circular_dma_inner_q[15:0] <= 16'd0;
-            tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] <=
-              tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] +
-              {{(VALUE_WIDTH-32){1'b0}},
-                tensor_circular_dma_y_stride_q[31:0]};
-            tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
-              tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] +
-              {{(VALUE_WIDTH-32){1'b0}},
-                tensor_circular_dma_y_stride_q[31:0]};
+        if (tensor_circular_source_item_complete_on_launch) begin
+          tensor_circular_dma_source_offset_words_q[15:0] <= 16'd0;
+          if (tensor_circular_dma_use_xy_q) begin
+            if (tensor_circular_dma_inner_q[15:0] ==
+                (tensor_circular_dma_x_max_q[15:0] - 16'd1)) begin
+              tensor_circular_dma_inner_q[15:0] <= 16'd0;
+              tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] <=
+                tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] +
+                {{(VALUE_WIDTH-32){1'b0}},
+                  tensor_circular_dma_y_stride_q[31:0]};
+              tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
+                tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] +
+                {{(VALUE_WIDTH-32){1'b0}},
+                  tensor_circular_dma_y_stride_q[31:0]};
+            end else begin
+              tensor_circular_dma_inner_q[15:0] <=
+                tensor_circular_dma_inner_q[15:0] + 16'd1;
+              tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
+                tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] +
+                {{(VALUE_WIDTH-32){1'b0}},
+                  tensor_circular_dma_stride_q[31:0]};
+            end
           end else begin
-            tensor_circular_dma_inner_q[15:0] <=
-              tensor_circular_dma_inner_q[15:0] + 16'd1;
             tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
               tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] +
-              {{(VALUE_WIDTH-32){1'b0}}, tensor_circular_dma_stride_q[31:0]};
+              {{(VALUE_WIDTH-32){1'b0}},
+                tensor_circular_dma_stride_q[31:0]};
           end
         end else begin
-          tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
-            tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] +
-            {{(VALUE_WIDTH-32){1'b0}}, tensor_circular_dma_stride_q[31:0]};
+          tensor_circular_dma_source_offset_words_q[15:0] <=
+            tensor_circular_dma_source_offset_words_q[15:0] +
+            tensor_circular_dma_fragment_words_q[15:0];
         end
       end
 
       if (tensor_circular_dma_done_pulse) begin
         if ((tensor_circular_complete_entry_offset_words_q[15:0] +
-             tensor_circular_dma_len_q[18:3]) ==
+             tensor_circular_dma_fragment_words_q[15:0]) ==
             tensor_circular_entry_words_q[15:0]) begin
           tensor_circular_produced_entries_q[15:0] <=
             tensor_circular_produced_entries_q[15:0] + 16'd1;
@@ -1606,7 +1628,7 @@ module edge_core_base #(
         end else begin
           tensor_circular_complete_entry_offset_words_q[15:0] <=
             tensor_circular_complete_entry_offset_words_q[15:0] +
-            tensor_circular_dma_len_q[18:3];
+            tensor_circular_dma_fragment_words_q[15:0];
         end
       end
 
@@ -2050,7 +2072,9 @@ module edge_core_base #(
   assign tensor_circular_producer_addr = tensor_circular_producer_addr_q[15:0];
   assign tensor_circular_consumer_addr = tensor_circular_consumer_addr_q[15:0];
   assign tensor_circular_dma_src_addr =
-    tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0];
+    tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] +
+    {{(VALUE_WIDTH-19){1'b0}},
+      tensor_circular_dma_source_offset_words_q[15:0], 3'b000};
   assign tensor_circular_start_offset[PC_WIDTH-1:0] =
     tensor_dma_start_dst[PC_WIDTH-1:0] - edge_dtcm_base_q;
   assign tensor_circular_start_base[15:0] =
@@ -2062,8 +2086,12 @@ module edge_core_base #(
        tensor_circular_producer_entry_offset_words_q[15:0]), 3'b000};
   assign tensor_circular_entry_complete_on_done =
     (tensor_circular_producer_entry_offset_words_q[15:0] +
-     tensor_circular_dma_len_q[18:3]) ==
+     tensor_circular_dma_fragment_words_q[15:0]) ==
     tensor_circular_entry_words_q[15:0];
+  assign tensor_circular_source_item_complete_on_launch =
+    (tensor_circular_dma_source_offset_words_q[15:0] +
+     tensor_circular_dma_fragment_words_q[15:0]) ==
+    tensor_circular_dma_len_q[18:3];
   assign tensor_circular_stream_drained =
     !tensor_circular_dma_active_q && !dma_stream_busy &&
     ((tensor_circular_consumed_entries_q[15:0] + 16'd1) >=
