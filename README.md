@@ -41,11 +41,11 @@ and are not included in this public package.
 
 ## License
 
-Simulation and FPGA use are unrestricted by the per-package fee model. For
-manufactured silicon, a physical package containing exactly one edge-e3 core
-is intended to use the no-fee Edge Apache License. Other configurations require
-a separate commercial license.
+edge-e3 is available under the custom edge-e3 Hardware License 1.0. Simulation,
+modification, distribution, and FPGA implementation are permitted. Manufactured
+silicon may contain no more than one edge-e3 core per physical package, and
+products using edge-e3 must provide attribution. Multi-core physical packages
+require a separate written commercial license.
 
-The current license text is a draft and is not yet a source-code or hardware
-license grant. See [LICENSE.md](LICENSE.md) before using or distributing this
-work.
+See [LICENSE.md](LICENSE.md) for the complete terms. This is a source-available
+hardware license, not an OSI-approved open-source license.
