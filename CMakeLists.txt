@@ -17,6 +17,8 @@ set(EDGE_E3_OBFUSCATE_TOOL "${STAREDGE_ROOT}/tools/obfuscate_edge_e3.py")
 set(EDGE_E3_OBFUSCATE_DIR "${STAREDGE_ROOT}/src/edge-e3enc")
 set(EDGE_E3_OBFUSCATE_OUTPUTS
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc.v"
+  "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_sram.v"
+  "${EDGE_E3_OBFUSCATE_DIR}/edge_rv64_public.fl"
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_nosram.fl"
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_sram.fl"
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_mixed.fl"
@@ -26,6 +28,8 @@ set(EDGE_E3_OBFUSCATE_OUTPUTS
 add_custom_command(
   OUTPUT ${EDGE_E3_OBFUSCATE_OUTPUTS}
   COMMAND "${Python3_EXECUTABLE}" "$<SHELL_PATH:${EDGE_E3_OBFUSCATE_TOOL}>"
+    --private-root "$<SHELL_PATH:${CMAKE_CURRENT_LIST_DIR}>"
+    --public-root "$<SHELL_PATH:${CMAKE_CURRENT_LIST_DIR}/../edge-rv64>"
     --verilator "$<SHELL_PATH:${STAREDGE_VERILATOR}>"
   WORKING_DIRECTORY "${STAREDGE_ROOT}"
   DEPENDS
