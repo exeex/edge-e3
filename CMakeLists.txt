@@ -19,7 +19,7 @@ set(EDGE_E3_OBFUSCATE_OUTPUTS
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc.v"
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_sram.v"
   "${EDGE_E3_OBFUSCATE_DIR}/LICENSE.md"
-  "${EDGE_E3_OBFUSCATE_DIR}/edge_rv64_public.fl"
+  "${EDGE_E3_OBFUSCATE_DIR}/edge_rv_public.fl"
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_nosram.fl"
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_sram.fl"
   "${EDGE_E3_OBFUSCATE_DIR}/edge_e3enc_mixed.fl"
