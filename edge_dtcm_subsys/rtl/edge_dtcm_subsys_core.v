@@ -28,6 +28,7 @@ module edge_dtcm_subsys_core(
   lsu_rdata,
   lsu_ready,
   lsu_req,
+  lsu_store_block,
   lsu_rvalid,
   lsu_we,
   lsu_wdata,
@@ -169,6 +170,7 @@ input                         dma_axi_rvalid;
 input                         dma_axi_wready;
 input  [ADDR_WIDTH-1:0]       lsu_addr;
 input                         lsu_req;
+input                         lsu_store_block;
 input                         lsu_we;
 input  [DATA_WIDTH-1:0]       lsu_wdata;
 input  [BYTE_WIDTH-1:0]       lsu_wstrb;
@@ -639,6 +641,7 @@ edge_dtcm_arb #(
   .lsu_rdata     (lsu_rdata[DATA_WIDTH-1:0]),
   .lsu_ready     (lsu_ready),
   .lsu_req       (lsu_req),
+  .lsu_store_block(lsu_store_block),
   .lsu_rvalid    (lsu_rvalid),
   .lsu_we        (lsu_we),
   .lsu_wdata     (lsu_wdata[DATA_WIDTH-1:0]),

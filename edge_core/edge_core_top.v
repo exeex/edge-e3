@@ -20,9 +20,9 @@ module edge_core_top #(
   input  wire                       core_start,
   input  wire                       core_force_stop,
   input  wire [PC_WIDTH-1:0]        boot_pc,
-  input  wire [PC_WIDTH-1:0]        edge_dtcm_base,
-  input  wire [PC_WIDTH-1:0]        edge_dtcm_mask,
-  input  wire                       edge_dtcm_enable,
+  input  wire [PC_WIDTH-1:0]        mem_region_base,
+  input  wire [PC_WIDTH-1:0]        mem_region_mask,
+  input  wire                       mem_region_enable,
   input  wire [PC_WIDTH-1:0]        edge_dma_start_addr_src,
   input  wire [PC_WIDTH-1:0]        edge_dma_start_addr_dst,
   input  wire [31:0]                edge_dma_start_len,
@@ -92,9 +92,9 @@ module edge_core_top #(
     .imem_resp_valid(1'b0),
     .imem_resp_ready(),
     .imem_resp_bits(1'b0),
-    .edge_dtcm_base(edge_dtcm_base),
-    .edge_dtcm_mask(edge_dtcm_mask),
-    .edge_dtcm_enable(edge_dtcm_enable),
+    .mem_region_base(mem_region_base),
+    .mem_region_mask(mem_region_mask),
+    .mem_region_enable(mem_region_enable),
     .edge_dma_start_addr_src(edge_dma_start_addr_src),
     .edge_dma_start_addr_dst(edge_dma_start_addr_dst),
     .edge_dma_start_len(edge_dma_start_len),
@@ -280,9 +280,9 @@ module edge_core_base #(
   output wire                       imem_resp_ready,
   input  wire [127:0]               imem_resp_bits,
 
-  input  wire [PC_WIDTH-1:0]        edge_dtcm_base,
-  input  wire [PC_WIDTH-1:0]        edge_dtcm_mask,
-  input  wire                       edge_dtcm_enable,
+  input  wire [PC_WIDTH-1:0]        mem_region_base,
+  input  wire [PC_WIDTH-1:0]        mem_region_mask,
+  input  wire                       mem_region_enable,
   input  wire [PC_WIDTH-1:0]        edge_dma_start_addr_src,
   input  wire [PC_WIDTH-1:0]        edge_dma_start_addr_dst,
   input  wire [31:0]                edge_dma_start_len,
@@ -523,9 +523,9 @@ module edge_core_base #(
   localparam [11:0] EDGE_CSR_DTCM_MASK_ID = 12'h7d9;
   localparam [11:0] EDGE_CSR_DTCM_CTRL_ID = 12'h7da;
 
-  reg [PC_WIDTH-1:0] edge_dtcm_base_q;
-  reg [PC_WIDTH-1:0] edge_dtcm_mask_q;
-  reg                edge_dtcm_enable_q;
+  reg [PC_WIDTH-1:0] mem_region_base_q;
+  reg [PC_WIDTH-1:0] mem_region_mask_q;
+  reg                mem_region_enable_q;
 
   wire                    ifu_redirect_valid;
   wire [PC_WIDTH-1:0]     ifu_redirect_pc;
@@ -878,14 +878,24 @@ module edge_core_base #(
   wire                    dcache_store_predict_mem_active;
   wire                    dcache_store_predict_backend_blocked;
 
-  wire [15:0]             dtcm_scalar_lsu_addr;
-  wire                    dtcm_scalar_lsu_req;
-  wire                    dtcm_scalar_lsu_we;
-  wire [63:0]             dtcm_scalar_lsu_wdata;
-  wire [7:0]              dtcm_scalar_lsu_wstrb;
-  wire [63:0]             dtcm_scalar_lsu_rdata;
-  wire                    dtcm_scalar_lsu_ready;
-  wire                    dtcm_scalar_lsu_rvalid;
+  wire [PC_WIDTH-1:0]     mem_io_addr;
+  wire                    mem_io_req;
+  wire                    mem_io_we;
+  wire [63:0]             mem_io_wdata;
+  wire [7:0]              mem_io_wstrb;
+  wire [63:0]             mem_io_rdata;
+  wire                    mem_io_ready;
+  wire                    mem_io_rvalid;
+  wire                    mem_store_block;
+  wire                    asic_store_block;
+  wire [15:0]             dtcm_lsu_addr;
+  wire                    dtcm_lsu_req;
+  wire                    dtcm_lsu_we;
+  wire [63:0]             dtcm_lsu_wdata;
+  wire [7:0]              dtcm_lsu_wstrb;
+  wire [63:0]             dtcm_lsu_rdata;
+  wire                    dtcm_lsu_ready;
+  wire                    dtcm_lsu_rvalid;
 
   wire                    scalar_dma_start_valid;
   wire                    scalar_dma_start_ready;
@@ -2077,11 +2087,11 @@ module edge_core_base #(
     {{(VALUE_WIDTH-19){1'b0}},
       tensor_circular_dma_source_offset_words_q[15:0], 3'b000};
   assign tensor_circular_start_offset[PC_WIDTH-1:0] =
-    tensor_dma_start_dst[PC_WIDTH-1:0] - edge_dtcm_base_q;
+    tensor_dma_start_dst[PC_WIDTH-1:0] - mem_region_base_q;
   assign tensor_circular_start_base[15:0] =
     tensor_circular_start_offset[18:3];
   assign tensor_circular_dma_dst_addr =
-    edge_dtcm_base_q +
+    mem_region_base_q +
     {{(PC_WIDTH-19){1'b0}},
       (tensor_circular_producer_addr[15:0] +
        tensor_circular_producer_entry_offset_words_q[15:0]), 3'b000};
@@ -2571,9 +2581,9 @@ module edge_core_base #(
   ) accel_pipe (
     .forever_cpuclk(forever_cpuclk),
     .cpurst_b(cpurst_b),
-    .edge_dtcm_base(edge_dtcm_base_q),
-    .edge_dtcm_mask(edge_dtcm_mask_q),
-    .edge_dtcm_enable(edge_dtcm_enable_q),
+    .mem_region_base(mem_region_base_q),
+    .mem_region_mask(mem_region_mask_q),
+    .mem_region_enable(mem_region_enable_q),
     .cmd_valid(accel_pipe_cmd_valid),
     .cmd_opcode8(tensor_issue_opcode8),
     .cmd_imm8(tensor_issue_imm8),
@@ -2743,11 +2753,11 @@ module edge_core_base #(
   ) scalar_pipe (
     .forever_cpuclk(forever_cpuclk),
     .cpurst_b(cpurst_b),
-    .edge_dtcm_enable(edge_dtcm_enable_q),
-    .edge_dtcm_base({{(VALUE_WIDTH-PC_WIDTH){1'b0}},
-                     edge_dtcm_base_q}),
-    .edge_dtcm_mask({{(VALUE_WIDTH-PC_WIDTH){1'b0}},
-                     edge_dtcm_mask_q}),
+    .mem_region_enable(mem_region_enable_q),
+    .mem_region_base({{(VALUE_WIDTH-PC_WIDTH){1'b0}},
+                     mem_region_base_q}),
+    .mem_region_mask({{(VALUE_WIDTH-PC_WIDTH){1'b0}},
+                     mem_region_mask_q}),
     .lsu_dtcm_store_query_seq_id(tensor_issue_seq_id),
     .lsu_dtcm_store_query_epoch(tensor_issue_epoch),
     .issue_valid(shim_issue_valid),
@@ -2979,7 +2989,7 @@ module edge_core_base #(
   assign debug_gpr_busy = gpr_busy_status;
 `endif
 
-  edge_lsu_mem_selector #(
+  edge_lsu_mem_io #(
     .SEQ_ID_WIDTH(SEQ_ID_WIDTH),
     .EPOCH_WIDTH(EPOCH_WIDTH),
     .ADDR_WIDTH(PC_WIDTH),
@@ -2990,9 +3000,9 @@ module edge_core_base #(
     .redirect_kill_valid(redirect_flush_valid),
     .redirect_kill_seq_id(redirect_kill_seq_id),
     .redirect_kill_epoch(redirect_kill_epoch),
-    .edge_dtcm_enable(edge_dtcm_enable_q),
-    .edge_dtcm_base(edge_dtcm_base_q),
-    .edge_dtcm_mask(edge_dtcm_mask_q),
+    .mem_region_enable(mem_region_enable_q),
+    .mem_region_base(mem_region_base_q),
+    .mem_region_mask(mem_region_mask_q),
     .lsu_load_req_valid(lsu_load_req_valid),
     .lsu_load_req_ready(lsu_load_req_ready),
     .lsu_load_req_seq_id(lsu_load_req_seq_id),
@@ -3042,17 +3052,44 @@ module edge_core_base #(
     .dcache_store_predict_mem_active(dcache_store_predict_mem_active),
     .dcache_store_predict_backend_blocked(dcache_store_predict_backend_blocked),
     .dcache_debug_load_pending(debug_dcache_load_pending),
-    .dtcm_scalar_lsu_req(dtcm_scalar_lsu_req),
-    .dtcm_scalar_lsu_we(dtcm_scalar_lsu_we),
-    .dtcm_scalar_lsu_addr(dtcm_scalar_lsu_addr),
-    .dtcm_scalar_lsu_wdata(dtcm_scalar_lsu_wdata),
-    .dtcm_scalar_lsu_wstrb(dtcm_scalar_lsu_wstrb),
-    .dtcm_scalar_lsu_rdata(dtcm_scalar_lsu_rdata),
-    .dtcm_scalar_lsu_ready(dtcm_scalar_lsu_ready),
-    .dtcm_scalar_lsu_rvalid(dtcm_scalar_lsu_rvalid),
-    .debug_load_dtcm_hit(),
-    .debug_store_dtcm_hit(),
-    .debug_dtcm_load_pending()
+    .mem_io_req(mem_io_req),
+    .mem_io_we(mem_io_we),
+    .mem_io_addr(mem_io_addr),
+    .mem_io_wdata(mem_io_wdata),
+    .mem_io_wstrb(mem_io_wstrb),
+    .mem_io_rdata(mem_io_rdata),
+    .mem_io_ready(mem_io_ready),
+    .mem_io_rvalid(mem_io_rvalid),
+    .mem_store_block(mem_store_block),
+    .debug_load_mem_hit(),
+    .debug_store_mem_hit(),
+    .debug_mem_load_pending()
+  );
+
+  edge_lsu_dtcm_adapter #(
+    .ADDR_WIDTH(PC_WIDTH),
+    .DTCM_ADDR_WIDTH(16),
+    .DATA_WIDTH(64)
+  ) lsu_dtcm_adapter (
+    .mem_addr(mem_io_addr),
+    .mem_req(mem_io_req),
+    .mem_we(mem_io_we),
+    .mem_wdata(mem_io_wdata),
+    .mem_wstrb(mem_io_wstrb),
+    .mem_rdata(mem_io_rdata),
+    .mem_ready(mem_io_ready),
+    .mem_rvalid(mem_io_rvalid),
+    .mem_store_block(mem_store_block),
+    .dtcm_base(mem_region_base_q),
+    .dtcm_addr(dtcm_lsu_addr),
+    .dtcm_req(dtcm_lsu_req),
+    .dtcm_we(dtcm_lsu_we),
+    .dtcm_wdata(dtcm_lsu_wdata),
+    .dtcm_wstrb(dtcm_lsu_wstrb),
+    .dtcm_rdata(dtcm_lsu_rdata),
+    .dtcm_ready(dtcm_lsu_ready),
+    .dtcm_rvalid(dtcm_lsu_rvalid),
+    .asic_store_block(asic_store_block)
   );
 
   edge_dcache #(
@@ -3222,17 +3259,18 @@ module edge_core_base #(
   ) dtcm_subsys (
     .forever_cpuclk(forever_cpuclk),
     .cpurst_b(cpurst_b),
-    .edge_dtcm_base(edge_dtcm_base_q),
-    .edge_dtcm_mask(edge_dtcm_mask_q),
-    .edge_dtcm_enable(edge_dtcm_enable_q),
-    .scalar_lsu_addr(dtcm_scalar_lsu_addr),
-    .scalar_lsu_req(dtcm_scalar_lsu_req),
-    .scalar_lsu_we(dtcm_scalar_lsu_we),
-    .scalar_lsu_wdata(dtcm_scalar_lsu_wdata),
-    .scalar_lsu_wstrb(dtcm_scalar_lsu_wstrb),
-    .scalar_lsu_rdata(dtcm_scalar_lsu_rdata),
-    .scalar_lsu_ready(dtcm_scalar_lsu_ready),
-    .scalar_lsu_rvalid(dtcm_scalar_lsu_rvalid),
+    .mem_region_base(mem_region_base_q),
+    .mem_region_mask(mem_region_mask_q),
+    .mem_region_enable(mem_region_enable_q),
+    .scalar_lsu_addr(dtcm_lsu_addr),
+    .scalar_lsu_req(dtcm_lsu_req),
+    .scalar_lsu_we(dtcm_lsu_we),
+    .scalar_lsu_wdata(dtcm_lsu_wdata),
+    .scalar_lsu_wstrb(dtcm_lsu_wstrb),
+    .scalar_lsu_rdata(dtcm_lsu_rdata),
+    .scalar_lsu_ready(dtcm_lsu_ready),
+    .scalar_lsu_rvalid(dtcm_lsu_rvalid),
+    .scalar_lsu_store_block(asic_store_block),
     .tensor_cmd_setcsr_dtype(tensor_cmd_setcsr_dtype[3:0]),
     .tensor_cmd_setcsr_req(tensor_cmd_setcsr_req),
     .tensor_cmd_setcsr_wtype(tensor_cmd_setcsr_wtype[3:0]),
@@ -3519,18 +3557,18 @@ module edge_core_base #(
 
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
     if (!cpurst_b) begin
-      edge_dtcm_base_q <= edge_dtcm_base;
-      edge_dtcm_mask_q <= edge_dtcm_mask;
-      edge_dtcm_enable_q <= edge_dtcm_enable;
+      mem_region_base_q <= mem_region_base;
+      mem_region_mask_q <= mem_region_mask;
+      mem_region_enable_q <= mem_region_enable;
     end else if (scalar_system_placeholder_valid &&
                  (scalar_system_placeholder_funct3 == 3'b001)) begin
       case (scalar_system_placeholder_csr)
         EDGE_CSR_DTCM_BASE_ID:
-          edge_dtcm_base_q <= scalar_system_placeholder_rs1_value[PC_WIDTH-1:0];
+          mem_region_base_q <= scalar_system_placeholder_rs1_value[PC_WIDTH-1:0];
         EDGE_CSR_DTCM_MASK_ID:
-          edge_dtcm_mask_q <= scalar_system_placeholder_rs1_value[PC_WIDTH-1:0];
+          mem_region_mask_q <= scalar_system_placeholder_rs1_value[PC_WIDTH-1:0];
         EDGE_CSR_DTCM_CTRL_ID:
-          edge_dtcm_enable_q <= scalar_system_placeholder_rs1_value[0];
+          mem_region_enable_q <= scalar_system_placeholder_rs1_value[0];
         default: begin end
       endcase
     end

@@ -17,6 +17,7 @@ module edge_dtcm_arb(
   lsu_rdata,
   lsu_ready,
   lsu_req,
+  lsu_store_block,
   lsu_rvalid,
   lsu_we,
   lsu_wdata,
@@ -95,6 +96,7 @@ output                   dma_ready;
 output                   dma_rvalid;
 input  [ADDR_WIDTH-1:0]  lsu_addr;
 input                    lsu_req;
+input                    lsu_store_block;
 input                    lsu_we;
 input  [DATA_WIDTH-1:0]  lsu_wdata;
 input  [BYTE_WIDTH-1:0]  lsu_wstrb;
@@ -239,7 +241,8 @@ assign actu_bank_rdata[BANK_NUM*DATA_WIDTH-1:0] =
 assign tensor_native_phase[BANK_INDEX_WIDTH-1:0] =
     bank16_phase_unused[BANK_INDEX_WIDTH-1:0];
 assign lower_bank_req[BANK_NUM-1:0] =
-    tensor_native_bank_req[BANK_NUM-1:0] | actu_bank_req[BANK_NUM-1:0];
+    (tensor_native_bank_req[BANK_NUM-1:0] | actu_bank_req[BANK_NUM-1:0]) &
+    {BANK_NUM{!lsu_store_block}};
 assign lower_bank_we[BANK_NUM-1:0] =
     tensor_native_bank_we[BANK_NUM-1:0] | actu_bank_we[BANK_NUM-1:0];
 assign lower_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0] =
@@ -281,7 +284,7 @@ edge_dtcm_other_bank16_adapter #(
   .dma_addr(dma_addr[ADDR_WIDTH-1:0]),
   .dma_rdata(dma_rdata[DMA_DATA_WIDTH-1:0]),
   .dma_ready(dma_ready),
-  .dma_req(dma_req),
+  .dma_req(dma_req && !lsu_store_block),
   .dma_rvalid(dma_rvalid),
   .dma_we(dma_we),
   .dma_wdata(dma_wdata[DMA_DATA_WIDTH-1:0]),
@@ -312,7 +315,7 @@ edge_dtcm_other_bank16_adapter #(
   .sld_addr(sld_addr[ADDR_WIDTH-1:0]),
   .sld_rdata(sld_rdata[DMA_DATA_WIDTH-1:0]),
   .sld_ready(sld_ready),
-  .sld_req(sld_req),
+  .sld_req(sld_req && !lsu_store_block),
   .sld_rvalid(sld_rvalid),
   .sld_pair_req(other_sld_pair_req),
   .sld_pair_bank0(other_sld_pair_bank0[BANK_INDEX_WIDTH-1:0]),
@@ -322,7 +325,7 @@ edge_dtcm_other_bank16_adapter #(
   .wld_addr(wld_addr[ADDR_WIDTH-1:0]),
   .wld_rdata(wld_rdata[DMA_DATA_WIDTH-1:0]),
   .wld_ready(wld_ready),
-  .wld_req(wld_req),
+  .wld_req(wld_req && !lsu_store_block),
   .wld_rvalid(wld_rvalid),
   .wld_pair_req(other_wld_pair_req),
   .wld_pair_bank0(other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0]),
