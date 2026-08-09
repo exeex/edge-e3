@@ -28,6 +28,7 @@ edge_core/rtl/edge_core_debug.v
 ../edge-rv/edge_fpu_fmac/edge_fpu_fmac.v
 ../edge-rv/edge_scalar_csr_sys/edge_scalar_csr_sys.v
 ../edge-rv/edge_wbt/edge_wbt.v
+../edge-rv/edge_instruction_classifier/edge_instruction_classifier.v
 ../edge-rv/edge_predecoder/edge_predecoder.v
 ../edge-rv/edge_predecoder/rtl/edge_predecode_issue_window.v
 ../edge-rv/edge_predecoder/rtl/edge_predecode_token_packer.v
