@@ -76,7 +76,6 @@ reg [ADDR_WIDTH-1:0] dst_next_addr_q;
 reg [15:0] n_q;
 reg [15:0] src_issued_q [0:2];
 reg [15:0] streamed_q;
-reg [15:0] out_accepted_q;
 reg [15:0] wr_committed_q;
 
 // Each source owns one 128-bit reservoir and one current-element head.
@@ -97,7 +96,6 @@ reg [1:0] rr_q;
 reg [BEAT_BITS-1:0] wr_pack_q;
 reg [4:0] wr_pack_count_q;
 reg [BEAT_BITS-1:0] wr_fifo_data_q [0:WR_FIFO_DEPTH-1];
-reg [BEAT_BYTES-1:0] wr_fifo_strb_q [0:WR_FIFO_DEPTH-1];
 reg [4:0] wr_fifo_elems_q [0:WR_FIFO_DEPTH-1];
 reg wr_fifo_head_q;
 reg wr_fifo_tail_q;
@@ -129,9 +127,7 @@ reg [1:0] rd_select;
 reg [4:0] rd_select_elems;
 reg [ADDR_WIDTH-1:0] rd_select_addr;
 reg [BEAT_BITS-1:0] pack_after_data;
-reg [BEAT_BYTES-1:0] pack_after_strb;
 integer s;
-integer b;
 
 function [4:0] min_beat;
   input [15:0] remaining;
@@ -140,6 +136,44 @@ function [4:0] min_beat;
   begin
     capacity = is_byte ? 5'd16 : 5'd8;
     min_beat = (remaining < {11'b0, capacity}) ? remaining[4:0] : capacity;
+  end
+endfunction
+
+function [BEAT_BYTES-1:0] beat_strobe;
+  input [4:0] elems;
+  input is_byte;
+  begin
+    if (is_byte) begin
+      case (elems)
+        5'd1: beat_strobe = 16'h0001;
+        5'd2: beat_strobe = 16'h0003;
+        5'd3: beat_strobe = 16'h0007;
+        5'd4: beat_strobe = 16'h000f;
+        5'd5: beat_strobe = 16'h001f;
+        5'd6: beat_strobe = 16'h003f;
+        5'd7: beat_strobe = 16'h007f;
+        5'd8: beat_strobe = 16'h00ff;
+        5'd9: beat_strobe = 16'h01ff;
+        5'd10: beat_strobe = 16'h03ff;
+        5'd11: beat_strobe = 16'h07ff;
+        5'd12: beat_strobe = 16'h0fff;
+        5'd13: beat_strobe = 16'h1fff;
+        5'd14: beat_strobe = 16'h3fff;
+        5'd15: beat_strobe = 16'h7fff;
+        default: beat_strobe = 16'hffff;
+      endcase
+    end else begin
+      case (elems)
+        5'd1: beat_strobe = 16'h0003;
+        5'd2: beat_strobe = 16'h000f;
+        5'd3: beat_strobe = 16'h003f;
+        5'd4: beat_strobe = 16'h00ff;
+        5'd5: beat_strobe = 16'h03ff;
+        5'd6: beat_strobe = 16'h0fff;
+        5'd7: beat_strobe = 16'h3fff;
+        default: beat_strobe = 16'hffff;
+      endcase
+    end
   end
 endfunction
 
@@ -243,11 +277,6 @@ always @* begin
     pack_after_data[wr_pack_count_q*8 +: 8] = core_out_data[7:0];
   else
     pack_after_data[wr_pack_count_q*16 +: 16] = core_out_data;
-  pack_after_strb = {BEAT_BYTES{1'b0}};
-  for (b = 0; b < BEAT_BYTES; b = b + 1) begin
-    if (dst_is_byte_q ? (b < pack_after) : (b < pack_after * 2))
-      pack_after_strb[b] = 1'b1;
-  end
 end
 
 assign core_out_ready = (state_q == STATE_ACTIVE) && dst_enable_q &&
@@ -257,7 +286,8 @@ assign core_result_ready = (state_q == STATE_ACTIVE) && !dst_enable_q &&
 assign dtcm_wr_req = (wr_fifo_count_q != 2'd0);
 assign dtcm_wr_addr = dst_next_addr_q;
 assign dtcm_wr_wdata = wr_fifo_data_q[wr_fifo_head_q];
-assign dtcm_wr_wstrb = wr_fifo_strb_q[wr_fifo_head_q];
+assign dtcm_wr_wstrb = beat_strobe(wr_fifo_elems_q[wr_fifo_head_q],
+                                   dst_is_byte_q);
 
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
@@ -271,7 +301,6 @@ always @(posedge clk or negedge cpurst_b) begin
     dst_next_addr_q <= {ADDR_WIDTH{1'b0}};
     n_q <= 16'b0;
     streamed_q <= 16'b0;
-    out_accepted_q <= 16'b0;
     wr_committed_q <= 16'b0;
     rd_inflight_q <= 1'b0;
     rd_tag_q <= 2'b0;
@@ -307,7 +336,6 @@ always @(posedge clk or negedge cpurst_b) begin
       dst_next_addr_q <= {dst_addr[ADDR_WIDTH-1:1], 1'b0};
       n_q <= n_elements;
       streamed_q <= 16'b0;
-      out_accepted_q <= 16'b0;
       wr_committed_q <= 16'b0;
       rd_inflight_q <= 1'b0;
       rr_q <= 2'b0;
@@ -384,10 +412,8 @@ always @(posedge clk or negedge cpurst_b) begin
       end
 
       if (output_push) begin
-        out_accepted_q <= out_accepted_q + 16'd1;
         if (make_pending) begin
           wr_fifo_data_q[wr_fifo_tail_q] <= pack_after_data;
-          wr_fifo_strb_q[wr_fifo_tail_q] <= pack_after_strb;
           wr_fifo_elems_q[wr_fifo_tail_q] <= pack_after;
           wr_fifo_tail_q <= wr_fifo_tail_q + 1'b1;
           wr_pack_q <= {BEAT_BITS{1'b0}};
@@ -413,7 +439,6 @@ always @(posedge clk or negedge cpurst_b) begin
         state_q <= STATE_IDLE;
         done_q <= 1'b1;
       end else if (dst_enable_q && (streamed_q == n_q) &&
-                   (out_accepted_q == n_q) &&
                    (wr_committed_q == n_q) &&
                    (wr_fifo_count_q == 2'd0) &&
                    (wr_pack_count_q == 0)) begin
