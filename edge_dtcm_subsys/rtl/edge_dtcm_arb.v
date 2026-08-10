@@ -162,7 +162,6 @@ wire [BANK_INDEX_WIDTH-1:0] other_lsu_bank;
 wire [SRAM_ADDR_WIDTH-1:0] other_lsu_bank_addr;
 wire [DATA_WIDTH-1:0]    other_lsu_bank_wdata;
 wire [BYTE_WIDTH-1:0]    other_lsu_bank_wstrb;
-wire [DATA_WIDTH-1:0]    other_lsu_bank_rdata;
 wire                     other_dma_pair_req;
 wire                     other_dma_pair_we;
 wire [BANK_INDEX_WIDTH-1:0] other_dma_pair_bank0;
@@ -186,7 +185,6 @@ wire [BANK_NUM-1:0]      bank_rvalid_unused;
 wire [BANK_INDEX_WIDTH-1:0] bank16_phase_unused;
 wire                     other_conflict_unused;
 wire                     unused_lease_inputs;
-reg  [BANK_INDEX_WIDTH-1:0] other_lsu_rsp_bank_q;
 reg  [BANK_INDEX_WIDTH-1:0] other_dma_rsp_bank0_q;
 reg  [BANK_INDEX_WIDTH-1:0] other_dma_rsp_bank1_q;
 reg  [BANK_INDEX_WIDTH-1:0] other_sld_rsp_bank0_q;
@@ -257,8 +255,6 @@ assign lower_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0] =
     (|actu_bank_req[BANK_NUM-1:0])
     ? actu_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]
     : tensor_native_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0];
-assign other_lsu_bank_rdata[DATA_WIDTH-1:0] =
-    bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_lsu_rsp_bank_q);
 assign other_dma_pair_rdata[DMA_DATA_WIDTH-1:0] =
     {bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_dma_rsp_bank1_q),
      bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_dma_rsp_bank0_q)};
@@ -281,6 +277,7 @@ edge_dtcm_other_bank16_adapter #(
   .cpurst_b(cpurst_b),
   .external_busy_mask(tensor_lower_owned_mask[BANK_NUM-1:0]),
   .phase(bank16_phase_unused[BANK_INDEX_WIDTH-1:0]),
+  .bank_rdata(bank_rdata[BANK_NUM*DATA_WIDTH-1:0]),
   .dma_addr(dma_addr[ADDR_WIDTH-1:0]),
   .dma_rdata(dma_rdata[DMA_DATA_WIDTH-1:0]),
   .dma_ready(dma_ready),
@@ -303,7 +300,6 @@ edge_dtcm_other_bank16_adapter #(
   .lsu_bank_addr(other_lsu_bank_addr[SRAM_ADDR_WIDTH-1:0]),
   .lsu_bank_wdata(other_lsu_bank_wdata[DATA_WIDTH-1:0]),
   .lsu_bank_wstrb(other_lsu_bank_wstrb[BYTE_WIDTH-1:0]),
-  .lsu_bank_rdata(other_lsu_bank_rdata[DATA_WIDTH-1:0]),
   .dma_pair_req(other_dma_pair_req),
   .dma_pair_we(other_dma_pair_we),
   .dma_pair_bank0(other_dma_pair_bank0[BANK_INDEX_WIDTH-1:0]),
@@ -410,7 +406,6 @@ endgenerate
 
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
-    other_lsu_rsp_bank_q <= {BANK_INDEX_WIDTH{1'b0}};
     other_dma_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
     other_dma_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
     other_sld_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
@@ -418,8 +413,6 @@ always @(posedge clk or negedge cpurst_b) begin
     other_wld_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
     other_wld_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
   end else begin
-    if (other_lsu_bank_req && !other_lsu_bank_we)
-      other_lsu_rsp_bank_q <= other_lsu_bank[BANK_INDEX_WIDTH-1:0];
     if (other_dma_pair_req && !other_dma_pair_we) begin
       other_dma_rsp_bank0_q <= other_dma_pair_bank0[BANK_INDEX_WIDTH-1:0];
       other_dma_rsp_bank1_q <= other_dma_pair_bank1[BANK_INDEX_WIDTH-1:0];

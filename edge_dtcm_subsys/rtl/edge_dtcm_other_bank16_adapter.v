@@ -3,6 +3,7 @@ module edge_dtcm_other_bank16_adapter(
   cpurst_b,
   external_busy_mask,
   phase,
+  bank_rdata,
   dma_addr,
   dma_rdata,
   dma_ready,
@@ -25,7 +26,6 @@ module edge_dtcm_other_bank16_adapter(
   lsu_bank_addr,
   lsu_bank_wdata,
   lsu_bank_wstrb,
-  lsu_bank_rdata,
   dma_pair_req,
   dma_pair_we,
   dma_pair_bank0,
@@ -77,6 +77,7 @@ input                         clk;
 input                         cpurst_b;
 input  [BANK_NUM-1:0]         external_busy_mask;
 input  [BANK_INDEX_WIDTH-1:0] phase;
+input  [BANK_NUM*DATA_WIDTH-1:0] bank_rdata;
 input  [ADDR_WIDTH-1:0]       dma_addr;
 input                         dma_req;
 input                         dma_we;
@@ -103,7 +104,6 @@ output [BANK_INDEX_WIDTH-1:0] lsu_bank;
 output [SRAM_ADDR_WIDTH-1:0]  lsu_bank_addr;
 output [DATA_WIDTH-1:0]       lsu_bank_wdata;
 output [BYTE_WIDTH-1:0]       lsu_bank_wstrb;
-input  [DATA_WIDTH-1:0]       lsu_bank_rdata;
 output                        dma_pair_req;
 output                        dma_pair_we;
 output [BANK_INDEX_WIDTH-1:0] dma_pair_bank0;
@@ -138,32 +138,28 @@ wire [BANK_INDEX_WIDTH-1:0]   sld_bank0;
 wire [BANK_INDEX_WIDTH-1:0]   sld_bank1;
 wire [BANK_INDEX_WIDTH-1:0]   wld_bank0;
 wire [BANK_INDEX_WIDTH-1:0]   wld_bank1;
-wire [BANK_NUM-1:0]           lsu_mask;
+wire [BANK_NUM-1:0]           lsu_active_mask;
+wire [BANK_INDEX_WIDTH-1:0]   lsu_unused_bank1;
+wire                          lsu_unused_bank1_valid;
 wire [BANK_NUM-1:0]           dma_mask;
 wire [BANK_NUM-1:0]           sld_mask;
 wire [BANK_NUM-1:0]           wld_mask;
-wire                          lsu_lower_conflict;
 wire                          dma_lower_conflict;
 wire                          sld_lower_conflict;
 wire                          wld_lower_conflict;
-wire                          lsu_channel_match;
 wire                          dma_channel_match;
 wire                          sld_channel_match;
 wire                          wld_channel_match;
-wire                          lsu_candidate;
 wire                          dma_candidate;
 wire                          sld_candidate;
 wire                          wld_candidate;
-wire                          lsu_fire;
 wire                          dma_fire;
 wire                          sld_fire;
 wire                          wld_fire;
 wire                          unused_phase_inputs;
-wire [SRAM_ADDR_WIDTH-1:0]    lsu_sram_addr;
 wire [SRAM_ADDR_WIDTH-1:0]    dma_sram_addr;
 wire [SRAM_ADDR_WIDTH-1:0]    sld_sram_addr;
 wire [SRAM_ADDR_WIDTH-1:0]    wld_sram_addr;
-reg                           lsu_rvalid_q;
 reg                           dma_rvalid_q;
 reg                           sld_rvalid_q;
 reg                           wld_rvalid_q;
@@ -202,8 +198,6 @@ begin
 end
 endfunction
 
-assign lsu_bank[BANK_INDEX_WIDTH-1:0] =
-    lsu_addr[BANK_INDEX_WIDTH-1:0];
 assign dma_bank0[BANK_INDEX_WIDTH-1:0] =
     dma_addr[BANK_INDEX_WIDTH-1:0];
 assign dma_bank1[BANK_INDEX_WIDTH-1:0] =
@@ -214,16 +208,12 @@ assign sld_bank1[BANK_INDEX_WIDTH-1:0] =
 assign wld_bank0[BANK_INDEX_WIDTH-1:0] = wld_addr[BANK_INDEX_WIDTH-1:0];
 assign wld_bank1[BANK_INDEX_WIDTH-1:0] =
     wld_addr[BANK_INDEX_WIDTH-1:0] + {{BANK_INDEX_WIDTH-1{1'b0}}, 1'b1};
-assign lsu_mask[BANK_NUM-1:0] = one_bank_mask(lsu_bank[BANK_INDEX_WIDTH-1:0]);
 assign dma_mask[BANK_NUM-1:0] = one_bank_mask(dma_bank0[BANK_INDEX_WIDTH-1:0])
                               | one_bank_mask(dma_bank1[BANK_INDEX_WIDTH-1:0]);
 assign sld_mask[BANK_NUM-1:0] = one_bank_mask(sld_bank0[BANK_INDEX_WIDTH-1:0])
                               | one_bank_mask(sld_bank1[BANK_INDEX_WIDTH-1:0]);
 assign wld_mask[BANK_NUM-1:0] = one_bank_mask(wld_bank0[BANK_INDEX_WIDTH-1:0])
                               | one_bank_mask(wld_bank1[BANK_INDEX_WIDTH-1:0]);
-assign lsu_lower_conflict =
-    (lsu_mask[BANK_NUM-1:0] & external_busy_mask[BANK_NUM-1:0])
-    != {BANK_NUM{1'b0}};
 assign dma_lower_conflict =
     (dma_mask[BANK_NUM-1:0] & external_busy_mask[BANK_NUM-1:0])
     != {BANK_NUM{1'b0}};
@@ -233,10 +223,6 @@ assign sld_lower_conflict =
 assign wld_lower_conflict =
     (wld_mask[BANK_NUM-1:0] & external_busy_mask[BANK_NUM-1:0])
     != {BANK_NUM{1'b0}};
-assign lsu_channel_match =
-    channel_matches_pair(FIXED_CH_LSU[2:0],
-                         phase[BANK_INDEX_WIDTH-1:0],
-                         lsu_bank[BANK_INDEX_WIDTH-1:0]);
 assign dma_channel_match =
     channel_matches_pair(FIXED_CH_DMA[2:0],
                          phase[BANK_INDEX_WIDTH-1:0],
@@ -248,24 +234,19 @@ assign wld_channel_match =
     channel_matches_pair(FIXED_CH_WLD[2:0], phase[BANK_INDEX_WIDTH-1:0],
                          wld_bank0[BANK_INDEX_WIDTH-1:0]);
 
-assign lsu_candidate = lsu_req
-                    && lsu_channel_match
-                    && !lsu_lower_conflict;
 assign dma_candidate = dma_req
                     && dma_channel_match
                     && !dma_lower_conflict;
 assign sld_candidate = sld_req && sld_channel_match && !sld_lower_conflict;
 assign wld_candidate = wld_req && wld_channel_match && !wld_lower_conflict;
-assign lsu_fire = lsu_candidate;
 assign dma_fire = dma_candidate;
 assign sld_fire = sld_candidate;
 assign wld_fire = wld_candidate;
-assign lsu_ready = lsu_fire;
 assign dma_ready = dma_fire;
 assign sld_ready = sld_fire;
 assign wld_ready = wld_fire;
 assign active_mask[BANK_NUM-1:0] =
-    (lsu_req ? lsu_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}})
+    lsu_active_mask[BANK_NUM-1:0]
   | (dma_req ? dma_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}})
   | (sld_req ? sld_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}})
   | (wld_req ? wld_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}});
@@ -276,19 +257,45 @@ assign bank16_conflict = (lsu_req && !lsu_ready)
                       || (wld_req && !wld_ready);
 assign unused_phase_inputs = (|LSU_PHASE_LATENCY_CYCLES[3:0])
                           || (|DMA_PHASE_LATENCY_CYCLES[3:0]);
-assign lsu_sram_addr[SRAM_ADDR_WIDTH-1:0] =
-    lsu_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
 assign dma_sram_addr[SRAM_ADDR_WIDTH-1:0] =
     dma_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
 assign sld_sram_addr[SRAM_ADDR_WIDTH-1:0] =
     sld_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
 assign wld_sram_addr[SRAM_ADDR_WIDTH-1:0] =
     wld_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
-assign lsu_bank_req = lsu_fire;
-assign lsu_bank_we = lsu_we;
-assign lsu_bank_addr[SRAM_ADDR_WIDTH-1:0] = lsu_sram_addr[SRAM_ADDR_WIDTH-1:0];
-assign lsu_bank_wdata[DATA_WIDTH-1:0] = lsu_wdata[DATA_WIDTH-1:0];
-assign lsu_bank_wstrb[BYTE_WIDTH-1:0] = lsu_wstrb[BYTE_WIDTH-1:0];
+edge_dtcm_upper_io #(
+  .ADDR_WIDTH(ADDR_WIDTH),
+  .DATA_WIDTH(DATA_WIDTH),
+  .LANES(1),
+  .BANK_NUM(BANK_NUM),
+  .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
+  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),
+  .FIXED_CHANNEL(FIXED_CH_LSU),
+  .ALLOW_WRITE(1)
+) x_lsu_io (
+  .clk(clk),
+  .cpurst_b(cpurst_b),
+  .phase(phase[BANK_INDEX_WIDTH-1:0]),
+  .blocked_bank_mask(external_busy_mask[BANK_NUM-1:0]),
+  .req(lsu_req),
+  .req_we(lsu_we),
+  .req_addr(lsu_addr[ADDR_WIDTH-1:0]),
+  .req_wdata(lsu_wdata[DATA_WIDTH-1:0]),
+  .req_wstrb(lsu_wstrb[BYTE_WIDTH-1:0]),
+  .ready(lsu_ready),
+  .rvalid(lsu_rvalid),
+  .rdata(lsu_rdata[DATA_WIDTH-1:0]),
+  .bank_req(lsu_bank_req),
+  .bank_we(lsu_bank_we),
+  .bank0(lsu_bank[BANK_INDEX_WIDTH-1:0]),
+  .bank1(lsu_unused_bank1[BANK_INDEX_WIDTH-1:0]),
+  .bank1_valid(lsu_unused_bank1_valid),
+  .bank_addr(lsu_bank_addr[SRAM_ADDR_WIDTH-1:0]),
+  .bank_wdata(lsu_bank_wdata[DATA_WIDTH-1:0]),
+  .bank_wstrb(lsu_bank_wstrb[BYTE_WIDTH-1:0]),
+  .bank_rdata(bank_rdata[BANK_NUM*DATA_WIDTH-1:0]),
+  .active_mask(lsu_active_mask[BANK_NUM-1:0])
+);
 
 assign dma_pair_req = dma_fire;
 assign dma_pair_we = dma_we;
@@ -308,21 +315,17 @@ assign wld_pair_addr[SRAM_ADDR_WIDTH-1:0] = wld_sram_addr[SRAM_ADDR_WIDTH-1:0];
 
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
-    lsu_rvalid_q <= 1'b0;
     dma_rvalid_q <= 1'b0;
     sld_rvalid_q <= 1'b0;
     wld_rvalid_q <= 1'b0;
   end else begin
-    lsu_rvalid_q <= lsu_fire && !lsu_we;
     dma_rvalid_q <= dma_fire && !dma_we;
     sld_rvalid_q <= sld_fire;
     wld_rvalid_q <= wld_fire;
   end
 end
 
-assign lsu_rvalid = lsu_rvalid_q;
 assign dma_rvalid = dma_rvalid_q;
-assign lsu_rdata[DATA_WIDTH-1:0] = lsu_bank_rdata[DATA_WIDTH-1:0];
 assign dma_rdata[DMA_DATA_WIDTH-1:0] = dma_pair_rdata[DMA_DATA_WIDTH-1:0];
 assign sld_rvalid = sld_rvalid_q;
 assign sld_rdata[DMA_DATA_WIDTH-1:0] = sld_pair_rdata[DMA_DATA_WIDTH-1:0];
