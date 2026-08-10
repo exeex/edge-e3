@@ -259,12 +259,6 @@ module edge_core_base #(
   localparam CAPTURE_ID_WIDTH = 3;
   localparam REF_COUNT_WIDTH = 4;
   localparam CONSUME_PORTS = 2;
-  localparam [1:0] CORE_READ_OWNER_NONE = 2'd0;
-  localparam [1:0] CORE_READ_OWNER_ICACHE = 2'd1;
-  localparam [1:0] CORE_READ_OWNER_DCACHE = 2'd2;
-  localparam [1:0] CORE_READ_OWNER_BRINGUP = 2'd3;
-  localparam [3:0] ICACHE_STARVE_THRESHOLD = 4'd4;
-  localparam [3:0] DCACHE_STARVE_THRESHOLD = 4'd8;
   localparam [11:0] EDGE_CSR_BREAK_ID = 12'h7e0;
   localparam [11:0] EDGE_CSR_PUTCHAR_ID = 12'h7e1;
   localparam [11:0] EDGE_CSR_DTCM_BASE_ID = 12'h7d8;
@@ -939,32 +933,9 @@ module edge_core_base #(
   reg [PC_WIDTH-1:0]      clean_wb_addr_q;
   reg [AXI_DATA_WIDTH-1:0] clean_wb_data_q;
   reg                     clean_wb_last_q;
-  reg                     refill_ar_valid_q;
-  reg                     refill_r_active_q;
-  reg [PC_WIDTH-1:0]      refill_addr_q;
-  reg [1:0]               refill_ar_owner_q;
-  reg [1:0]               refill_r_owner_q;
-  reg                     icache_refill_buf_valid_q;
-  reg [PC_WIDTH-1:0]      icache_refill_buf_addr_q;
-  reg [3:0]               icache_starve_q;
-  reg [3:0]               dcache_starve_q;
-
   reg                     edge_dma_active_q;
   reg                     scalar_cache_op_pending_q;
 
-
-  wire                    core_read_idle;
-  wire                    icache_refill_pending;
-  wire                    icache_refill_req_fire;
-  wire                    icache_refill_buf_fire;
-  wire                    dcache_refill_pending;
-  wire                    grant_icache_refill;
-  wire                    grant_dcache_refill;
-  wire                    grant_bringup_core_read;
-  wire                    grant_core_read_valid;
-  wire [1:0]              grant_core_read_owner;
-  wire                    refill_ar_fire;
-  wire                    refill_r_done;
 
   assign retire_complete4_valid = scalar_retire_complete4_valid;
   assign retire_complete4_seq_id = scalar_retire_complete4_seq_id;
@@ -1588,195 +1559,63 @@ module edge_core_base #(
   assign imem_req_addr[PC_WIDTH-1:0] = {PC_WIDTH{1'b0}};
   assign imem_resp_ready = 1'b0;
 
-  assign core_read_idle = !refill_ar_valid_q && !refill_r_active_q;
-  assign icache_refill_pending = ENABLE_ICACHE_REFILL && icache_refill_buf_valid_q;
-  assign dcache_refill_pending = dcache_refill_req_valid;
-  assign grant_icache_refill =
-    core_read_idle && icache_refill_pending &&
-    (!dcache_refill_pending ||
-     (icache_starve_q >= ICACHE_STARVE_THRESHOLD) ||
-     (icache_starve_q >= dcache_starve_q));
-  assign grant_dcache_refill =
-    core_read_idle && dcache_refill_pending && !grant_icache_refill &&
-    (!icache_refill_pending ||
-     (dcache_starve_q >= DCACHE_STARVE_THRESHOLD));
-  assign grant_bringup_core_read =
-    core_read_idle && !grant_icache_refill && !grant_dcache_refill &&
-    bringup_core_arvalid;
-  assign grant_core_read_valid =
-    grant_icache_refill || grant_dcache_refill || grant_bringup_core_read;
-  assign grant_core_read_owner =
-    grant_icache_refill ? CORE_READ_OWNER_ICACHE :
-    grant_dcache_refill ? CORE_READ_OWNER_DCACHE :
-    grant_bringup_core_read ? CORE_READ_OWNER_BRINGUP :
-    CORE_READ_OWNER_NONE;
-
-  assign icache_refill_req_ready =
-    ENABLE_ICACHE_REFILL && !icache_refill_buf_valid_q;
-  assign icache_refill_req_fire =
-    icache_refill_req_valid && icache_refill_req_ready;
-  assign icache_refill_buf_fire =
-    icache_refill_buf_valid_q && grant_icache_refill && biu_core_arready;
-  assign dcache_refill_req_ready = grant_dcache_refill && biu_core_arready;
-  assign icache_refill_resp_valid =
-    refill_r_active_q && (refill_r_owner_q == CORE_READ_OWNER_ICACHE) &&
-    biu_core_rvalid;
-  assign icache_refill_resp_bits[127:0] = biu_core_rdata[127:0];
-  assign dcache_refill_resp_valid =
-    refill_r_active_q && (refill_r_owner_q == CORE_READ_OWNER_DCACHE) &&
-    biu_core_rvalid;
-  assign dcache_refill_resp_data[AXI_DATA_WIDTH-1:0] =
-    biu_core_rdata[AXI_DATA_WIDTH-1:0];
-  assign dcache_refill_resp_last =
-    refill_r_active_q && (refill_r_owner_q == CORE_READ_OWNER_DCACHE) &&
-    biu_core_rlast;
-  assign dcache_refill_resp_error = |biu_core_rresp[1:0];
-
-  assign biu_core_arvalid =
-    refill_ar_valid_q ? 1'b1 : grant_core_read_valid;
-  assign biu_core_araddr[PC_WIDTH-1:0] =
-    refill_ar_valid_q ? refill_addr_q[PC_WIDTH-1:0]
-                      : grant_icache_refill ? icache_refill_buf_addr_q[PC_WIDTH-1:0]
-                      : grant_dcache_refill ? dcache_refill_req_addr[PC_WIDTH-1:0]
-                      : bringup_core_araddr[PC_WIDTH-1:0];
-  assign biu_core_arburst[1:0] =
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q != CORE_READ_OWNER_BRINGUP)) ? 2'b01 :
-    grant_icache_refill ? 2'b01 :
-    grant_dcache_refill ? 2'b01 :
-    bringup_core_arburst[1:0];
-  assign biu_core_arcache[3:0] =
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q != CORE_READ_OWNER_BRINGUP)) ? 4'h0 :
-    grant_icache_refill ? 4'h0 :
-    grant_dcache_refill ? 4'h0 :
-    bringup_core_arcache[3:0];
-  assign biu_core_arid[AXI_ID_WIDTH-1:0] =
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q == CORE_READ_OWNER_ICACHE)) ? 8'hf1 :
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q == CORE_READ_OWNER_DCACHE)) ? 8'hd1 :
-    grant_icache_refill ? 8'hf1 :
-    grant_dcache_refill ? 8'hd1 :
-    bringup_core_arid[AXI_ID_WIDTH-1:0];
-  assign biu_core_arlen[AXI_LEN_WIDTH-1:0] =
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q == CORE_READ_OWNER_ICACHE)) ? {AXI_LEN_WIDTH{1'b0}} :
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q == CORE_READ_OWNER_DCACHE)) ?
-      {{(AXI_LEN_WIDTH-2){1'b0}}, 2'b11} :
-    grant_icache_refill ? {AXI_LEN_WIDTH{1'b0}} :
-    grant_dcache_refill ? {{(AXI_LEN_WIDTH-2){1'b0}}, 2'b11} :
-    bringup_core_arlen[AXI_LEN_WIDTH-1:0];
-  assign biu_core_arlock =
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q != CORE_READ_OWNER_BRINGUP)) ? 1'b0 :
-    grant_icache_refill ? 1'b0 :
-    grant_dcache_refill ? 1'b0 :
-    bringup_core_arlock;
-  assign biu_core_arprot[2:0] =
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q != CORE_READ_OWNER_BRINGUP)) ? 3'b000 :
-    grant_icache_refill ? 3'b000 :
-    grant_dcache_refill ? 3'b000 :
-    bringup_core_arprot[2:0];
-  assign biu_core_arsize[2:0] =
-    (refill_ar_valid_q &&
-     (refill_ar_owner_q != CORE_READ_OWNER_BRINGUP)) ? 3'b100 :
-    grant_icache_refill ? 3'b100 :
-    grant_dcache_refill ? 3'b100 :
-    bringup_core_arsize[2:0];
-  assign bringup_core_arready =
-    grant_bringup_core_read && biu_core_arready;
-
-  assign biu_core_rready =
-    (refill_r_owner_q == CORE_READ_OWNER_ICACHE) ?
-      (icache_refill_resp_ready || !ifu_cache_debug_miss_pending) :
-    (refill_r_owner_q == CORE_READ_OWNER_DCACHE) ? dcache_refill_resp_ready :
-    bringup_core_rready;
-  assign bringup_core_rdata[AXI_DATA_WIDTH-1:0] =
-    biu_core_rdata[AXI_DATA_WIDTH-1:0];
-  assign bringup_core_rid[AXI_ID_WIDTH-1:0] =
-    biu_core_rid[AXI_ID_WIDTH-1:0];
-  assign bringup_core_rlast =
-    refill_r_active_q && (refill_r_owner_q == CORE_READ_OWNER_BRINGUP) &&
-    biu_core_rvalid && biu_core_rlast;
-  assign bringup_core_rresp[1:0] =
-    biu_core_rresp[1:0];
-  assign bringup_core_rvalid =
-    refill_r_active_q && (refill_r_owner_q == CORE_READ_OWNER_BRINGUP) &&
-    biu_core_rvalid;
-  assign refill_ar_fire = biu_core_arvalid && biu_core_arready;
-  assign refill_r_done =
-    refill_r_active_q && biu_core_rvalid && biu_core_rready && biu_core_rlast;
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      refill_ar_valid_q <= 1'b0;
-      refill_r_active_q <= 1'b0;
-      refill_addr_q <= {PC_WIDTH{1'b0}};
-      refill_ar_owner_q <= CORE_READ_OWNER_NONE;
-      refill_r_owner_q <= CORE_READ_OWNER_NONE;
-    end else begin
-      if (core_read_idle && grant_core_read_valid && !biu_core_arready) begin
-        refill_ar_valid_q <= 1'b1;
-        refill_ar_owner_q <= grant_core_read_owner;
-        refill_addr_q <=
-          grant_icache_refill ? icache_refill_buf_addr_q[PC_WIDTH-1:0] :
-          grant_dcache_refill ? dcache_refill_req_addr[PC_WIDTH-1:0] :
-          bringup_core_araddr[PC_WIDTH-1:0];
-      end
-
-      if (refill_ar_fire) begin
-        refill_ar_valid_q <= 1'b0;
-        refill_r_active_q <= 1'b1;
-        refill_r_owner_q <=
-          refill_ar_valid_q ? refill_ar_owner_q : grant_core_read_owner;
-      end
-
-      if (refill_r_done) begin
-        refill_r_active_q <= 1'b0;
-        refill_r_owner_q <= CORE_READ_OWNER_NONE;
-      end
-    end
-  end
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      icache_refill_buf_valid_q <= 1'b0;
-      icache_refill_buf_addr_q <= {PC_WIDTH{1'b0}};
-    end else begin
-      if (icache_refill_req_fire) begin
-        icache_refill_buf_valid_q <= 1'b1;
-        icache_refill_buf_addr_q <= icache_refill_req_addr[PC_WIDTH-1:0];
-      end else if (icache_refill_buf_fire) begin
-        icache_refill_buf_valid_q <= 1'b0;
-      end
-    end
-  end
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      icache_starve_q <= 4'd0;
-      dcache_starve_q <= 4'd0;
-    end else begin
-      if (grant_icache_refill && biu_core_arready)
-        icache_starve_q <= 4'd0;
-      else if (icache_refill_pending && !grant_icache_refill &&
-               icache_starve_q <= 4'd13)
-        icache_starve_q <= icache_starve_q + 4'd2;
-      else if (!icache_refill_pending)
-        icache_starve_q <= 4'd0;
-
-      if (grant_dcache_refill && biu_core_arready)
-        dcache_starve_q <= 4'd0;
-      else if (dcache_refill_pending && !grant_dcache_refill &&
-               dcache_starve_q != 4'hf)
-        dcache_starve_q <= dcache_starve_q + 4'd1;
-      else if (!dcache_refill_pending)
-        dcache_starve_q <= 4'd0;
-    end
-  end
+  edge_core_read_axi_mux #(
+    .ADDR_WIDTH(PC_WIDTH),
+    .DATA_WIDTH(AXI_DATA_WIDTH),
+    .ID_WIDTH(AXI_ID_WIDTH),
+    .LEN_WIDTH(AXI_LEN_WIDTH),
+    .ENABLE_ICACHE_REFILL(ENABLE_ICACHE_REFILL)
+  ) read_axi_mux (
+    .forever_cpuclk(forever_cpuclk),
+    .cpurst_b(cpurst_b),
+    .icache_req_valid(icache_refill_req_valid),
+    .icache_req_ready(icache_refill_req_ready),
+    .icache_req_addr(icache_refill_req_addr),
+    .icache_resp_valid(icache_refill_resp_valid),
+    .icache_resp_ready(icache_refill_resp_ready),
+    .icache_resp_bits(icache_refill_resp_bits),
+    .icache_miss_pending(ifu_cache_debug_miss_pending),
+    .dcache_req_valid(dcache_refill_req_valid),
+    .dcache_req_ready(dcache_refill_req_ready),
+    .dcache_req_addr(dcache_refill_req_addr[PC_WIDTH-1:0]),
+    .dcache_resp_valid(dcache_refill_resp_valid),
+    .dcache_resp_ready(dcache_refill_resp_ready),
+    .dcache_resp_data(dcache_refill_resp_data),
+    .dcache_resp_last(dcache_refill_resp_last),
+    .dcache_resp_error(dcache_refill_resp_error),
+    .bringup_araddr(bringup_core_araddr),
+    .bringup_arburst(bringup_core_arburst),
+    .bringup_arcache(bringup_core_arcache),
+    .bringup_arid(bringup_core_arid),
+    .bringup_arlen(bringup_core_arlen),
+    .bringup_arlock(bringup_core_arlock),
+    .bringup_arprot(bringup_core_arprot),
+    .bringup_arsize(bringup_core_arsize),
+    .bringup_arvalid(bringup_core_arvalid),
+    .bringup_arready(bringup_core_arready),
+    .bringup_rdata(bringup_core_rdata),
+    .bringup_rid(bringup_core_rid),
+    .bringup_rlast(bringup_core_rlast),
+    .bringup_rready(bringup_core_rready),
+    .bringup_rresp(bringup_core_rresp),
+    .bringup_rvalid(bringup_core_rvalid),
+    .core_araddr(biu_core_araddr),
+    .core_arburst(biu_core_arburst),
+    .core_arcache(biu_core_arcache),
+    .core_arid(biu_core_arid),
+    .core_arlen(biu_core_arlen),
+    .core_arlock(biu_core_arlock),
+    .core_arprot(biu_core_arprot),
+    .core_arsize(biu_core_arsize),
+    .core_arvalid(biu_core_arvalid),
+    .core_arready(biu_core_arready),
+    .core_rdata(biu_core_rdata),
+    .core_rid(biu_core_rid),
+    .core_rlast(biu_core_rlast),
+    .core_rready(biu_core_rready),
+    .core_rresp(biu_core_rresp),
+    .core_rvalid(biu_core_rvalid)
+  );
 
   assign tensor_circular_config_valid =
     (tensor_circular_ring_capacity_entries_q != 16'd0) &&
