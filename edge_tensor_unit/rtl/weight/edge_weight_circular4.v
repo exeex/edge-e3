@@ -137,7 +137,11 @@ always @(*) begin
       drain_target_comb[2:0] = group_q;
     end
   end else if (format_q == WEIGHT_I8) begin
-    drain_fill_slot_comb = {1'b0, drain_phase_q[0]};
+    // Normal phase chooses the low/high half of a target row.  Under
+    // transpose, phase chooses a target column and group chooses whether the
+    // packed data contains source rows 0..3 or 4..7.
+    drain_fill_slot_comb = {1'b0, transpose_q ? group_q[0]
+                                               : drain_phase_q[0]};
     drain_lane_valid_comb = 4'b1111;
     for (lane_i = 0; lane_i < 4; lane_i = lane_i + 1) begin
       drain_data_comb[lane_i*32 +: 32] =
