@@ -61,7 +61,6 @@ module edge_accel_io #(
 localparam STATE_IDLE = 2'd0;
 localparam STATE_START = 2'd1;
 localparam STATE_ACTIVE = 2'd2;
-localparam COUNT_WIDTH = FIFO_INDEX_WIDTH + 1;
 localparam BEAT_BYTES = BEAT_BITS / 8;
 localparam WR_FIFO_DEPTH = 2;
 
@@ -79,19 +78,22 @@ reg [15:0] src_issued_q [0:2];
 reg [15:0] streamed_q;
 reg [15:0] out_accepted_q;
 reg [15:0] wr_committed_q;
-reg [15:0] fifo [0:2][0:FIFO_DEPTH-1];
-reg [FIFO_INDEX_WIDTH-1:0] fifo_head_q [0:2];
-reg [FIFO_INDEX_WIDTH-1:0] fifo_tail_q [0:2];
-reg [COUNT_WIDTH-1:0] fifo_count_q [0:2];
-reg [15:0] out_fifo_data [0:FIFO_DEPTH-1];
-reg out_fifo_last [0:FIFO_DEPTH-1];
-reg [FIFO_INDEX_WIDTH-1:0] out_fifo_head_q;
-reg [FIFO_INDEX_WIDTH-1:0] out_fifo_tail_q;
-reg [COUNT_WIDTH-1:0] out_fifo_count_q;
+
+// Each source owns one 128-bit reservoir and one current-element head.
+// beat_count_q counts future elements in beat_q; head_q is a copy and is not
+// additional logical stream capacity.
+reg [BEAT_BITS-1:0] src_beat_q [0:2];
+reg [15:0] src_head_q [0:2];
+reg src_head_valid_q [0:2];
+reg [4:0] src_beat_count_q [0:2];
+reg [3:0] src_next_lane_q [0:2];
+
 reg rd_inflight_q;
 reg [1:0] rd_tag_q;
 reg [4:0] rd_elems_q;
 reg [1:0] rr_q;
+
+// Results pack directly into a beat. Two completed beats absorb DTCM stalls.
 reg [BEAT_BITS-1:0] wr_pack_q;
 reg [4:0] wr_pack_count_q;
 reg [BEAT_BITS-1:0] wr_fifo_data_q [0:WR_FIFO_DEPTH-1];
@@ -106,21 +108,21 @@ wire start_fire = start_valid && start_ready;
 wire core_start_fire = core_start_valid && core_start_ready;
 wire stream_fire = core_in_valid && core_in_ready;
 wire output_push = core_out_valid && core_out_ready;
-wire output_pop;
 wire write_fire = dtcm_wr_req && dtcm_wr_ready;
+wire read_return = dtcm_rd_rvalid && rd_inflight_q;
 wire [4:0] dst_beat_elems = dst_is_byte_q ? 5'd16 : 5'd8;
 wire [4:0] pack_after = wr_pack_count_q + 5'd1;
-wire pack_source_last = out_fifo_last[out_fifo_head_q];
-wire [15:0] pack_source_data = out_fifo_data[out_fifo_head_q];
-wire pack_would_complete = (pack_after == dst_beat_elems) || pack_source_last;
-wire make_pending = output_pop && pack_would_complete;
+wire pack_would_complete = (pack_after == dst_beat_elems) || core_out_last;
+wire make_pending = output_push && pack_would_complete;
 wire wr_fifo_can_push = (wr_fifo_count_q < WR_FIFO_DEPTH) || write_fire;
 wire [15:0] next_streamed = streamed_q + 16'd1;
-wire [15:0] inflight_outputs = streamed_q - out_accepted_q;
-wire [16:0] reserved_output_slots =
-  {11'b0, out_fifo_count_q} + {1'b0, inflight_outputs};
+wire [16:0] reserved_outputs = {1'b0, streamed_q} -
+                               {1'b0, wr_committed_q};
+// Keep one completed-beat slot available for the next fixed-latency result.
+// The usable credit is one queued beat plus one not-yet-complete pack.
+wire [16:0] output_capacity = dst_is_byte_q ? 17'd31 : 17'd15;
 wire output_capacity_available = !dst_enable_q ||
-  (reserved_output_slots < FIFO_DEPTH);
+                                 (reserved_outputs < output_capacity);
 
 reg [2:0] rd_eligible;
 reg [1:0] rd_select;
@@ -129,7 +131,6 @@ reg [ADDR_WIDTH-1:0] rd_select_addr;
 reg [BEAT_BITS-1:0] pack_after_data;
 reg [BEAT_BYTES-1:0] pack_after_strb;
 integer s;
-integer k;
 integer b;
 
 function [4:0] min_beat;
@@ -142,6 +143,45 @@ function [4:0] min_beat;
   end
 endfunction
 
+function [15:0] beat_element;
+  input [BEAT_BITS-1:0] beat;
+  input is_byte;
+  input [3:0] lane;
+  begin
+    if (is_byte) begin
+      case (lane)
+        4'd0: beat_element = {8'b0, beat[7:0]};
+        4'd1: beat_element = {8'b0, beat[15:8]};
+        4'd2: beat_element = {8'b0, beat[23:16]};
+        4'd3: beat_element = {8'b0, beat[31:24]};
+        4'd4: beat_element = {8'b0, beat[39:32]};
+        4'd5: beat_element = {8'b0, beat[47:40]};
+        4'd6: beat_element = {8'b0, beat[55:48]};
+        4'd7: beat_element = {8'b0, beat[63:56]};
+        4'd8: beat_element = {8'b0, beat[71:64]};
+        4'd9: beat_element = {8'b0, beat[79:72]};
+        4'd10: beat_element = {8'b0, beat[87:80]};
+        4'd11: beat_element = {8'b0, beat[95:88]};
+        4'd12: beat_element = {8'b0, beat[103:96]};
+        4'd13: beat_element = {8'b0, beat[111:104]};
+        4'd14: beat_element = {8'b0, beat[119:112]};
+        default: beat_element = {8'b0, beat[127:120]};
+      endcase
+    end else begin
+      case (lane[2:0])
+        3'd0: beat_element = beat[15:0];
+        3'd1: beat_element = beat[31:16];
+        3'd2: beat_element = beat[47:32];
+        3'd3: beat_element = beat[63:48];
+        3'd4: beat_element = beat[79:64];
+        3'd5: beat_element = beat[95:80];
+        3'd6: beat_element = beat[111:96];
+        default: beat_element = beat[127:112];
+      endcase
+    end
+  end
+endfunction
+
 assign start_ready = (state_q == STATE_IDLE);
 assign busy = (state_q != STATE_IDLE);
 assign done_valid = done_q;
@@ -149,13 +189,13 @@ assign core_start_valid = (state_q == STATE_START);
 assign core_owner = owner_q;
 assign core_mode = mode_q;
 assign core_in_valid = (state_q == STATE_ACTIVE) &&
-                       (!src_enable_q[0] || (fifo_count_q[0] != 0)) &&
-                       (!src_enable_q[1] || (fifo_count_q[1] != 0)) &&
-                       (!src_enable_q[2] || (fifo_count_q[2] != 0)) &&
+                       (!src_enable_q[0] || src_head_valid_q[0]) &&
+                       (!src_enable_q[1] || src_head_valid_q[1]) &&
+                       (!src_enable_q[2] || src_head_valid_q[2]) &&
                        (streamed_q < n_q) && output_capacity_available;
-assign core_src0 = fifo[0][fifo_head_q[0]];
-assign core_src1 = fifo[1][fifo_head_q[1]];
-assign core_src2 = fifo[2][fifo_head_q[2]];
+assign core_src0 = src_head_q[0];
+assign core_src1 = src_head_q[1];
+assign core_src2 = src_head_q[2];
 assign core_index = streamed_q;
 assign core_last = (streamed_q == (n_q - 16'd1));
 
@@ -163,8 +203,10 @@ always @* begin
   for (s = 0; s < 3; s = s + 1) begin
     rd_eligible[s] = (state_q == STATE_ACTIVE) && src_enable_q[s] &&
                      (src_issued_q[s] < n_q) &&
-                     (fifo_count_q[s] <= FIFO_DEPTH -
-                       (src_is_byte_q[s] ? 16 : 8));
+                     !(rd_inflight_q && (rd_tag_q == s[1:0])) &&
+                     (!src_head_valid_q[s] ||
+                      (src_beat_count_q[s] == 0) ||
+                      ((src_beat_count_q[s] == 1) && stream_fire));
   end
   rd_select = rr_q;
   case (rr_q)
@@ -190,15 +232,17 @@ always @* begin
 end
 
 wire any_rd_eligible = |rd_eligible;
-assign dtcm_rd_req = any_rd_eligible && !rd_inflight_q;
+// A returning response releases the single tag soon enough to issue another
+// request in the same cycle.
+assign dtcm_rd_req = any_rd_eligible && (!rd_inflight_q || read_return);
 assign dtcm_rd_addr = rd_select_addr;
 
 always @* begin
   pack_after_data = wr_pack_q;
   if (dst_is_byte_q)
-    pack_after_data[wr_pack_count_q*8 +: 8] = pack_source_data[7:0];
+    pack_after_data[wr_pack_count_q*8 +: 8] = core_out_data[7:0];
   else
-    pack_after_data[wr_pack_count_q*16 +: 16] = pack_source_data;
+    pack_after_data[wr_pack_count_q*16 +: 16] = core_out_data;
   pack_after_strb = {BEAT_BYTES{1'b0}};
   for (b = 0; b < BEAT_BYTES; b = b + 1) begin
     if (dst_is_byte_q ? (b < pack_after) : (b < pack_after * 2))
@@ -207,10 +251,7 @@ always @* begin
 end
 
 assign core_out_ready = (state_q == STATE_ACTIVE) && dst_enable_q &&
-                        (out_fifo_count_q < FIFO_DEPTH);
-assign output_pop = (out_fifo_count_q != 0) &&
-                    (wr_pack_count_q < dst_beat_elems) &&
-                    (!pack_would_complete || wr_fifo_can_push);
+                        (!pack_would_complete || wr_fifo_can_push);
 assign core_result_ready = (state_q == STATE_ACTIVE) && !dst_enable_q &&
                            (streamed_q == n_q);
 assign dtcm_wr_req = (wr_fifo_count_q != 2'd0);
@@ -241,16 +282,15 @@ always @(posedge clk or negedge cpurst_b) begin
     wr_fifo_head_q <= 1'b0;
     wr_fifo_tail_q <= 1'b0;
     wr_fifo_count_q <= 2'b0;
-    out_fifo_head_q <= {FIFO_INDEX_WIDTH{1'b0}};
-    out_fifo_tail_q <= {FIFO_INDEX_WIDTH{1'b0}};
-    out_fifo_count_q <= {COUNT_WIDTH{1'b0}};
     done_q <= 1'b0;
     for (s = 0; s < 3; s = s + 1) begin
       src_next_addr_q[s] <= {ADDR_WIDTH{1'b0}};
       src_issued_q[s] <= 16'b0;
-      fifo_head_q[s] <= {FIFO_INDEX_WIDTH{1'b0}};
-      fifo_tail_q[s] <= {FIFO_INDEX_WIDTH{1'b0}};
-      fifo_count_q[s] <= {COUNT_WIDTH{1'b0}};
+      src_beat_q[s] <= {BEAT_BITS{1'b0}};
+      src_head_q[s] <= 16'b0;
+      src_head_valid_q[s] <= 1'b0;
+      src_beat_count_q[s] <= 5'b0;
+      src_next_lane_q[s] <= 4'b0;
     end
   end else begin
     done_q <= 1'b0;
@@ -276,14 +316,13 @@ always @(posedge clk or negedge cpurst_b) begin
       wr_fifo_head_q <= 1'b0;
       wr_fifo_tail_q <= 1'b0;
       wr_fifo_count_q <= 2'b0;
-      out_fifo_head_q <= {FIFO_INDEX_WIDTH{1'b0}};
-      out_fifo_tail_q <= {FIFO_INDEX_WIDTH{1'b0}};
-      out_fifo_count_q <= {COUNT_WIDTH{1'b0}};
       for (s = 0; s < 3; s = s + 1) begin
         src_issued_q[s] <= 16'b0;
-        fifo_head_q[s] <= {FIFO_INDEX_WIDTH{1'b0}};
-        fifo_tail_q[s] <= {FIFO_INDEX_WIDTH{1'b0}};
-        fifo_count_q[s] <= {COUNT_WIDTH{1'b0}};
+        src_beat_q[s] <= {BEAT_BITS{1'b0}};
+        src_head_q[s] <= 16'b0;
+        src_head_valid_q[s] <= 1'b0;
+        src_beat_count_q[s] <= 5'b0;
+        src_next_lane_q[s] <= 4'b0;
       end
       if (n_elements == 0) begin
         state_q <= STATE_IDLE;
@@ -295,6 +334,24 @@ always @(posedge clk or negedge cpurst_b) begin
       if (core_start_fire)
         state_q <= STATE_ACTIVE;
 
+      // Consume all enabled source heads in lockstep.
+      if (stream_fire) begin
+        streamed_q <= next_streamed;
+        for (s = 0; s < 3; s = s + 1) begin
+          if (src_enable_q[s]) begin
+            if (src_beat_count_q[s] != 0) begin
+              src_head_q[s] <= beat_element(src_beat_q[s],
+                                               src_is_byte_q[s],
+                                               src_next_lane_q[s]);
+              src_next_lane_q[s] <= src_next_lane_q[s] + 1'b1;
+              src_beat_count_q[s] <= src_beat_count_q[s] - 1'b1;
+            end else begin
+              src_head_valid_q[s] <= 1'b0;
+            end
+          end
+        end
+      end
+
       if (dtcm_rd_req && dtcm_rd_ready) begin
         rd_inflight_q <= 1'b1;
         rd_tag_q <= rd_select;
@@ -304,50 +361,30 @@ always @(posedge clk or negedge cpurst_b) begin
         src_next_addr_q[rd_select] <= src_next_addr_q[rd_select] +
                                       {{ADDR_WIDTH-2{1'b0}}, 2'd2};
         rr_q <= (rd_select == 2'd2) ? 2'd0 : rd_select + 2'd1;
-      end
-
-      if (dtcm_rd_rvalid && rd_inflight_q) begin
+      end else if (read_return) begin
         rd_inflight_q <= 1'b0;
-        for (k = 0; k < 16; k = k + 1) begin
-          if (k < rd_elems_q) begin
-            if (src_is_byte_q[rd_tag_q])
-              fifo[rd_tag_q][fifo_tail_q[rd_tag_q] + k[FIFO_INDEX_WIDTH-1:0]]
-                <= {8'b0, dtcm_rd_rdata[k*8 +: 8]};
-            else
-              fifo[rd_tag_q][fifo_tail_q[rd_tag_q] + k[FIFO_INDEX_WIDTH-1:0]]
-                <= dtcm_rd_rdata[k*16 +: 16];
-          end
-        end
-        fifo_tail_q[rd_tag_q] <= fifo_tail_q[rd_tag_q] +
-                                 rd_elems_q[FIFO_INDEX_WIDTH-1:0];
       end
 
-      for (s = 0; s < 3; s = s + 1) begin
-        case ({(dtcm_rd_rvalid && rd_inflight_q && (rd_tag_q == s[1:0])),
-               (stream_fire && src_enable_q[s])})
-          2'b10: fifo_count_q[s] <= fifo_count_q[s] + rd_elems_q;
-          2'b01: begin
-            fifo_count_q[s] <= fifo_count_q[s] - 1'b1;
-            fifo_head_q[s] <= fifo_head_q[s] + 1'b1;
-          end
-          2'b11: begin
-            fifo_count_q[s] <= fifo_count_q[s] + rd_elems_q - 1'b1;
-            fifo_head_q[s] <= fifo_head_q[s] + 1'b1;
-          end
-          default: begin end
-        endcase
+      if (read_return) begin
+        src_beat_q[rd_tag_q] <= dtcm_rd_rdata;
+        // If the old head survives this edge, keep it and put every returned
+        // element behind it. Otherwise install lane zero directly as head.
+        if (src_head_valid_q[rd_tag_q] &&
+            !(stream_fire && src_enable_q[rd_tag_q] &&
+              (src_beat_count_q[rd_tag_q] == 0))) begin
+          src_beat_count_q[rd_tag_q] <= rd_elems_q;
+          src_next_lane_q[rd_tag_q] <= 4'd0;
+        end else begin
+          src_head_q[rd_tag_q] <= beat_element(dtcm_rd_rdata,
+                                                src_is_byte_q[rd_tag_q], 4'd0);
+          src_head_valid_q[rd_tag_q] <= 1'b1;
+          src_beat_count_q[rd_tag_q] <= rd_elems_q - 1'b1;
+          src_next_lane_q[rd_tag_q] <= 4'd1;
+        end
       end
-      if (stream_fire)
-        streamed_q <= next_streamed;
 
       if (output_push) begin
         out_accepted_q <= out_accepted_q + 16'd1;
-        out_fifo_data[out_fifo_tail_q] <= core_out_data;
-        out_fifo_last[out_fifo_tail_q] <= core_out_last;
-        out_fifo_tail_q <= out_fifo_tail_q + 1'b1;
-      end
-      if (output_pop) begin
-        out_fifo_head_q <= out_fifo_head_q + 1'b1;
         if (make_pending) begin
           wr_fifo_data_q[wr_fifo_tail_q] <= pack_after_data;
           wr_fifo_strb_q[wr_fifo_tail_q] <= pack_after_strb;
@@ -360,11 +397,6 @@ always @(posedge clk or negedge cpurst_b) begin
           wr_pack_count_q <= pack_after;
         end
       end
-      case ({output_push, output_pop})
-        2'b10: out_fifo_count_q <= out_fifo_count_q + 1'b1;
-        2'b01: out_fifo_count_q <= out_fifo_count_q - 1'b1;
-        default: begin end
-      endcase
       if (write_fire) begin
         wr_committed_q <= wr_committed_q +
                           {11'b0, wr_fifo_elems_q[wr_fifo_head_q]};
@@ -384,12 +416,14 @@ always @(posedge clk or negedge cpurst_b) begin
                    (out_accepted_q == n_q) &&
                    (wr_committed_q == n_q) &&
                    (wr_fifo_count_q == 2'd0) &&
-                   (out_fifo_count_q == 0)) begin
+                   (wr_pack_count_q == 0)) begin
         state_q <= STATE_IDLE;
         done_q <= 1'b1;
       end
     end
   end
 end
+
+wire unused_fifo_parameters = (FIFO_DEPTH == 0) || (FIFO_INDEX_WIDTH == 0);
 
 endmodule
