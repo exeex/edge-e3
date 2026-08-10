@@ -95,6 +95,7 @@ reg [1:0] rr_q;
 // Results pack directly into a beat. Two completed beats absorb DTCM stalls.
 reg [BEAT_BITS-1:0] wr_pack_q;
 reg [4:0] wr_pack_count_q;
+reg wr_pack_pending_q;
 reg [BEAT_BITS-1:0] wr_fifo_data_q [0:WR_FIFO_DEPTH-1];
 reg [4:0] wr_fifo_elems_q [0:WR_FIFO_DEPTH-1];
 reg wr_fifo_head_q;
@@ -112,13 +113,18 @@ wire [4:0] dst_beat_elems = dst_is_byte_q ? 5'd16 : 5'd8;
 wire [4:0] pack_after = wr_pack_count_q + 5'd1;
 wire pack_would_complete = (pack_after == dst_beat_elems) || core_out_last;
 wire make_pending = output_push && pack_would_complete;
-wire wr_fifo_can_push = (wr_fifo_count_q < WR_FIFO_DEPTH) || write_fire;
+wire wr_fifo_nonempty = (wr_fifo_count_q != 2'd0);
+wire direct_write = make_pending && !wr_fifo_nonempty && !wr_pack_pending_q;
+wire fifo_write_fire = write_fire && wr_fifo_nonempty;
+wire pack_write_fire = write_fire && !wr_fifo_nonempty && wr_pack_pending_q;
+wire direct_write_fire = write_fire && !wr_fifo_nonempty && !wr_pack_pending_q;
+wire wr_fifo_can_push = (wr_fifo_count_q < WR_FIFO_DEPTH) || fifo_write_fire;
 wire [15:0] next_streamed = streamed_q + 16'd1;
 wire [16:0] reserved_outputs = {1'b0, streamed_q} -
                                {1'b0, wr_committed_q};
-// Keep one completed-beat slot available for the next fixed-latency result.
-// The usable credit is one queued beat plus one not-yet-complete pack.
-wire [16:0] output_capacity = dst_is_byte_q ? 17'd31 : 17'd15;
+// streamed-minus-committed includes results still in the fixed-latency core.
+// The pack can retain a completed beat, so all three physical beats are usable.
+wire [16:0] output_capacity = dst_is_byte_q ? 17'd48 : 17'd24;
 wire output_capacity_available = !dst_enable_q ||
                                  (reserved_outputs < output_capacity);
 
@@ -240,7 +246,10 @@ always @* begin
                      !(rd_inflight_q && (rd_tag_q == s[1:0])) &&
                      (!src_head_valid_q[s] ||
                       (src_beat_count_q[s] == 0) ||
-                      ((src_beat_count_q[s] == 1) && stream_fire));
+                      ((src_beat_count_q[s] == 1) && stream_fire) ||
+                      ((src_beat_count_q[s] == 2) && stream_fire &&
+                       (!dst_enable_q ||
+                        ((reserved_outputs + 17'd2) < output_capacity))));
   end
   rd_select = rr_q;
   case (rr_q)
@@ -273,20 +282,25 @@ assign dtcm_rd_addr = rd_select_addr;
 
 always @* begin
   pack_after_data = wr_pack_q;
-  if (dst_is_byte_q)
-    pack_after_data[wr_pack_count_q*8 +: 8] = core_out_data[7:0];
-  else
-    pack_after_data[wr_pack_count_q*16 +: 16] = core_out_data;
+  if (!wr_pack_pending_q) begin
+    if (dst_is_byte_q)
+      pack_after_data[wr_pack_count_q*8 +: 8] = core_out_data[7:0];
+    else
+      pack_after_data[wr_pack_count_q*16 +: 16] = core_out_data;
+  end
 end
 
 assign core_out_ready = (state_q == STATE_ACTIVE) && dst_enable_q &&
-                        (!pack_would_complete || wr_fifo_can_push);
+                        !wr_pack_pending_q;
 assign core_result_ready = (state_q == STATE_ACTIVE) && !dst_enable_q &&
                            (streamed_q == n_q);
-assign dtcm_wr_req = (wr_fifo_count_q != 2'd0);
+assign dtcm_wr_req = wr_fifo_nonempty || wr_pack_pending_q || direct_write;
 assign dtcm_wr_addr = dst_next_addr_q;
-assign dtcm_wr_wdata = wr_fifo_data_q[wr_fifo_head_q];
-assign dtcm_wr_wstrb = beat_strobe(wr_fifo_elems_q[wr_fifo_head_q],
+assign dtcm_wr_wdata = wr_fifo_nonempty ? wr_fifo_data_q[wr_fifo_head_q] :
+                       wr_pack_pending_q ? wr_pack_q : pack_after_data;
+assign dtcm_wr_wstrb = beat_strobe(wr_fifo_nonempty ?
+                                   wr_fifo_elems_q[wr_fifo_head_q] :
+                                   wr_pack_pending_q ? wr_pack_count_q : pack_after,
                                    dst_is_byte_q);
 
 always @(posedge clk or negedge cpurst_b) begin
@@ -308,6 +322,7 @@ always @(posedge clk or negedge cpurst_b) begin
     rr_q <= 2'b0;
     wr_pack_q <= {BEAT_BITS{1'b0}};
     wr_pack_count_q <= 5'b0;
+    wr_pack_pending_q <= 1'b0;
     wr_fifo_head_q <= 1'b0;
     wr_fifo_tail_q <= 1'b0;
     wr_fifo_count_q <= 2'b0;
@@ -341,6 +356,7 @@ always @(posedge clk or negedge cpurst_b) begin
       rr_q <= 2'b0;
       wr_pack_q <= {BEAT_BITS{1'b0}};
       wr_pack_count_q <= 5'b0;
+      wr_pack_pending_q <= 1'b0;
       wr_fifo_head_q <= 1'b0;
       wr_fifo_tail_q <= 1'b0;
       wr_fifo_count_q <= 2'b0;
@@ -413,23 +429,45 @@ always @(posedge clk or negedge cpurst_b) begin
 
       if (output_push) begin
         if (make_pending) begin
-          wr_fifo_data_q[wr_fifo_tail_q] <= pack_after_data;
-          wr_fifo_elems_q[wr_fifo_tail_q] <= pack_after;
-          wr_fifo_tail_q <= wr_fifo_tail_q + 1'b1;
-          wr_pack_q <= {BEAT_BITS{1'b0}};
-          wr_pack_count_q <= 5'b0;
+          if (direct_write_fire) begin
+            wr_pack_q <= {BEAT_BITS{1'b0}};
+            wr_pack_count_q <= 5'b0;
+            wr_pack_pending_q <= 1'b0;
+          end else if (wr_fifo_can_push) begin
+            wr_fifo_data_q[wr_fifo_tail_q] <= pack_after_data;
+            wr_fifo_elems_q[wr_fifo_tail_q] <= pack_after;
+            wr_fifo_tail_q <= wr_fifo_tail_q + 1'b1;
+            wr_pack_q <= {BEAT_BITS{1'b0}};
+            wr_pack_count_q <= 5'b0;
+            wr_pack_pending_q <= 1'b0;
+          end else begin
+            // Both completed slots are occupied.  The pack itself is the
+            // third pending beat until an older FIFO entry drains.
+            wr_pack_q <= pack_after_data;
+            wr_pack_count_q <= pack_after;
+            wr_pack_pending_q <= 1'b1;
+          end
         end else begin
           wr_pack_q <= pack_after_data;
           wr_pack_count_q <= pack_after;
+          wr_pack_pending_q <= 1'b0;
         end
+      end else if (pack_write_fire) begin
+        wr_pack_q <= {BEAT_BITS{1'b0}};
+        wr_pack_count_q <= 5'b0;
+        wr_pack_pending_q <= 1'b0;
       end
       if (write_fire) begin
         wr_committed_q <= wr_committed_q +
-                          {11'b0, wr_fifo_elems_q[wr_fifo_head_q]};
-        wr_fifo_head_q <= wr_fifo_head_q + 1'b1;
+                          {11'b0, wr_fifo_nonempty ?
+                                   wr_fifo_elems_q[wr_fifo_head_q] :
+                                   wr_pack_pending_q ? wr_pack_count_q : pack_after};
+        if (wr_fifo_nonempty)
+          wr_fifo_head_q <= wr_fifo_head_q + 1'b1;
         dst_next_addr_q <= dst_next_addr_q + {{ADDR_WIDTH-2{1'b0}}, 2'd2};
       end
-      case ({make_pending, write_fire})
+      case ({make_pending && !direct_write_fire && wr_fifo_can_push,
+             fifo_write_fire})
         2'b10: wr_fifo_count_q <= wr_fifo_count_q + 2'd1;
         2'b01: wr_fifo_count_q <= wr_fifo_count_q - 2'd1;
         default: wr_fifo_count_q <= wr_fifo_count_q;
