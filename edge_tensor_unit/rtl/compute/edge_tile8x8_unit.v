@@ -1,4 +1,4 @@
-// Eight synthesis-friendly BF16 multipliers for the optional Q8 scale stage.
+// Eight reusable synthesis-friendly BF16 multipliers for the Q8 scale stage.
 //
 // This follows the vec8dot product representation: sanitize both BF16 inputs,
 // multiply two fixed 8-bit significands, and carry a signed 10-bit synthetic
@@ -455,13 +455,13 @@ generate
       .bf16_o     (dot_bf16[lane][15:0])
     );
 
-    edge_bf16_add_comb x_psum_add (
+    edge_psum x_psum_add (
       .a_raw(dot_bf16[lane][15:0]),
       .b_raw(psum_lane[lane][15:0]),
       .y    (sum_lane[lane][15:0])
     );
 
-    edge_bf16_add_comb x_scaled_psum_add (
+    edge_psum x_scaled_psum_add (
       .a_raw(scaled_mul_bf16[lane*16 +: 16]),
       .b_raw(scaled_psum_d1[lane*16 +: 16]),
       .y    (scaled_sum_lane[lane][15:0])

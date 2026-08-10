@@ -1,4 +1,4 @@
-// One dual-mode BF16 x {INT8, BF16} dot8 row for the Edge tensor prototype.
+// One reusable dual-mode BF16 x {INT8, BF16} dot8 row.
 //
 // Pipeline:
 //   s0: sanitize BF16 lanes
@@ -10,7 +10,7 @@
 //       successive row sums in the private BF22 RSUM accumulator
 //   r6: emit one BF16 result when the RSUM sequence marks its last row
 
-module edge_dot8_unit(
+module edge_dot8_kernel(
   clk,
   rst_b,
   in_valid,
@@ -22,6 +22,7 @@ module edge_dot8_unit(
   rsum_first_i,
   rsum_last_i,
   out_valid,
+  bf22_o,
   bf16_o
 );
 
@@ -36,6 +37,7 @@ input          rsum_enable_i;
 input          rsum_first_i;
 input          rsum_last_i;
 output         out_valid;
+output [31:0]  bf22_o;
 output [15:0]  bf16_o;
 
 reg         s0_valid;
@@ -85,6 +87,7 @@ reg         s4_rsum_last;
 reg         s5_rsum_last;
 reg [31:0]  rsum_accum_q;
 reg         rsum_output_valid_q;
+reg [31:0]  rsum_output_bf22_q;
 reg [15:0]  rsum_output_bf16_q;
 
 integer i;
@@ -105,6 +108,7 @@ wire [31:0] rsum_next_bits;
 wire [31:0] rsum_next_bf16_bits;
 
 assign out_valid = rsum_output_valid_q || (s5_valid && !s5_rsum_enable);
+assign bf22_o = rsum_output_valid_q ? rsum_output_bf22_q : s5_bf22_bits;
 assign bf16_o = rsum_output_valid_q ? rsum_output_bf16_q : s5_bf16;
 assign rsum_base_bits = s5_rsum_first ? 32'b0 : rsum_accum_q;
 assign rsum_next_bits = bf22_round_bits(
@@ -566,6 +570,7 @@ always @(posedge clk or negedge rst_b) begin
     s5_rsum_last <= 1'b0;
     rsum_accum_q <= 32'b0;
     rsum_output_valid_q <= 1'b0;
+    rsum_output_bf22_q <= 32'b0;
     rsum_output_bf16_q <= 16'b0;
   end else begin
     s0_valid <= in_valid;
@@ -597,6 +602,7 @@ always @(posedge clk or negedge rst_b) begin
     if (s5_valid && s5_rsum_enable) begin
       rsum_accum_q <= rsum_next_bits;
       if (s5_rsum_last) begin
+        rsum_output_bf22_q <= rsum_next_bits;
         rsum_output_bf16_q <= rsum_next_bf16_bits[31:16];
         rsum_output_valid_q <= 1'b1;
       end

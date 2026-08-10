@@ -1,4 +1,4 @@
-module edge_bf16_add_comb(
+module edge_psum(
   a_raw,
   b_raw,
   y
