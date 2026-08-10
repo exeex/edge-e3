@@ -109,9 +109,15 @@ reg [31:0]                  write_chunk_beats_left;
 reg [31:0]                  burst_beats;
 reg [31:0]                  d2a_reads_issued;
 reg [31:0]                  d2a_reads_received;
-reg [3:0]                   state;
+reg [4:0]                   state;
 reg [BYTE_WIDTH-1:0]        partial_wstrb;
 reg [BYTE_WIDTH-1:0]        recv_partial_wstrb;
+reg [3:0]                   dram_byte_offset;
+reg [DATA_WIDTH-1:0]        align_prev_data;
+reg [DATA_WIDTH-1:0]        align_next_data;
+reg [DATA_WIDTH-1:0]        unaligned_wdata;
+reg [BYTE_WIDTH-1:0]        unaligned_wstrb;
+reg                         unaligned_d2a_first;
 reg [FIFO_PTR_WIDTH-1:0]    fifo_rd_ptr;
 reg [FIFO_PTR_WIDTH-1:0]    fifo_wr_ptr;
 reg [FIFO_PTR_WIDTH:0]      fifo_count;
@@ -146,6 +152,16 @@ localparam D2A_AW    = 4'd6;
 localparam D2A_W     = 4'd7;
 localparam D2A_B     = 4'd8;
 localparam DONE      = 4'd9;
+localparam UA2D_AR0  = 5'd10;
+localparam UA2D_R0   = 5'd11;
+localparam UA2D_ARN  = 5'd12;
+localparam UA2D_RN   = 5'd13;
+localparam UA2D_WD   = 5'd14;
+localparam UD2A_DR   = 5'd15;
+localparam UD2A_WAIT = 5'd16;
+localparam UD2A_AW   = 5'd17;
+localparam UD2A_W    = 5'd18;
+localparam UD2A_B    = 5'd19;
 
 assign start_beats[31:0] = start_len[31:BEAT_SHIFT]
                          + {{31{1'b0}}, |start_len[BEAT_SHIFT-1:0]};
@@ -209,6 +225,12 @@ always @(posedge clk or negedge cpurst_b) begin
     fifo_wr_ptr <= {FIFO_PTR_WIDTH{1'b0}};
     fifo_count <= {FIFO_PTR_WIDTH+1{1'b0}};
     lease_phase <= 3'b0;
+    dram_byte_offset <= 4'b0;
+    align_prev_data <= {DATA_WIDTH{1'b0}};
+    align_next_data <= {DATA_WIDTH{1'b0}};
+    unaligned_wdata <= {DATA_WIDTH{1'b0}};
+    unaligned_wstrb <= {BYTE_WIDTH{1'b0}};
+    unaligned_d2a_first <= 1'b0;
     for (fifo_i = 0; fifo_i < FIFO_DEPTH; fifo_i = fifo_i + 1) begin
       fifo_data[fifo_i] <= {DATA_WIDTH{1'b0}};
       fifo_wstrb[fifo_i] <= {BYTE_WIDTH{1'b0}};
@@ -254,8 +276,9 @@ always @(posedge clk or negedge cpurst_b) begin
     case (state)
       IDLE: begin
         if (start) begin
-          axi_addr   <= start_axi_addr[AXI_ADDR_WIDTH-1:0];
+          axi_addr   <= {start_axi_addr[AXI_ADDR_WIDTH-1:4], 4'b0};
           dtcm_addr  <= start_dtcm_addr[DTCM_ADDR_WIDTH-1:0];
+          dram_byte_offset <= start_axi_addr[3:0];
           beats_left <= start_beats[31:0];
           bytes_left <= start_len[31:0];
           recv_bytes_left <= start_len[31:0];
@@ -265,6 +288,7 @@ always @(posedge clk or negedge cpurst_b) begin
           burst_beats <= 32'b0;
           d2a_reads_issued <= 32'b0;
           d2a_reads_received <= 32'b0;
+          unaligned_d2a_first <= start_dir;
           fifo_rd_ptr <= {FIFO_PTR_WIDTH{1'b0}};
           fifo_wr_ptr <= {FIFO_PTR_WIDTH{1'b0}};
           fifo_count <= {FIFO_PTR_WIDTH+1{1'b0}};
@@ -275,9 +299,10 @@ always @(posedge clk or negedge cpurst_b) begin
               start_beats[31:0] > BURST_MAX_BEATS[31:0]
               ? BURST_MAX_BEATS[31:0] : start_beats[31:0];
           end
-          state      <= start_beats[31:0] == 32'b0
-                        ? DONE
-                        : (start_dir ? D2A_DR : A2D_AR);
+          state      <= start_beats[31:0] == 32'b0 ? DONE
+                        : (start_axi_addr[3:0] == 4'b0
+                           ? (start_dir ? D2A_DR : A2D_AR)
+                           : (start_dir ? UD2A_DR : UA2D_AR0));
         end
       end
       A2D_AR: begin
@@ -351,6 +376,115 @@ always @(posedge clk or negedge cpurst_b) begin
           end
         end
       end
+      UA2D_AR0: begin
+        if (axi_arready) begin
+          axi_addr <= axi_addr + BEAT_BYTES[AXI_ADDR_WIDTH-1:0];
+          state <= UA2D_R0;
+        end
+      end
+      UA2D_R0: begin
+        if (axi_rvalid) begin
+          align_prev_data <= axi_rdata;
+          if (bytes_left <= (BEAT_BYTES - dram_byte_offset)) begin
+            align_next_data <= {DATA_WIDTH{1'b0}};
+            state <= UA2D_WD;
+          end else begin
+            state <= UA2D_ARN;
+          end
+        end
+      end
+      UA2D_ARN: begin
+        if (axi_arready) begin
+          axi_addr <= axi_addr + BEAT_BYTES[AXI_ADDR_WIDTH-1:0];
+          state <= UA2D_RN;
+        end
+      end
+      UA2D_RN: begin
+        if (axi_rvalid) begin
+          align_next_data <= axi_rdata;
+          state <= UA2D_WD;
+        end
+      end
+      UA2D_WD: begin
+        if (dma_dtcm_ready) begin
+          dtcm_addr <= dtcm_addr + DTCM_ADDR_INCR[DTCM_ADDR_WIDTH-1:0];
+          if (bytes_left <= BEAT_BYTES) begin
+            bytes_left <= 32'b0;
+            state <= DONE;
+          end else begin
+            bytes_left <= bytes_left - BEAT_BYTES;
+            align_prev_data <= align_next_data;
+            if ((bytes_left - BEAT_BYTES) <=
+                (BEAT_BYTES-dram_byte_offset)) begin
+              align_next_data <= {DATA_WIDTH{1'b0}};
+              state <= UA2D_WD;
+            end else begin
+              state <= UA2D_ARN;
+            end
+          end
+        end
+      end
+      UD2A_DR: begin
+        if (dma_dtcm_ready) begin
+          dtcm_addr <= dtcm_addr + DTCM_ADDR_INCR[DTCM_ADDR_WIDTH-1:0];
+          state <= UD2A_WAIT;
+        end
+      end
+      UD2A_WAIT: begin
+        if (dma_dtcm_rvalid) begin
+          if (unaligned_d2a_first) begin
+            unaligned_wdata <= dma_dtcm_rdata << (dram_byte_offset * 8);
+            unaligned_wstrb <=
+              ({BYTE_WIDTH{1'b1}} >>
+               (BEAT_BYTES - (bytes_left < (BEAT_BYTES-dram_byte_offset)
+                 ? bytes_left : (BEAT_BYTES-dram_byte_offset))))
+              << dram_byte_offset;
+            align_prev_data <=
+              dma_dtcm_rdata >> ((BEAT_BYTES-dram_byte_offset) * 8);
+            if (bytes_left > (BEAT_BYTES-dram_byte_offset))
+              bytes_left <= bytes_left - (BEAT_BYTES-dram_byte_offset);
+            else
+              bytes_left <= 32'b0;
+            unaligned_d2a_first <= 1'b0;
+          end else begin
+            unaligned_wdata <= align_prev_data |
+                               (dma_dtcm_rdata << (dram_byte_offset * 8));
+            unaligned_wstrb <= bytes_left >= BEAT_BYTES
+                               ? {BYTE_WIDTH{1'b1}}
+                               : ({BYTE_WIDTH{1'b1}} >>
+                                  (BEAT_BYTES-bytes_left));
+            align_prev_data <=
+              dma_dtcm_rdata >> ((BEAT_BYTES-dram_byte_offset) * 8);
+            bytes_left <= bytes_left > BEAT_BYTES
+                          ? bytes_left - BEAT_BYTES : 32'b0;
+          end
+          state <= UD2A_AW;
+        end
+      end
+      UD2A_AW: begin
+        if (axi_awready)
+          state <= UD2A_W;
+      end
+      UD2A_W: begin
+        if (axi_wready)
+          state <= UD2A_B;
+      end
+      UD2A_B: begin
+        if (axi_bvalid) begin
+          axi_addr <= axi_addr + BEAT_BYTES[AXI_ADDR_WIDTH-1:0];
+          if (bytes_left == 32'b0) begin
+            state <= DONE;
+          end else if (bytes_left <= dram_byte_offset) begin
+            unaligned_wdata <= align_prev_data;
+            unaligned_wstrb <= {BYTE_WIDTH{1'b1}} >>
+                               (BEAT_BYTES-bytes_left);
+            bytes_left <= 32'b0;
+            state <= UD2A_AW;
+          end else begin
+            state <= UD2A_DR;
+          end
+        end
+      end
       DONE: begin
         state <= IDLE;
       end
@@ -364,28 +498,40 @@ end
 assign dma_busy = state != IDLE && state != DONE;
 assign dma_done = state == DONE;
 
-assign axi_arvalid = state == A2D_AR;
+assign axi_arvalid = state == A2D_AR || state == UA2D_AR0 || state == UA2D_ARN;
 assign axi_araddr[AXI_ADDR_WIDTH-1:0] = axi_addr[AXI_ADDR_WIDTH-1:0];
-assign axi_arlen[7:0] = next_burst_beats[7:0] - 8'b1;
-assign axi_rready = state == A2D_RUN && !a2d_fifo_full;
+assign axi_arlen[7:0] = (state == UA2D_AR0 || state == UA2D_ARN)
+                        ? 8'b0 : next_burst_beats[7:0] - 8'b1;
+assign axi_rready = (state == A2D_RUN && !a2d_fifo_full)
+                 || state == UA2D_R0 || state == UA2D_RN;
 
-assign axi_awvalid = state == D2A_AW;
+assign axi_awvalid = state == D2A_AW || state == UD2A_AW;
 assign axi_awaddr[AXI_ADDR_WIDTH-1:0] = axi_addr[AXI_ADDR_WIDTH-1:0];
-assign axi_awlen[7:0] = burst_beats[7:0] - 8'b1;
-assign axi_wvalid = state == D2A_W;
-assign axi_wdata[DATA_WIDTH-1:0] = fifo_data[fifo_rd_ptr];
-assign axi_wlast = state == D2A_W && write_chunk_beats_left == 32'd1;
-assign axi_wstrb[BYTE_WIDTH-1:0] = fifo_wstrb[fifo_rd_ptr];
-assign axi_bready = state == D2A_B;
+assign axi_awlen[7:0] = state == UD2A_AW ? 8'b0
+                        : burst_beats[7:0] - 8'b1;
+assign axi_wvalid = state == D2A_W || state == UD2A_W;
+assign axi_wdata[DATA_WIDTH-1:0] = state == UD2A_W
+                                   ? unaligned_wdata
+                                   : fifo_data[fifo_rd_ptr];
+assign axi_wlast = state == UD2A_W
+                 || (state == D2A_W && write_chunk_beats_left == 32'd1);
+assign axi_wstrb[BYTE_WIDTH-1:0] = state == UD2A_W
+                                   ? unaligned_wstrb
+                                   : fifo_wstrb[fifo_rd_ptr];
+assign axi_bready = state == D2A_B || state == UD2A_B;
 
 assign dma_dtcm_req = (state == A2D_RUN && !a2d_fifo_empty)
-                   || state == D2A_DR;
-assign dma_dtcm_we  = state == A2D_RUN;
+                   || state == D2A_DR || state == UA2D_WD
+                   || state == UD2A_DR;
+assign dma_dtcm_we  = state == A2D_RUN || state == UA2D_WD;
 assign dma_dtcm_addr[DTCM_ADDR_WIDTH-1:0] = dtcm_addr[DTCM_ADDR_WIDTH-1:0];
 assign dma_dtcm_wdata[DATA_WIDTH-1:0] =
-       fifo_data[fifo_rd_ptr][DATA_WIDTH-1:0];
+       state == UA2D_WD
+       ? ({align_next_data, align_prev_data} >> (dram_byte_offset * 8))
+       : fifo_data[fifo_rd_ptr][DATA_WIDTH-1:0];
 assign dma_dtcm_wstrb[BYTE_WIDTH-1:0] =
-       fifo_wstrb[fifo_rd_ptr][BYTE_WIDTH-1:0];
+       state == UA2D_WD ? active_wstrb
+                        : fifo_wstrb[fifo_rd_ptr][BYTE_WIDTH-1:0];
 
 assign dma_lease_valid = start && start_beats[31:0] != 32'b0;
 assign dma_lease_channel[2:0] =
