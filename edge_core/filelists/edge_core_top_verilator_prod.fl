@@ -82,7 +82,7 @@ edge_lsu_dtcm_adapter/edge_lsu_dtcm_adapter.v
 ../edge-rv/edge_dcache/rtl/edge_dcache_dirty_array.v
 edge_retire_sync/edge_retire_sync.v
 ../edge-rv/edge_pc_redirect_ctrl/edge_pc_redirect_ctrl.v
-edge_biu/edge_biu_top.v
+../edge-rv/edge_biu/edge_biu_top.v
 edge_dtcm_subsys/edge_dtcm_subsys.v
 edge_dtcm_subsys/rtl/fpga_ram.v
 edge_dtcm_subsys/rtl/edge_f_spsram_1024x64.v
