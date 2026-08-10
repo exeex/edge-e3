@@ -19,7 +19,10 @@ module edge_dtcm_upper_io(
   bank_addr,
   bank_wdata,
   bank_wstrb,
-  bank_rdata,
+  rsp_bank0,
+  rsp_bank1,
+  rsp_bank0_rdata,
+  rsp_bank1_rdata,
   active_mask
 );
 
@@ -55,7 +58,10 @@ output                             bank1_valid;
 output [SRAM_ADDR_WIDTH-1:0]       bank_addr;
 output [CLIENT_DATA_WIDTH-1:0]     bank_wdata;
 output [CLIENT_BYTE_WIDTH-1:0]     bank_wstrb;
-input  [BANK_NUM*DATA_WIDTH-1:0]   bank_rdata;
+output [BANK_INDEX_WIDTH-1:0]      rsp_bank0;
+output [BANK_INDEX_WIDTH-1:0]      rsp_bank1;
+input  [DATA_WIDTH-1:0]            rsp_bank0_rdata;
+input  [DATA_WIDTH-1:0]            rsp_bank1_rdata;
 output [BANK_NUM-1:0]              active_mask;
 
 wire [BANK_NUM-1:0]                bank0_mask;
@@ -80,15 +86,6 @@ begin
     if (bank == i[BANK_INDEX_WIDTH-1:0])
       one_bank_mask[i] = 1'b1;
   end
-end
-endfunction
-
-function [DATA_WIDTH-1:0] select_bank_data;
-  input [BANK_NUM*DATA_WIDTH-1:0] data;
-  input [BANK_INDEX_WIDTH-1:0] bank;
-begin
-  select_bank_data[DATA_WIDTH-1:0] =
-      data[bank*DATA_WIDTH +: DATA_WIDTH];
 end
 endfunction
 
@@ -137,18 +134,17 @@ always @(posedge clk or negedge cpurst_b) begin
 end
 
 assign rvalid = rvalid_q;
+assign rsp_bank0[BANK_INDEX_WIDTH-1:0] = rsp_bank0_q[BANK_INDEX_WIDTH-1:0];
+assign rsp_bank1[BANK_INDEX_WIDTH-1:0] = rsp_bank1_q[BANK_INDEX_WIDTH-1:0];
 
 generate
   if (LANES == 1) begin: SINGLE_LANE_RDATA
     wire unused_rsp_bank1;
     assign unused_rsp_bank1 = |rsp_bank1_q[BANK_INDEX_WIDTH-1:0];
-    assign rdata[DATA_WIDTH-1:0] =
-        select_bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], rsp_bank0_q);
+    assign rdata[DATA_WIDTH-1:0] = rsp_bank0_rdata[DATA_WIDTH-1:0];
   end else begin: PAIR_RDATA
-    assign rdata[DATA_WIDTH-1:0] =
-        select_bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], rsp_bank0_q);
-    assign rdata[2*DATA_WIDTH-1:DATA_WIDTH] =
-        select_bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], rsp_bank1_q);
+    assign rdata[DATA_WIDTH-1:0] = rsp_bank0_rdata[DATA_WIDTH-1:0];
+    assign rdata[2*DATA_WIDTH-1:DATA_WIDTH] = rsp_bank1_rdata[DATA_WIDTH-1:0];
   end
 endgenerate
 

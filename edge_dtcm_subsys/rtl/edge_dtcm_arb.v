@@ -169,38 +169,22 @@ wire [BANK_INDEX_WIDTH-1:0] other_dma_pair_bank1;
 wire [SRAM_ADDR_WIDTH-1:0] other_dma_pair_addr;
 wire [DMA_DATA_WIDTH-1:0] other_dma_pair_wdata;
 wire [DMA_BYTE_WIDTH-1:0] other_dma_pair_wstrb;
-wire [DMA_DATA_WIDTH-1:0] other_dma_pair_rdata;
 wire                     other_sld_pair_req;
 wire [BANK_INDEX_WIDTH-1:0] other_sld_pair_bank0;
 wire [BANK_INDEX_WIDTH-1:0] other_sld_pair_bank1;
 wire [SRAM_ADDR_WIDTH-1:0] other_sld_pair_addr;
-wire [DMA_DATA_WIDTH-1:0] other_sld_pair_rdata;
 wire                     other_wld_pair_req;
 wire [BANK_INDEX_WIDTH-1:0] other_wld_pair_bank0;
 wire [BANK_INDEX_WIDTH-1:0] other_wld_pair_bank1;
 wire [SRAM_ADDR_WIDTH-1:0] other_wld_pair_addr;
-wire [DMA_DATA_WIDTH-1:0] other_wld_pair_rdata;
 wire [BANK_NUM*DATA_WIDTH-1:0] bank_rdata;
 wire [BANK_NUM-1:0]      bank_rvalid_unused;
 wire [BANK_INDEX_WIDTH-1:0] bank16_phase_unused;
 wire                     other_conflict_unused;
+wire [BANK_NUM-1:0]      other_active_mask_unused;
 wire                     unused_lease_inputs;
-reg  [BANK_INDEX_WIDTH-1:0] other_dma_rsp_bank0_q;
-reg  [BANK_INDEX_WIDTH-1:0] other_dma_rsp_bank1_q;
-reg  [BANK_INDEX_WIDTH-1:0] other_sld_rsp_bank0_q;
-reg  [BANK_INDEX_WIDTH-1:0] other_sld_rsp_bank1_q;
-reg  [BANK_INDEX_WIDTH-1:0] other_wld_rsp_bank0_q;
-reg  [BANK_INDEX_WIDTH-1:0] other_wld_rsp_bank1_q;
 
 genvar                    other_bank_gen_i;
-
-function [DATA_WIDTH-1:0] bank_data;
-  input [BANK_NUM*DATA_WIDTH-1:0] data;
-  input [BANK_INDEX_WIDTH-1:0] bank;
-begin
-  bank_data[DATA_WIDTH-1:0] = data[bank*DATA_WIDTH +: DATA_WIDTH];
-end
-endfunction
 
 assign unused_lease_inputs = dma_lease_valid || (|dma_lease_channel[2:0])
                           || (|dma_lease_cycles[8:0])
@@ -255,15 +239,6 @@ assign lower_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0] =
     (|actu_bank_req[BANK_NUM-1:0])
     ? actu_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]
     : tensor_native_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0];
-assign other_dma_pair_rdata[DMA_DATA_WIDTH-1:0] =
-    {bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_dma_rsp_bank1_q),
-     bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_dma_rsp_bank0_q)};
-assign other_sld_pair_rdata[DMA_DATA_WIDTH-1:0] =
-    {bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_sld_rsp_bank1_q),
-     bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_sld_rsp_bank0_q)};
-assign other_wld_pair_rdata[DMA_DATA_WIDTH-1:0] =
-    {bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_wld_rsp_bank1_q),
-     bank_data(bank_rdata[BANK_NUM*DATA_WIDTH-1:0], other_wld_rsp_bank0_q)};
 
 edge_dtcm_other_bank16_adapter #(
   .ADDR_WIDTH(ADDR_WIDTH),
@@ -307,7 +282,6 @@ edge_dtcm_other_bank16_adapter #(
   .dma_pair_addr(other_dma_pair_addr[SRAM_ADDR_WIDTH-1:0]),
   .dma_pair_wdata(other_dma_pair_wdata[DMA_DATA_WIDTH-1:0]),
   .dma_pair_wstrb(other_dma_pair_wstrb[DMA_BYTE_WIDTH-1:0]),
-  .dma_pair_rdata(other_dma_pair_rdata[DMA_DATA_WIDTH-1:0]),
   .sld_addr(sld_addr[ADDR_WIDTH-1:0]),
   .sld_rdata(sld_rdata[DMA_DATA_WIDTH-1:0]),
   .sld_ready(sld_ready),
@@ -317,7 +291,6 @@ edge_dtcm_other_bank16_adapter #(
   .sld_pair_bank0(other_sld_pair_bank0[BANK_INDEX_WIDTH-1:0]),
   .sld_pair_bank1(other_sld_pair_bank1[BANK_INDEX_WIDTH-1:0]),
   .sld_pair_addr(other_sld_pair_addr[SRAM_ADDR_WIDTH-1:0]),
-  .sld_pair_rdata(other_sld_pair_rdata[DMA_DATA_WIDTH-1:0]),
   .wld_addr(wld_addr[ADDR_WIDTH-1:0]),
   .wld_rdata(wld_rdata[DMA_DATA_WIDTH-1:0]),
   .wld_ready(wld_ready),
@@ -327,8 +300,7 @@ edge_dtcm_other_bank16_adapter #(
   .wld_pair_bank0(other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0]),
   .wld_pair_bank1(other_wld_pair_bank1[BANK_INDEX_WIDTH-1:0]),
   .wld_pair_addr(other_wld_pair_addr[SRAM_ADDR_WIDTH-1:0]),
-  .wld_pair_rdata(other_wld_pair_rdata[DMA_DATA_WIDTH-1:0]),
-  .active_mask(),
+  .active_mask(other_active_mask_unused[BANK_NUM-1:0]),
   .bank16_conflict(other_conflict_unused)
 );
 
@@ -403,30 +375,6 @@ generate
           : {BYTE_WIDTH{1'b0}};
   end
 endgenerate
-
-always @(posedge clk or negedge cpurst_b) begin
-  if (!cpurst_b) begin
-    other_dma_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
-    other_dma_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
-    other_sld_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
-    other_sld_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
-    other_wld_rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
-    other_wld_rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
-  end else begin
-    if (other_dma_pair_req && !other_dma_pair_we) begin
-      other_dma_rsp_bank0_q <= other_dma_pair_bank0[BANK_INDEX_WIDTH-1:0];
-      other_dma_rsp_bank1_q <= other_dma_pair_bank1[BANK_INDEX_WIDTH-1:0];
-    end
-    if (other_sld_pair_req) begin
-      other_sld_rsp_bank0_q <= other_sld_pair_bank0[BANK_INDEX_WIDTH-1:0];
-      other_sld_rsp_bank1_q <= other_sld_pair_bank1[BANK_INDEX_WIDTH-1:0];
-    end
-    if (other_wld_pair_req) begin
-      other_wld_rsp_bank0_q <= other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0];
-      other_wld_rsp_bank1_q <= other_wld_pair_bank1[BANK_INDEX_WIDTH-1:0];
-    end
-  end
-end
 
 edge_dtcm_bank16_raw_fabric #(
   .BANK_NUM(BANK_NUM),
