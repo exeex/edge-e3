@@ -156,35 +156,10 @@ wire [BANK_NUM-1:0]      other_bank_we;
 wire [BANK_NUM*SRAM_ADDR_WIDTH-1:0] other_bank_addr;
 wire [BANK_NUM*DATA_WIDTH-1:0] other_bank_wdata;
 wire [BANK_NUM*BYTE_WIDTH-1:0] other_bank_wstrb;
-wire                     other_lsu_bank_req;
-wire                     other_lsu_bank_we;
-wire [BANK_INDEX_WIDTH-1:0] other_lsu_bank;
-wire [SRAM_ADDR_WIDTH-1:0] other_lsu_bank_addr;
-wire [DATA_WIDTH-1:0]    other_lsu_bank_wdata;
-wire [BYTE_WIDTH-1:0]    other_lsu_bank_wstrb;
-wire                     other_dma_pair_req;
-wire                     other_dma_pair_we;
-wire [BANK_INDEX_WIDTH-1:0] other_dma_pair_bank0;
-wire [BANK_INDEX_WIDTH-1:0] other_dma_pair_bank1;
-wire [SRAM_ADDR_WIDTH-1:0] other_dma_pair_addr;
-wire [DMA_DATA_WIDTH-1:0] other_dma_pair_wdata;
-wire [DMA_BYTE_WIDTH-1:0] other_dma_pair_wstrb;
-wire                     other_sld_pair_req;
-wire [BANK_INDEX_WIDTH-1:0] other_sld_pair_bank0;
-wire [BANK_INDEX_WIDTH-1:0] other_sld_pair_bank1;
-wire [SRAM_ADDR_WIDTH-1:0] other_sld_pair_addr;
-wire                     other_wld_pair_req;
-wire [BANK_INDEX_WIDTH-1:0] other_wld_pair_bank0;
-wire [BANK_INDEX_WIDTH-1:0] other_wld_pair_bank1;
-wire [SRAM_ADDR_WIDTH-1:0] other_wld_pair_addr;
 wire [BANK_NUM*DATA_WIDTH-1:0] bank_rdata;
 wire [BANK_NUM-1:0]      bank_rvalid_unused;
 wire [BANK_INDEX_WIDTH-1:0] bank16_phase_unused;
-wire                     other_conflict_unused;
-wire [BANK_NUM-1:0]      other_active_mask_unused;
 wire                     unused_lease_inputs;
-
-genvar                    other_bank_gen_i;
 
 assign unused_lease_inputs = dma_lease_valid || (|dma_lease_channel[2:0])
                           || (|dma_lease_cycles[8:0])
@@ -250,7 +225,6 @@ edge_dtcm_other_bank16_adapter #(
 ) x_other_adapter (
   .clk(clk),
   .cpurst_b(cpurst_b),
-  .external_busy_mask(tensor_lower_owned_mask[BANK_NUM-1:0]),
   .phase(bank16_phase_unused[BANK_INDEX_WIDTH-1:0]),
   .bank_rdata(bank_rdata[BANK_NUM*DATA_WIDTH-1:0]),
   .dma_addr(dma_addr[ADDR_WIDTH-1:0]),
@@ -269,112 +243,22 @@ edge_dtcm_other_bank16_adapter #(
   .lsu_we(lsu_we),
   .lsu_wdata(lsu_wdata[DATA_WIDTH-1:0]),
   .lsu_wstrb(lsu_wstrb[BYTE_WIDTH-1:0]),
-  .lsu_bank_req(other_lsu_bank_req),
-  .lsu_bank_we(other_lsu_bank_we),
-  .lsu_bank(other_lsu_bank[BANK_INDEX_WIDTH-1:0]),
-  .lsu_bank_addr(other_lsu_bank_addr[SRAM_ADDR_WIDTH-1:0]),
-  .lsu_bank_wdata(other_lsu_bank_wdata[DATA_WIDTH-1:0]),
-  .lsu_bank_wstrb(other_lsu_bank_wstrb[BYTE_WIDTH-1:0]),
-  .dma_pair_req(other_dma_pair_req),
-  .dma_pair_we(other_dma_pair_we),
-  .dma_pair_bank0(other_dma_pair_bank0[BANK_INDEX_WIDTH-1:0]),
-  .dma_pair_bank1(other_dma_pair_bank1[BANK_INDEX_WIDTH-1:0]),
-  .dma_pair_addr(other_dma_pair_addr[SRAM_ADDR_WIDTH-1:0]),
-  .dma_pair_wdata(other_dma_pair_wdata[DMA_DATA_WIDTH-1:0]),
-  .dma_pair_wstrb(other_dma_pair_wstrb[DMA_BYTE_WIDTH-1:0]),
   .sld_addr(sld_addr[ADDR_WIDTH-1:0]),
   .sld_rdata(sld_rdata[DMA_DATA_WIDTH-1:0]),
   .sld_ready(sld_ready),
   .sld_req(sld_req && !lsu_store_block),
   .sld_rvalid(sld_rvalid),
-  .sld_pair_req(other_sld_pair_req),
-  .sld_pair_bank0(other_sld_pair_bank0[BANK_INDEX_WIDTH-1:0]),
-  .sld_pair_bank1(other_sld_pair_bank1[BANK_INDEX_WIDTH-1:0]),
-  .sld_pair_addr(other_sld_pair_addr[SRAM_ADDR_WIDTH-1:0]),
   .wld_addr(wld_addr[ADDR_WIDTH-1:0]),
   .wld_rdata(wld_rdata[DMA_DATA_WIDTH-1:0]),
   .wld_ready(wld_ready),
   .wld_req(wld_req && !lsu_store_block),
   .wld_rvalid(wld_rvalid),
-  .wld_pair_req(other_wld_pair_req),
-  .wld_pair_bank0(other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0]),
-  .wld_pair_bank1(other_wld_pair_bank1[BANK_INDEX_WIDTH-1:0]),
-  .wld_pair_addr(other_wld_pair_addr[SRAM_ADDR_WIDTH-1:0]),
-  .active_mask(other_active_mask_unused[BANK_NUM-1:0]),
-  .bank16_conflict(other_conflict_unused)
+  .upper_bank_req(other_bank_req[BANK_NUM-1:0]),
+  .upper_bank_we(other_bank_we[BANK_NUM-1:0]),
+  .upper_bank_addr(other_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
+  .upper_bank_wdata(other_bank_wdata[BANK_NUM*DATA_WIDTH-1:0]),
+  .upper_bank_wstrb(other_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0])
 );
-
-generate
-  for (other_bank_gen_i = 0; other_bank_gen_i < BANK_NUM;
-       other_bank_gen_i = other_bank_gen_i + 1) begin: OTHER_MERGE_BANK
-    wire bank_is_lsu;
-    wire bank_is_dma0;
-    wire bank_is_dma1;
-    wire bank_is_sld0;
-    wire bank_is_sld1;
-    wire bank_is_wld0;
-    wire bank_is_wld1;
-
-    assign bank_is_lsu =
-        other_lsu_bank[BANK_INDEX_WIDTH-1:0]
-        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
-    assign bank_is_dma0 =
-        other_dma_pair_bank0[BANK_INDEX_WIDTH-1:0]
-        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
-    assign bank_is_dma1 =
-        other_dma_pair_bank1[BANK_INDEX_WIDTH-1:0]
-        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
-    assign bank_is_sld0 =
-        other_sld_pair_bank0[BANK_INDEX_WIDTH-1:0]
-        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
-    assign bank_is_sld1 =
-        other_sld_pair_bank1[BANK_INDEX_WIDTH-1:0]
-        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
-    assign bank_is_wld0 =
-        other_wld_pair_bank0[BANK_INDEX_WIDTH-1:0]
-        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
-    assign bank_is_wld1 =
-        other_wld_pair_bank1[BANK_INDEX_WIDTH-1:0]
-        == other_bank_gen_i[BANK_INDEX_WIDTH-1:0];
-
-    // Fixed-channel clients are pair-disjoint in a cycle.
-    assign other_bank_req[other_bank_gen_i] =
-        (other_lsu_bank_req && bank_is_lsu)
-     || (other_dma_pair_req && (bank_is_dma0 || bank_is_dma1))
-     || (other_wld_pair_req && (bank_is_wld0 || bank_is_wld1))
-     || (other_sld_pair_req && (bank_is_sld0 || bank_is_sld1));
-    assign other_bank_we[other_bank_gen_i] =
-        other_lsu_bank_req && bank_is_lsu
-        ? other_lsu_bank_we
-      : other_dma_pair_req && (bank_is_dma0 || bank_is_dma1)
-        ? other_dma_pair_we
-        : 1'b0;
-    assign other_bank_addr[other_bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
-        other_lsu_bank_req && bank_is_lsu
-        ? other_lsu_bank_addr[SRAM_ADDR_WIDTH-1:0]
-      : other_dma_pair_req && (bank_is_dma0 || bank_is_dma1)
-        ? other_dma_pair_addr[SRAM_ADDR_WIDTH-1:0]
-      : other_wld_pair_req && (bank_is_wld0 || bank_is_wld1)
-        ? other_wld_pair_addr[SRAM_ADDR_WIDTH-1:0]
-        : other_sld_pair_addr[SRAM_ADDR_WIDTH-1:0];
-    assign other_bank_wdata[other_bank_gen_i*DATA_WIDTH +: DATA_WIDTH] =
-        other_lsu_bank_req && bank_is_lsu
-        ? other_lsu_bank_wdata[DATA_WIDTH-1:0]
-      : other_dma_pair_req && bank_is_dma0
-          ? other_dma_pair_wdata[DATA_WIDTH-1:0]
-      : other_dma_pair_req && bank_is_dma1
-          ? other_dma_pair_wdata[DMA_DATA_WIDTH-1:DATA_WIDTH]
-          : {DATA_WIDTH{1'b0}};
-    assign other_bank_wstrb[other_bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH] =
-        other_lsu_bank_req && bank_is_lsu
-        ? other_lsu_bank_wstrb[BYTE_WIDTH-1:0]
-      : other_dma_pair_req && bank_is_dma0
-          ? other_dma_pair_wstrb[BYTE_WIDTH-1:0]
-      : other_dma_pair_req && bank_is_dma1
-          ? other_dma_pair_wstrb[DMA_BYTE_WIDTH-1:BYTE_WIDTH]
-          : {BYTE_WIDTH{1'b0}};
-  end
-endgenerate
 
 edge_dtcm_bank16_raw_fabric #(
   .BANK_NUM(BANK_NUM),
