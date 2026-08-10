@@ -7,8 +7,10 @@ module edge_tensor_packed_sidecar(
   weight_drain_ready_i, weight_done_o,
   weight_fill_bank_i, weight_activate_i, weight_activate_bank_i,
   compute_valid_i, input_bf16_i, psum_bf16_i,
+  late_psum_mode_i, late_psum_valid_i,
   scale_enable_i, scale_bf16_i,
-  output_valid_o, output_bf16_o
+  rsum_enable_i, rsum_first_i, rsum_last_i,
+  dot_ready_o, output_valid_o, output_bf16_o
 );
 
 input clk, rst_b;
@@ -24,8 +26,11 @@ output weight_done_o;
 input weight_fill_bank_i, weight_activate_i, weight_activate_bank_i;
 input compute_valid_i;
 input [127:0] input_bf16_i, psum_bf16_i;
+input late_psum_mode_i, late_psum_valid_i;
 input scale_enable_i;
 input [127:0] scale_bf16_i;
+input rsum_enable_i, rsum_first_i, rsum_last_i;
+output dot_ready_o;
 output output_valid_o;
 output [127:0] output_bf16_o;
 
@@ -58,8 +63,12 @@ edge_tile8x8_packed32_scale_psum_sidecar x_tile (
   .weight_activate_i(weight_activate_i),
   .weight_activate_bank_i(weight_activate_bank_i),
   .in_valid(compute_valid_i), .input_bf16_i(input_bf16_i),
+  .late_psum_mode_i(late_psum_mode_i),
+  .late_psum_valid_i(late_psum_valid_i),
   .psum_bf16_i(psum_bf16_i),
   .scale_enable_i(scale_enable_i), .scale_bf16_i(scale_bf16_i),
+  .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
+  .rsum_last_i(rsum_last_i), .dot_ready_o(dot_ready_o),
   .out_valid(output_valid_o), .output_bf16_o(output_bf16_o)
 );
 endmodule

@@ -44,6 +44,7 @@ edge_tile8x8_packed32_sidecar x_dot_tile (
   .weight_activate_i(weight_activate_i),
   .weight_activate_bank_i(weight_activate_bank_i),
   .in_valid(in_valid), .input_bf16_i(input_bf16_i),
+  .rsum_enable_i(1'b0), .rsum_first_i(1'b0), .rsum_last_i(1'b0),
   .out_valid(dot_valid), .output_bf16_o(dot_bf16)
 );
 

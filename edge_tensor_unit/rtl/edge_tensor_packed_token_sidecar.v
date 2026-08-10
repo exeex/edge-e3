@@ -66,8 +66,12 @@ edge_tensor_packed_bank_sidecar x_bank_owner (
   .weight_active_valid_o(active_valid),
   .weight_pending_valid_o(pending_valid),
   .compute_valid_i(compute_valid_i), .input_bf16_i(input_bf16_i),
-  .psum_bf16_i(psum_bf16_i), .scale_enable_i(scale_enable_i),
+  .psum_bf16_i(psum_bf16_i),
+  .late_psum_mode_i(1'b0), .late_psum_valid_i(1'b1),
+  .scale_enable_i(scale_enable_i),
   .scale_bf16_i(scale_bf16_i),
+  .rsum_enable_i(1'b0), .rsum_first_i(1'b0), .rsum_last_i(1'b0),
+  .dot_ready_o(),
   .output_valid_o(output_valid_o), .output_bf16_o(output_bf16_o)
 );
 
