@@ -1,7 +1,8 @@
 module edge_tensor_skew_lane #(
   parameter LANE_WIDTH = 16,
   parameter SLOT_COUNT = 4,
-  parameter CFG_WIDTH  = 3
+  parameter CFG_WIDTH  = 3,
+  parameter BYPASS_ENABLE = 0
 ) (
   input  wire                  clk,
   input  wire                  resetn,
@@ -15,11 +16,16 @@ module edge_tensor_skew_lane #(
 reg [SLOT_COUNT-1:0] slot_valid_q;
 reg [LANE_WIDTH-1:0] slot_data_q [0:SLOT_COUNT-1];
 integer slot;
-localparam TAP_WIDTH = (SLOT_COUNT <= 2) ? 1 : $clog2(SLOT_COUNT);
+localparam TAP_COUNT = SLOT_COUNT + (BYPASS_ENABLE ? 1 : 0);
+localparam TAP_WIDTH = (TAP_COUNT <= 2) ? 1 : $clog2(TAP_COUNT);
 wire [TAP_WIDTH-1:0] tap_index = tap_select[TAP_WIDTH-1:0];
 
-assign out_valid = slot_valid_q[tap_index];
-assign out_data  = slot_data_q[tap_index];
+assign out_valid = (BYPASS_ENABLE && (tap_index == 0))
+                 ? in_valid
+                 : slot_valid_q[tap_index - (BYPASS_ENABLE ? 1 : 0)];
+assign out_data  = (BYPASS_ENABLE && (tap_index == 0))
+                 ? in_data
+                 : slot_data_q[tap_index - (BYPASS_ENABLE ? 1 : 0)];
 
 always @(posedge clk or negedge resetn) begin
   if (!resetn) begin
@@ -40,7 +46,8 @@ module edge_tensor_skew_buffer #(
   parameter LANE_WIDTH = 16,
   parameter LANE_COUNT = 4,
   parameter SLOT_COUNT = 4,
-  parameter CFG_WIDTH  = 3
+  parameter CFG_WIDTH  = 3,
+  parameter BYPASS_ENABLE = 0
 ) (
   input  wire                               clk,
   input  wire                               resetn,
@@ -54,7 +61,8 @@ module edge_tensor_skew_buffer #(
   output wire [(LANE_WIDTH*LANE_COUNT)-1:0] out_data
 );
 
-localparam [CFG_WIDTH-1:0] EXTRA_CAPACITY = SLOT_COUNT - 1;
+localparam [CFG_WIDTH-1:0] EXTRA_CAPACITY =
+    SLOT_COUNT - (BYPASS_ENABLE ? 0 : 1);
 
 reg [CFG_WIDTH-1:0] tap_select_q;
 wire [LANE_COUNT-1:0] lane_out_valid;
@@ -84,7 +92,8 @@ generate
     edge_tensor_skew_lane #(
       .LANE_WIDTH(LANE_WIDTH),
       .SLOT_COUNT(SLOT_COUNT),
-      .CFG_WIDTH(CFG_WIDTH)
+      .CFG_WIDTH(CFG_WIDTH),
+      .BYPASS_ENABLE(BYPASS_ENABLE)
     ) lane_buffer (
       .clk      (clk),
       .resetn   (resetn),

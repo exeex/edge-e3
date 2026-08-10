@@ -130,12 +130,6 @@ reg [BANK_INDEX_WIDTH-1:0] psum_rsp_bank0_q;
 reg [BANK_INDEX_WIDTH-1:0] psum_rsp_bank1_q;
 reg [VECTOR_COUNT_WIDTH-1:0] i_rsp_index_q;
 reg i_rsp_next_input_q;
-reg [PAIR_WIDTH-1:0] input_data_fifo [0:INPUT_FIFO_DEPTH-1];
-reg [INPUT_FIFO_DEPTH-1:0] input_slot_issued_q;
-reg [INPUT_FIFO_DEPTH-1:0] input_slot_valid_q;
-reg [PAIR_WIDTH-1:0] next_input_data_fifo [0:INPUT_FIFO_DEPTH-1];
-reg [INPUT_FIFO_DEPTH-1:0] next_input_slot_issued_q;
-reg [INPUT_FIFO_DEPTH-1:0] next_input_slot_valid_q;
 reg [VECTOR_COUNT_WIDTH-1:0] next_input_issue_count_q;
 reg [PAIR_WIDTH-1:0] psum_data_fifo [0:PSUM_FIFO_DEPTH-1];
 reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_head_q;
@@ -208,6 +202,11 @@ wire input_fifo_rsp_store;
 wire next_input_fifo_rsp_store;
 wire [INPUT_FIFO_INDEX_WIDTH-1:0] input_head_slot;
 wire [PAIR_WIDTH-1:0] input_compute_data;
+wire [PAIR_WIDTH-1:0] input_window_read_data;
+wire [INPUT_FIFO_DEPTH-1:0] input_slot_issued_q;
+wire [INPUT_FIFO_DEPTH-1:0] input_slot_valid_q;
+wire [INPUT_FIFO_DEPTH-1:0] next_input_slot_issued_q;
+wire [INPUT_FIFO_DEPTH-1:0] next_input_slot_valid_q;
 wire [ADDR_WIDTH-1:0] input_compute_out_addr;
 wire aligned_psum_valid;
 wire [PAIR_WIDTH-1:0] aligned_psum_data;
@@ -234,7 +233,6 @@ wire [3:0] start_psum_offset;
 
 integer psum_fifo_i;
 integer meta_fifo_i;
-integer input_fifo_i;
 integer input_select_offset;
 integer next_input_select_offset;
 
@@ -463,7 +461,7 @@ assign input_compute_fire = compute_busy_q
                               && !scale_enable_q
                               && (scaled_inflight_count_q != 0));
 assign input_compute_data = input_slot_valid_q[input_head_slot]
-                          ? input_data_fifo[input_head_slot]
+                          ? input_window_read_data
                           : i_pair_rdata;
 assign input_compute_out_addr = out_base_q
                               + {input_consume_count_q[ADDR_WIDTH-2:0], 1'b0};
@@ -572,6 +570,34 @@ edge_tensor_skew_buffer #(
   .out_data(output_skew_payload)
 );
 
+edge_tensor_input_window #(
+  .LANE_WIDTH(16),
+  .LANE_COUNT(8),
+  .SLOT_COUNT(INPUT_FIFO_DEPTH),
+  .SLOT_WIDTH(INPUT_FIFO_INDEX_WIDTH)
+) x_input_window (
+  .clk(clk),
+  .resetn(cpurst_b),
+  .start(start_accept),
+  .start_from_prefetch(next_input_prefetch_valid),
+  .active_issue(read_fire && !next_input_select),
+  .active_issue_slot(input_select_slot),
+  .prefetch_issue(read_fire && next_input_select),
+  .prefetch_issue_slot(next_input_select_slot),
+  .response_write(input_fifo_rsp_store || next_input_fifo_rsp_store),
+  .response_prefetch(i_rsp_next_input_q),
+  .response_slot(i_rsp_index_q[INPUT_FIFO_INDEX_WIDTH-1:0]),
+  .response_data(i_pair_rdata),
+  .active_consume(input_compute_fire),
+  .active_consume_slot(input_head_slot),
+  .active_read_slot(input_head_slot),
+  .active_read_data(input_window_read_data),
+  .active_issued(input_slot_issued_q),
+  .active_valid(input_slot_valid_q),
+  .prefetch_issued(next_input_slot_issued_q),
+  .prefetch_valid(next_input_slot_valid_q)
+);
+
 edge_bf16_int8_dot8x8_psum x_tensor8x8 (
   .clk(clk), .rst_b(cpurst_b), .compute_valid(compute_valid_q),
   .late_psum_mode_i(dot_needs_psum),
@@ -626,10 +652,6 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_rsp_bank1_q <= 0;
     i_rsp_index_q <= 0;
     i_rsp_next_input_q <= 1'b0;
-    input_slot_issued_q <= 0;
-    input_slot_valid_q <= 0;
-    next_input_slot_issued_q <= 0;
-    next_input_slot_valid_q <= 0;
     next_input_issue_count_q <= 0;
     psum_head_q <= 0;
     psum_tail_q <= 0;
@@ -653,12 +675,6 @@ always @(posedge clk or negedge cpurst_b) begin
     for (psum_fifo_i = 0; psum_fifo_i < PSUM_FIFO_DEPTH;
          psum_fifo_i = psum_fifo_i + 1)
       psum_data_fifo[psum_fifo_i] <= 0;
-    for (input_fifo_i = 0; input_fifo_i < INPUT_FIFO_DEPTH;
-         input_fifo_i = input_fifo_i + 1)
-    begin
-      input_data_fifo[input_fifo_i] <= 0;
-      next_input_data_fifo[input_fifo_i] <= 0;
-    end
     for (meta_fifo_i = 0; meta_fifo_i < META_FIFO_DEPTH;
          meta_fifo_i = meta_fifo_i + 1) begin
       meta_addr_fifo[meta_fifo_i] <= 0;
@@ -695,15 +711,6 @@ always @(posedge clk or negedge cpurst_b) begin
       out_base_q <= out_base_addr;
       iop_rsp_valid_q <= 1'b0;
       psum_rsp_valid_q <= 1'b0;
-      input_slot_issued_q <= next_input_prefetch_valid
-                           ? next_input_slot_issued_q : 0;
-      input_slot_valid_q <= next_input_prefetch_valid
-                          ? next_input_slot_valid_q : 0;
-      for (input_fifo_i = 0; input_fifo_i < INPUT_FIFO_DEPTH;
-           input_fifo_i = input_fifo_i + 1)
-        input_data_fifo[input_fifo_i] <= next_input_data_fifo[input_fifo_i];
-      next_input_slot_issued_q <= 0;
-      next_input_slot_valid_q <= 0;
       next_input_issue_count_q <= 0;
       scale_enable_q <= start_mode[0] && !start_mode[4];
       scale_stream_enable_q <= start_mode[3] && !start_mode[4];
@@ -723,11 +730,9 @@ always @(posedge clk or negedge cpurst_b) begin
       i_rsp_next_input_q <= next_input_select;
       if (next_input_select) begin
         i_rsp_index_q <= next_input_select_index;
-        next_input_slot_issued_q[next_input_select_slot] <= 1'b1;
         next_input_issue_count_q <= next_input_issue_count_q + 1'b1;
       end else begin
         i_rsp_index_q <= input_select_index;
-        input_slot_issued_q[input_select_slot] <= 1'b1;
         read_issue_count_q <= read_issue_count_q + 1'b1;
         if (!stream_started_q) begin
           stream_started_q <= 1'b1;
@@ -736,22 +741,7 @@ always @(posedge clk or negedge cpurst_b) begin
       end
     end
 
-    if (input_fifo_rsp_store) begin
-      input_data_fifo[i_rsp_index_q[INPUT_FIFO_INDEX_WIDTH-1:0]]
-          <= i_pair_rdata;
-      input_slot_valid_q[i_rsp_index_q[INPUT_FIFO_INDEX_WIDTH-1:0]] <= 1'b1;
-    end
-
-    if (next_input_fifo_rsp_store) begin
-      next_input_data_fifo[i_rsp_index_q[INPUT_FIFO_INDEX_WIDTH-1:0]]
-          <= i_pair_rdata;
-      next_input_slot_valid_q[
-          i_rsp_index_q[INPUT_FIFO_INDEX_WIDTH-1:0]] <= 1'b1;
-    end
-
     if (input_compute_fire) begin
-      input_slot_issued_q[input_head_slot] <= 1'b0;
-      input_slot_valid_q[input_head_slot] <= 1'b0;
       input_consume_count_q <= input_consume_count_q + 1'b1;
     end
 
