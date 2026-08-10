@@ -138,22 +138,18 @@ wire [1:0]                    lsu_lane_req;
 wire [1:0]                    lsu_lane_we;
 wire [PAIR_DATA_WIDTH-1:0]    lsu_lane_wdata;
 wire [PAIR_BYTE_WIDTH-1:0]    lsu_lane_wstrb;
-wire [REQUEST_PAYLOAD_WIDTH-1:0] zero_request_payload;
 wire [REQUEST_PAYLOAD_WIDTH-1:0] lsu_request_payload;
 wire [REQUEST_PAYLOAD_WIDTH-1:0] dma_request_payload;
 wire [REQUEST_PAYLOAD_WIDTH-1:0] sld_request_payload;
 wire [REQUEST_PAYLOAD_WIDTH-1:0] wld_request_payload;
-wire [PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0] logical_request_payload;
+wire [4*REQUEST_PAYLOAD_WIDTH-1:0] logical_request_payload;
 wire [PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0] physical_request_payload;
 wire [2:0]                    pair_phase;
-reg  [2:0]                    response_pair_phase_q;
-wire [2:0]                    inverse_response_phase;
-wire [PAIR_NUM*PAIR_DATA_WIDTH-1:0] logical_response_payload;
+wire [4*PAIR_DATA_WIDTH-1:0]  logical_response_payload;
 
 genvar pair_i;
 
 assign pair_phase[2:0] = phase[BANK_INDEX_WIDTH-1:1];
-assign inverse_response_phase[2:0] = 3'd0 - response_pair_phase_q[2:0];
 
 assign lsu_lane_req[1:0] =
     lsu_bank[0] ? {lsu_bank_req, 1'b0} : {1'b0, lsu_bank_req};
@@ -167,8 +163,6 @@ assign lsu_lane_wstrb[PAIR_BYTE_WIDTH-1:0] =
     ? {lsu_bank_wstrb[BYTE_WIDTH-1:0], {BYTE_WIDTH{1'b0}}}
     : {{BYTE_WIDTH{1'b0}}, lsu_bank_wstrb[BYTE_WIDTH-1:0]};
 
-assign zero_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
-    {REQUEST_PAYLOAD_WIDTH{1'b0}};
 assign lsu_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
     {lsu_lane_wstrb[PAIR_BYTE_WIDTH-1:0],
      lsu_lane_wdata[PAIR_DATA_WIDTH-1:0],
@@ -186,21 +180,26 @@ assign sld_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
     {{PAIR_BYTE_WIDTH{1'b0}}, {PAIR_DATA_WIDTH{1'b0}},
      sld_pair_addr[SRAM_ADDR_WIDTH-1:0], 2'b00, {2{sld_pair_req}}};
 
-// Logical channels 1, 3, 5, and 7 belong to LSU, DMA, WLD, and SLD.
-assign logical_request_payload[PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0] =
-    {sld_request_payload, zero_request_payload,
-     wld_request_payload, zero_request_payload,
-     dma_request_payload, zero_request_payload,
-     lsu_request_payload, zero_request_payload};
+// Compressed logical groups 0, 1, 2, and 3 represent fixed channels
+// 1, 3, 5, and 7 for LSU, DMA, WLD, and SLD.
+assign logical_request_payload[4*REQUEST_PAYLOAD_WIDTH-1:0] =
+    {sld_request_payload, wld_request_payload,
+     dma_request_payload, lsu_request_payload};
 
-edge_dtcm_pair_rotator8 #(
-  .PAYLOAD_WIDTH(REQUEST_PAYLOAD_WIDTH),
-  .INPUT_MASK(8'hff),
-  .OUTPUT_MASK(8'hff)
-) x_request_rotator (
-  .phase(pair_phase[2:0]),
-  .in_payload(logical_request_payload[PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0]),
-  .out_payload(physical_request_payload[PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0])
+edge_dtcm_upper_pair_router #(
+  .REQUEST_WIDTH(REQUEST_PAYLOAD_WIDTH),
+  .RESPONSE_WIDTH(PAIR_DATA_WIDTH)
+) x_upper_pair_router (
+  .clk(clk),
+  .cpurst_b(cpurst_b),
+  .pair_phase(pair_phase[2:0]),
+  .logical_request_payload(
+      logical_request_payload[4*REQUEST_PAYLOAD_WIDTH-1:0]),
+  .physical_request_payload(
+      physical_request_payload[PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0]),
+  .physical_response_payload(bank_rdata[BANK_NUM*DATA_WIDTH-1:0]),
+  .logical_response_payload(
+      logical_response_payload[4*PAIR_DATA_WIDTH-1:0])
 );
 
 generate
@@ -225,23 +224,6 @@ generate
   end
 endgenerate
 
-always @(posedge clk or negedge cpurst_b) begin
-  if (!cpurst_b)
-    response_pair_phase_q[2:0] <= 3'd0;
-  else
-    response_pair_phase_q[2:0] <= pair_phase[2:0];
-end
-
-edge_dtcm_pair_rotator8 #(
-  .PAYLOAD_WIDTH(PAIR_DATA_WIDTH),
-  .INPUT_MASK(8'hff),
-  .OUTPUT_MASK(8'haa)
-) x_response_rotator (
-  .phase(inverse_response_phase[2:0]),
-  .in_payload(bank_rdata[BANK_NUM*DATA_WIDTH-1:0]),
-  .out_payload(logical_response_payload[PAIR_NUM*PAIR_DATA_WIDTH-1:0])
-);
-
 edge_dtcm_upper_io #(
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(1),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
@@ -257,9 +239,9 @@ edge_dtcm_upper_io #(
   .bank_wstrb(lsu_bank_wstrb), .rsp_bank0(lsu_rsp_bank0),
   .rsp_bank1(lsu_rsp_bank1),
   .rsp_bank0_rdata(lsu_rsp_bank0[0]
-                   ? logical_response_payload[1*PAIR_DATA_WIDTH+DATA_WIDTH
+                   ? logical_response_payload[0*PAIR_DATA_WIDTH+DATA_WIDTH
                                               +: DATA_WIDTH]
-                   : logical_response_payload[1*PAIR_DATA_WIDTH
+                   : logical_response_payload[0*PAIR_DATA_WIDTH
                                               +: DATA_WIDTH]),
   .rsp_bank1_rdata({DATA_WIDTH{1'b0}})
 );
@@ -278,9 +260,9 @@ edge_dtcm_upper_io #(
   .bank_addr(dma_pair_addr), .bank_wdata(dma_pair_wdata),
   .bank_wstrb(dma_pair_wstrb), .rsp_bank0(dma_rsp_bank0_unused),
   .rsp_bank1(dma_rsp_bank1_unused),
-  .rsp_bank0_rdata(logical_response_payload[3*PAIR_DATA_WIDTH
+  .rsp_bank0_rdata(logical_response_payload[1*PAIR_DATA_WIDTH
                                             +: DATA_WIDTH]),
-  .rsp_bank1_rdata(logical_response_payload[3*PAIR_DATA_WIDTH+DATA_WIDTH
+  .rsp_bank1_rdata(logical_response_payload[1*PAIR_DATA_WIDTH+DATA_WIDTH
                                             +: DATA_WIDTH])
 );
 
@@ -299,9 +281,9 @@ edge_dtcm_upper_io #(
   .bank1_valid(sld_unused_bank1_valid), .bank_addr(sld_pair_addr),
   .bank_wdata(sld_unused_bank_wdata), .bank_wstrb(sld_unused_bank_wstrb),
   .rsp_bank0(sld_rsp_bank0_unused), .rsp_bank1(sld_rsp_bank1_unused),
-  .rsp_bank0_rdata(logical_response_payload[7*PAIR_DATA_WIDTH
+  .rsp_bank0_rdata(logical_response_payload[3*PAIR_DATA_WIDTH
                                             +: DATA_WIDTH]),
-  .rsp_bank1_rdata(logical_response_payload[7*PAIR_DATA_WIDTH+DATA_WIDTH
+  .rsp_bank1_rdata(logical_response_payload[3*PAIR_DATA_WIDTH+DATA_WIDTH
                                             +: DATA_WIDTH])
 );
 
@@ -320,9 +302,9 @@ edge_dtcm_upper_io #(
   .bank1_valid(wld_unused_bank1_valid), .bank_addr(wld_pair_addr),
   .bank_wdata(wld_unused_bank_wdata), .bank_wstrb(wld_unused_bank_wstrb),
   .rsp_bank0(wld_rsp_bank0_unused), .rsp_bank1(wld_rsp_bank1_unused),
-  .rsp_bank0_rdata(logical_response_payload[5*PAIR_DATA_WIDTH
+  .rsp_bank0_rdata(logical_response_payload[2*PAIR_DATA_WIDTH
                                             +: DATA_WIDTH]),
-  .rsp_bank1_rdata(logical_response_payload[5*PAIR_DATA_WIDTH+DATA_WIDTH
+  .rsp_bank1_rdata(logical_response_payload[2*PAIR_DATA_WIDTH+DATA_WIDTH
                                             +: DATA_WIDTH])
 );
 

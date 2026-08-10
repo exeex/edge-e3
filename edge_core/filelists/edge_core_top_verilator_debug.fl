@@ -97,7 +97,8 @@ edge_dtcm_subsys/rtl/edge_dtcm_bank_pair_local_arb.v
 edge_dtcm_subsys/rtl/edge_dtcm_bank_pair_slice.v
 edge_dtcm_subsys/rtl/edge_dtcm_bank16_raw_fabric.v
 edge_dtcm_subsys/rtl/edge_dtcm_upper_io.v
-edge_dtcm_subsys/rtl/edge_dtcm_pair_rotator8.v
+edge_dtcm_subsys/rtl/edge_dtcm_pair_rotator4.v
+edge_dtcm_subsys/rtl/edge_dtcm_upper_pair_router.v
 edge_dtcm_subsys/rtl/edge_dtcm_other_bank16_adapter.v
 edge_dtcm_subsys/rtl/edge_actu_dtcm_bank16_adapter.v
 edge_dtcm_subsys/rtl/edge_dtcm_arb.v
