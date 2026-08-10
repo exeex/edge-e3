@@ -204,6 +204,12 @@ module edge_core_debug #(
   reg [VALUE_WIDTH-1:0] core_done_code_q;
   wire core_start_accept = core_start && !core_running_q && !core_force_stop;
 
+  // Retain the legacy direct-IMEM pins at the compatibility wrapper. Fetches
+  // use the I-cache refill path on the core AXI read interface.
+  assign imem_req_valid = 1'b0;
+  assign imem_req_addr[PC_WIDTH-1:0] = {PC_WIDTH{1'b0}};
+  assign imem_resp_ready = 1'b0;
+
   edge_core_base #(
     .PC_WIDTH(PC_WIDTH),
     .SEQ_ID_WIDTH(SEQ_ID_WIDTH),
@@ -225,12 +231,6 @@ module edge_core_debug #(
     .core_start(core_start_accept),
     .core_force_stop(core_force_stop),
     .boot_pc(boot_pc),
-    .imem_req_valid(imem_req_valid),
-    .imem_req_ready(imem_req_ready),
-    .imem_req_addr(imem_req_addr),
-    .imem_resp_valid(imem_resp_valid),
-    .imem_resp_ready(imem_resp_ready),
-    .imem_resp_bits(imem_resp_bits),
     .mem_region_base(mem_region_base),
     .mem_region_mask(mem_region_mask),
     .mem_region_enable(mem_region_enable),

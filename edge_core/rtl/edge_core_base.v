@@ -21,13 +21,6 @@ module edge_core_base #(
   input  wire                       core_force_stop,
   input  wire [PC_WIDTH-1:0]        boot_pc,
 
-  output wire                       imem_req_valid,
-  input  wire                       imem_req_ready,
-  output wire [PC_WIDTH-1:0]        imem_req_addr,
-  input  wire                       imem_resp_valid,
-  output wire                       imem_resp_ready,
-  input  wire [127:0]               imem_resp_bits,
-
   input  wire [PC_WIDTH-1:0]        mem_region_base,
   input  wire [PC_WIDTH-1:0]        mem_region_mask,
   input  wire                       mem_region_enable,
@@ -1548,10 +1541,6 @@ module edge_core_base #(
         scalar_cache_op_pending_q <= 1'b1;
     end
   end
-
-  assign imem_req_valid = 1'b0;
-  assign imem_req_addr[PC_WIDTH-1:0] = {PC_WIDTH{1'b0}};
-  assign imem_resp_ready = 1'b0;
 
   edge_core_read_axi_mux #(
     .ADDR_WIDTH(PC_WIDTH),
