@@ -49,7 +49,6 @@ module edge_dtcm_subsys_core(
   tensor_cmd_start_mode,
   tensor_cmd_start_seq_id,
   tensor_cmd_start_epoch,
-  tensor_cmd_sync_req,
   tensor_cmd_wld_ptr,
   tensor_cmd_wld_req,
   tensor_cmd_wld_trans_req,
@@ -190,7 +189,6 @@ input                         tensor_cmd_start_tile_req;
 input [7:0]                   tensor_cmd_start_mode;
 input  [7:0]                  tensor_cmd_start_seq_id;
 input  [3:0]                  tensor_cmd_start_epoch;
-input                         tensor_cmd_sync_req;
 input  [15:0]                 tensor_cmd_wld_ptr;
 input                         tensor_cmd_wld_req;
 input                         tensor_cmd_wld_trans_req;
@@ -461,7 +459,6 @@ edge_tensor_unit_bank16 #(
   .cmd_start_mode(tensor_cmd_start_mode),
   .cmd_start_seq_id(tensor_cmd_start_seq_id),
   .cmd_start_epoch(tensor_cmd_start_epoch),
-  .cmd_sync_req(tensor_cmd_sync_req),
   .cmd_wld_ptr(tensor_cmd_wld_ptr[15:0]),
   .cmd_wld_req(tensor_cmd_wld_req),
   .cmd_wld_trans_req(tensor_cmd_wld_trans_req),

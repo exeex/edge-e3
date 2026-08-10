@@ -1,6 +1,6 @@
 module edge_tensor_engine(
   clk, cpurst_b, start, in_base_addr, psum_base_addr, out_base_addr,
-  weight_base_addr, vector_count, start_mode, scale_bf16,
+  vector_count, start_mode, scale_bf16,
   scale_stream_valid, scale_stream_data, scale_stream_ready,
   weight_fill_bf16_mode, weight_fill_start, weight_fill_start_ready,
   weight_fill_valid, weight_fill_ready, weight_fill_pair_idx,
@@ -42,7 +42,6 @@ input start;
 input [ADDR_WIDTH-1:0] in_base_addr;
 input [ADDR_WIDTH-1:0] psum_base_addr;
 input [ADDR_WIDTH-1:0] out_base_addr;
-input [ADDR_WIDTH-1:0] weight_base_addr;
 input [VECTOR_COUNT_WIDTH-1:0] vector_count;
 input [7:0] start_mode;
 input [127:0] scale_bf16;

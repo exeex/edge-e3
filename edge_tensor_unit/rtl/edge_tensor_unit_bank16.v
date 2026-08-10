@@ -27,7 +27,6 @@ module edge_tensor_unit_bank16 #(
   input  wire [7:0]                   cmd_start_mode,
   input  wire [SEQ_ID_WIDTH-1:0]      cmd_start_seq_id,
   input  wire [EPOCH_WIDTH-1:0]       cmd_start_epoch,
-  input  wire                         cmd_sync_req,
   input  wire [ADDR_WIDTH-1:0]        cmd_wld_ptr,
   input  wire                         cmd_wld_req,
   input  wire                         cmd_wld_trans_req,
@@ -99,7 +98,6 @@ reg  [ADDR_WIDTH-1:0]         cfg_out_ptr_q [0:1];
 reg  [ADDR_WIDTH-1:0]         cfg_psum_ptr_q [0:1];
 reg  [VECTOR_COUNT_WIDTH-1:0] cfg_run_count_q [0:1];
 reg                           cfg_write_sel_q;
-reg  [ADDR_WIDTH-1:0]         weight_ptr_q;
 reg                           weight_loaded_q;
 reg                           weight_reuse_token_q;
 reg                           queued_start_valid_q;
@@ -113,13 +111,11 @@ reg  [VECTOR_COUNT_WIDTH-1:0] queued_count_q;
 reg  [ADDR_WIDTH-1:0]         queued_in_q;
 reg  [ADDR_WIDTH-1:0]         queued_out_q;
 reg  [ADDR_WIDTH-1:0]         queued_psum_q;
-reg  [ADDR_WIDTH-1:0]         queued_weight_q;
 reg                           start_pending_q;
 reg  [VECTOR_COUNT_WIDTH-1:0] start_pending_count_q;
 reg  [ADDR_WIDTH-1:0]         start_pending_in_q;
 reg  [ADDR_WIDTH-1:0]         start_pending_out_q;
 reg  [ADDR_WIDTH-1:0]         start_pending_psum_q;
-reg  [ADDR_WIDTH-1:0]         start_pending_weight_q;
 reg                           start_pending_wld_pending_q;
 reg  [7:0]                    start_pending_mode_q;
 reg                           start_pending_reuse_weight_q;
@@ -189,7 +185,6 @@ wire [ADDR_WIDTH-1:0]         start_data_psum;
 wire [ADDR_WIDTH-1:0]         engine_start_in;
 wire [ADDR_WIDTH-1:0]         engine_start_out;
 wire [ADDR_WIDTH-1:0]         engine_start_psum;
-wire [ADDR_WIDTH-1:0]         engine_start_weight;
 wire [VECTOR_COUNT_WIDTH-1:0] engine_start_count;
 wire                          start_data_scale_sel;
 wire [7:0]                    engine_start_mode;
@@ -484,10 +479,6 @@ assign engine_start_psum[ADDR_WIDTH-1:0] =
     start_queue_launch ? queued_psum_q[ADDR_WIDTH-1:0]
   : start_pending_direct_launch ? start_pending_psum_q[ADDR_WIDTH-1:0]
                        : start_data_psum[ADDR_WIDTH-1:0];
-assign engine_start_weight[ADDR_WIDTH-1:0] =
-    start_queue_launch ? queued_weight_q[ADDR_WIDTH-1:0]
-  : start_pending_direct_launch ? start_pending_weight_q[ADDR_WIDTH-1:0]
-                       : weight_ptr_q[ADDR_WIDTH-1:0];
 assign engine_start_count[VECTOR_COUNT_WIDTH-1:0] =
     start_queue_launch ? queued_count_q[VECTOR_COUNT_WIDTH-1:0]
   : start_pending_direct_launch ? start_pending_count_q[VECTOR_COUNT_WIDTH-1:0]
@@ -545,7 +536,6 @@ assign engine_psum_pair_rdata[PAIR_WIDTH-1:0] =
      bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_psum_pair_rsp_bank0)};
 assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
                       || (|cmd_setcsr_wtype[3:0])
-                      || cmd_sync_req
                       || cmd_wld_trans_req
                       || (|cmd_start_mode[7:5])
                       || engine_done;
@@ -564,7 +554,6 @@ edge_tensor_engine #(
   .in_base_addr(engine_start_in[ADDR_WIDTH-1:0]),
   .psum_base_addr(engine_start_psum[ADDR_WIDTH-1:0]),
   .out_base_addr(engine_start_out[ADDR_WIDTH-1:0]),
-  .weight_base_addr(engine_start_weight[ADDR_WIDTH-1:0]),
   .vector_count(engine_start_count[VECTOR_COUNT_WIDTH-1:0]),
   .start_mode(engine_start_mode[7:0]),
   .scale_bf16(engine_start_scale[127:0]),
@@ -734,7 +723,6 @@ always @(posedge clk or negedge cpurst_b) begin
     cfg_run_count_q[0] <= {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1};
     cfg_run_count_q[1] <= {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1};
     cfg_write_sel_q <= 1'b0;
-    weight_ptr_q <= {ADDR_WIDTH{1'b0}};
     weight_loaded_q <= 1'b0;
     weight_reuse_token_q <= 1'b0;
     queued_start_valid_q <= 1'b0;
@@ -748,13 +736,11 @@ always @(posedge clk or negedge cpurst_b) begin
     queued_in_q <= {ADDR_WIDTH{1'b0}};
     queued_out_q <= {ADDR_WIDTH{1'b0}};
     queued_psum_q <= {ADDR_WIDTH{1'b0}};
-    queued_weight_q <= {ADDR_WIDTH{1'b0}};
     start_pending_q <= 1'b0;
     start_pending_count_q <= {VECTOR_COUNT_WIDTH{1'b0}};
     start_pending_in_q <= {ADDR_WIDTH{1'b0}};
     start_pending_out_q <= {ADDR_WIDTH{1'b0}};
     start_pending_psum_q <= {ADDR_WIDTH{1'b0}};
-    start_pending_weight_q <= {ADDR_WIDTH{1'b0}};
     start_pending_wld_pending_q <= 1'b0;
     start_pending_mode_q <= 8'b0;
     start_pending_reuse_weight_q <= 1'b0;
@@ -895,7 +881,6 @@ always @(posedge clk or negedge cpurst_b) begin
     end
 
     if (wld_cmd_launch) begin
-      weight_ptr_q <= wld_cmd_launch_ptr[ADDR_WIDTH-1:0];
       weight_loaded_q <= 1'b0;
       wld_active_q <= 1'b1;
       wld_active_bf16_q <= wld_cmd_launch_bf16;
@@ -948,9 +933,6 @@ always @(posedge clk or negedge cpurst_b) begin
       queued_psum_q <= start_pending_queue_launch
                      ? start_pending_psum_q[ADDR_WIDTH-1:0]
                      : start_data_psum[ADDR_WIDTH-1:0];
-      queued_weight_q <= start_pending_queue_launch
-                       ? start_pending_weight_q[ADDR_WIDTH-1:0]
-                       : weight_ptr_q[ADDR_WIDTH-1:0];
       queued_count_q <= start_pending_queue_launch
                       ? start_pending_count_q[VECTOR_COUNT_WIDTH-1:0]
                       : start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
@@ -974,7 +956,6 @@ always @(posedge clk or negedge cpurst_b) begin
       start_pending_in_q <= start_data_in[ADDR_WIDTH-1:0];
       start_pending_out_q <= start_data_out[ADDR_WIDTH-1:0];
       start_pending_psum_q <= start_data_psum[ADDR_WIDTH-1:0];
-      start_pending_weight_q <= weight_ptr_q[ADDR_WIDTH-1:0];
       start_pending_count_q <= start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
       start_pending_wld_pending_q <= wld_cmd_pending_q
                                   && !wld_active_q

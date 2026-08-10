@@ -2744,7 +2744,6 @@ module edge_core_base #(
     .tensor_cmd_start_mode(tensor_cmd_start_mode),
     .tensor_cmd_start_seq_id(tensor_issue_seq_id),
     .tensor_cmd_start_epoch(tensor_issue_epoch),
-    .tensor_cmd_sync_req(tensor_cmd_sync_req),
     .tensor_cmd_wld_ptr(tensor_unit_cmd_wld_ptr[15:0]),
     .tensor_cmd_wld_req(tensor_unit_cmd_wld_req),
     .tensor_cmd_wld_trans_req(tensor_unit_cmd_wld_trans_req),
