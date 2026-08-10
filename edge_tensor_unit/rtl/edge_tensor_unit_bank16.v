@@ -6,7 +6,8 @@ module edge_tensor_unit_bank16 #(
   parameter DATA_WIDTH = 64,
   parameter VECTOR_COUNT_WIDTH = 16,
   parameter SEQ_ID_WIDTH = 8,
-  parameter EPOCH_WIDTH = 4
+  parameter EPOCH_WIDTH = 4,
+  parameter PACKED_WEIGHT = 0
 ) (
   input  wire                         clk,
   input  wire                         cpurst_b,
@@ -217,6 +218,10 @@ wire [1:0]                    tensor_weight_fill_pair_idx;
 wire [PAIR_WIDTH-1:0]         tensor_weight_fill_data;
 wire                          tensor_weight_fill_last;
 wire                          tensor_weight_pending_valid;
+wire                          packed_weight_start_ready;
+wire                          packed_weight_busy;
+wire                          packed_weight_done;
+wire                          packed_weight_load_ready;
 wire [BANK_NUM-1:0]           engine_bank_req;
 wire [BANK_NUM-1:0]           engine_bank_we;
 wire [BANK_NUM*SRAM_ADDR_WIDTH-1:0] engine_bank_addr;
@@ -546,7 +551,8 @@ edge_tensor_engine #(
   .DATA_WIDTH(DATA_WIDTH),
   .BANK_NUM(BANK_NUM),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
-  .VECTOR_COUNT_WIDTH(VECTOR_COUNT_WIDTH)
+  .VECTOR_COUNT_WIDTH(VECTOR_COUNT_WIDTH),
+  .PACKED_WEIGHT(PACKED_WEIGHT)
 ) x_tensor_engine (
   .clk(clk),
   .cpurst_b(cpurst_b),
@@ -573,12 +579,16 @@ edge_tensor_engine #(
   .weight_preactivate(engine_weight_preactivate),
   .start_use_active(engine_start_use_active),
   .weight_idle(engine_weight_idle),
-  .packed_weight_start(1'b0), .packed_weight_start_ready(),
-  .packed_weight_bf16_mode(1'b0), .packed_weight_transpose(1'b0),
-  .packed_weight_busy(), .packed_weight_done(),
-  .packed_weight_load_valid(1'b0), .packed_weight_load_ready(),
-  .packed_weight_load_idx(3'b0),
-  .packed_weight_load_data({PAIR_WIDTH{1'b0}}),
+  .packed_weight_start(PACKED_WEIGHT ? wld_cmd_launch : 1'b0),
+  .packed_weight_start_ready(packed_weight_start_ready),
+  .packed_weight_bf16_mode(wld_cmd_launch_bf16),
+  .packed_weight_transpose(wld_cmd_launch_transpose),
+  .packed_weight_busy(packed_weight_busy),
+  .packed_weight_done(packed_weight_done),
+  .packed_weight_load_valid(PACKED_WEIGHT ? tensor_wld_rvalid : 1'b0),
+  .packed_weight_load_ready(packed_weight_load_ready),
+  .packed_weight_load_idx(wld_rsp_idx_q[2:0]),
+  .packed_weight_load_data(wld_load_data[PAIR_WIDTH-1:0]),
   .next_input_prefetch_valid(queued_start_valid_q),
   .next_input_prefetch_base_addr(queued_in_q[ADDR_WIDTH-1:0]),
   .next_input_prefetch_vector_count(
@@ -626,31 +636,41 @@ edge_tensor_engine #(
   .stream_psum_prefetch_accept(stream_psum_prefetch_accept)
 );
 
-edge_tensor_wld8x8_fill #(
-  .DATA_WIDTH(DATA_WIDTH),
-  .PAIR_WIDTH(PAIR_WIDTH)
-) x_edge_tensor_wld8x8_fill (
-  .clk(clk),
-  .rst_b(cpurst_b),
-  .start(wld_cmd_launch),
-  .start_ready(wld_fill_start_ready),
-  .start_bf16_mode(wld_cmd_launch_bf16),
-  .start_transpose(wld_cmd_launch_transpose),
-  .busy(),
-  .done(wld_fill_done),
-  .load_valid(tensor_wld_rvalid),
-  .load_idx(wld_rsp_idx_q[2:0]),
-  .load_data(wld_load_data[PAIR_WIDTH-1:0]),
-  .load_done(),
-  .weight_fill_start(tensor_weight_fill_start),
-  .weight_fill_bf16_mode(tensor_weight_fill_bf16_mode),
-  .weight_fill_start_ready(tensor_weight_fill_start_ready),
-  .weight_fill_valid(tensor_weight_fill_valid),
-  .weight_fill_ready(tensor_weight_fill_ready),
-  .weight_fill_pair_idx(tensor_weight_fill_pair_idx[1:0]),
-  .weight_fill_data(tensor_weight_fill_data[PAIR_WIDTH-1:0]),
-  .weight_fill_last(tensor_weight_fill_last)
-);
+generate
+  if (PACKED_WEIGHT) begin : GEN_PACKED_WLD
+    assign wld_fill_start_ready = packed_weight_start_ready;
+    assign wld_fill_done = packed_weight_done;
+    assign tensor_weight_fill_start = 1'b0;
+    assign tensor_weight_fill_bf16_mode = 1'b0;
+    assign tensor_weight_fill_valid = 1'b0;
+    assign tensor_weight_fill_pair_idx = 2'b0;
+    assign tensor_weight_fill_data = {PAIR_WIDTH{1'b0}};
+    assign tensor_weight_fill_last = 1'b0;
+  end else begin : GEN_LEGACY_WLD
+    edge_tensor_wld8x8_fill #(
+      .DATA_WIDTH(DATA_WIDTH), .PAIR_WIDTH(PAIR_WIDTH)
+    ) x_edge_tensor_wld8x8_fill (
+      .clk(clk), .rst_b(cpurst_b), .start(wld_cmd_launch),
+      .start_ready(wld_fill_start_ready),
+      .start_bf16_mode(wld_cmd_launch_bf16),
+      .start_transpose(wld_cmd_launch_transpose), .busy(),
+      .done(wld_fill_done), .load_valid(tensor_wld_rvalid),
+      .load_idx(wld_rsp_idx_q[2:0]),
+      .load_data(wld_load_data[PAIR_WIDTH-1:0]), .load_done(),
+      .weight_fill_start(tensor_weight_fill_start),
+      .weight_fill_bf16_mode(tensor_weight_fill_bf16_mode),
+      .weight_fill_start_ready(tensor_weight_fill_start_ready),
+      .weight_fill_valid(tensor_weight_fill_valid),
+      .weight_fill_ready(tensor_weight_fill_ready),
+      .weight_fill_pair_idx(tensor_weight_fill_pair_idx[1:0]),
+      .weight_fill_data(tensor_weight_fill_data[PAIR_WIDTH-1:0]),
+      .weight_fill_last(tensor_weight_fill_last)
+    );
+  end
+endgenerate
+
+wire unused_packed_weight_status = packed_weight_busy
+                                 || packed_weight_load_ready;
 
 generate
   for (bank_gen_i = 0; bank_gen_i < BANK_NUM; bank_gen_i = bank_gen_i + 1) begin: MERGE_BANK
