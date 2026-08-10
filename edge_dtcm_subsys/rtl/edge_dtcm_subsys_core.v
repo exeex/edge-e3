@@ -589,6 +589,7 @@ edge_actu_dtcm_bank16_adapter #(
 ) x_edge_actu_dtcm_adapter (
   .clk(clk),
   .cpurst_b(cpurst_b),
+  .phase(tensor_native_phase[BANK_INDEX_WIDTH-1:0]),
   .lower_owned_mask(dtcm_lower_owned_mask[BANK_NUM-1:0]),
   .rd_req(actu_dtcm_rd_req),
   .rd_ready(actu_dtcm_rd_ready),

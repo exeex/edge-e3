@@ -10,6 +10,9 @@ module edge_dtcm_upper_pair_router(
 
 parameter REQUEST_WIDTH = 1;
 parameter RESPONSE_WIDTH = 1;
+// Odd channels (1/3/5/7) are the maintained upper plane.  Even channels
+// (0/2/4/6) use the same four-group route with the carry/parity reversed.
+parameter CHANNEL_PARITY = 1;
 
 input                         clk;
 input                         cpurst_b;
@@ -29,13 +32,15 @@ reg  [2:0]                    response_pair_phase_q;
 
 genvar group_i;
 
-// Odd logical channels 1/3/5/7 become four upper groups.  The parity bit is
-// handled by the SRAM-door upper/lower mux, including its carry into the
-// four-group rotation.
+// Four same-parity logical channels become four routed groups.  Pair parity is
+// handled by the SRAM-door upper/lower mux.  Odd channels carry pair_phase[0]
+// into the group rotation; even channels do not.
 assign request_rotation_phase[1:0] =
-    pair_phase[2:1] + {1'b0, pair_phase[0]};
+    pair_phase[2:1]
+  + {1'b0, (pair_phase[0] && (CHANNEL_PARITY != 0))};
 assign response_rotation_phase[1:0] =
-    response_pair_phase_q[2:1] + {1'b0, response_pair_phase_q[0]};
+    response_pair_phase_q[2:1]
+  + {1'b0, (response_pair_phase_q[0] && (CHANNEL_PARITY != 0))};
 assign inverse_response_phase[1:0] =
     2'd0 - response_rotation_phase[1:0];
 
@@ -63,7 +68,10 @@ generate
       .physical_request_payload(
           physical_request_payload[(2*group_i)*REQUEST_WIDTH
                                    +: 2*REQUEST_WIDTH]),
-      .response_parity(response_pair_phase_q[0]),
+      .response_parity(
+          CHANNEL_PARITY != 0
+          ? response_pair_phase_q[0]
+          : !response_pair_phase_q[0]),
       .physical_response_payload(
           physical_response_payload[(2*group_i)*RESPONSE_WIDTH
                                     +: 2*RESPONSE_WIDTH]),
