@@ -667,7 +667,6 @@ module edge_core_base #(
   wire [PC_WIDTH-1:0]     dtcm_dma_start_addr_src;
   wire [PC_WIDTH-1:0]     dtcm_dma_start_addr_dst;
   wire [31:0]             dtcm_dma_start_len;
-  reg                     edge_dma_busy_q;
   reg                     tensor_circular_dma_active_q;
   reg                     tensor_circular_dma_inflight_q;
   reg [VALUE_WIDTH-1:0]   tensor_circular_dma_src_base_q;
@@ -735,21 +734,11 @@ module edge_core_base #(
   wire                    tensor_circular_busy;
   wire                    tensor_dma_direct_start_req;
   wire                    tensor_dma_strided_start_req;
-  reg                     tensor_strided_dma_active_q;
-  reg                     tensor_strided_dma_inflight_q;
-  reg [VALUE_WIDTH-1:0]   tensor_strided_dma_src_q;
-  reg [VALUE_WIDTH-1:0]   tensor_strided_dma_group_base_q;
-  reg [VALUE_WIDTH-1:0]   tensor_strided_dma_dst_q;
-  reg [31:0]              tensor_strided_dma_len_q;
-  reg [31:0]              tensor_strided_dma_stride_q;
-  reg [31:0]              tensor_strided_dma_y_stride_q;
-  reg [31:0]              tensor_strided_dma_x_max_q;
-  reg [31:0]              tensor_strided_dma_inner_q;
-  reg [31:0]              tensor_strided_dma_total_q;
-  reg [31:0]              tensor_strided_dma_issued_q;
-  wire                    tensor_strided_dma_done_pulse;
   wire                    tensor_strided_dma_launch;
   wire                    tensor_strided_dma_busy;
+  wire [PC_WIDTH-1:0]     tensor_strided_dma_src;
+  wire [PC_WIDTH-1:0]     tensor_strided_dma_dst;
+  wire [31:0]             tensor_strided_dma_len;
   wire                    dma_stream_cmd_ready;
   wire                    dma_stream_beat_done;
   wire                    dma_stream_busy;
@@ -1150,13 +1139,6 @@ module edge_core_base #(
   end
 
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b)
-      edge_dma_busy_q <= 1'b0;
-    else
-      edge_dma_busy_q <= edge_dma_busy;
-  end
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
     if (!cpurst_b) begin
       tensor_circular_dma_active_q <= 1'b0;
       tensor_circular_dma_inflight_q <= 1'b0;
@@ -1462,76 +1444,6 @@ module edge_core_base #(
   end
 
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      tensor_strided_dma_active_q <= 1'b0;
-      tensor_strided_dma_inflight_q <= 1'b0;
-      tensor_strided_dma_src_q[VALUE_WIDTH-1:0] <= {VALUE_WIDTH{1'b0}};
-      tensor_strided_dma_group_base_q[VALUE_WIDTH-1:0] <= {VALUE_WIDTH{1'b0}};
-      tensor_strided_dma_dst_q[VALUE_WIDTH-1:0] <= {VALUE_WIDTH{1'b0}};
-      tensor_strided_dma_len_q[31:0] <= 32'b0;
-      tensor_strided_dma_stride_q[31:0] <= 32'b0;
-      tensor_strided_dma_y_stride_q[31:0] <= 32'b0;
-      tensor_strided_dma_x_max_q[31:0] <= 32'b0;
-      tensor_strided_dma_inner_q[31:0] <= 32'b0;
-      tensor_strided_dma_total_q[31:0] <= 32'b0;
-      tensor_strided_dma_issued_q[31:0] <= 32'b0;
-    end else begin
-      if (tensor_dma_strided_start_req) begin
-        tensor_strided_dma_active_q <=
-          (tensor_dma_start_len[31:0] != 32'b0) &&
-          (tensor_dma_start_x[63:32] != 32'b0) &&
-          (tensor_dma_start_y[63:32] != 32'b0);
-        tensor_strided_dma_inflight_q <= 1'b0;
-        tensor_strided_dma_src_q[VALUE_WIDTH-1:0] <=
-          tensor_dma_start_src[VALUE_WIDTH-1:0];
-        tensor_strided_dma_group_base_q[VALUE_WIDTH-1:0] <=
-          tensor_dma_start_src[VALUE_WIDTH-1:0];
-        tensor_strided_dma_dst_q[VALUE_WIDTH-1:0] <=
-          tensor_dma_start_dst[VALUE_WIDTH-1:0];
-        tensor_strided_dma_len_q[31:0] <= tensor_dma_start_len[31:0];
-        tensor_strided_dma_stride_q[31:0] <= tensor_dma_start_x[31:0];
-        tensor_strided_dma_y_stride_q[31:0] <= tensor_dma_start_y[31:0];
-        tensor_strided_dma_x_max_q[31:0] <= tensor_dma_start_x[63:32];
-        tensor_strided_dma_inner_q[31:0] <= 32'b0;
-        tensor_strided_dma_total_q[31:0] <= tensor_dma_start_xy_total[31:0];
-        tensor_strided_dma_issued_q[31:0] <= 32'b0;
-      end
-
-      if (tensor_strided_dma_launch) begin
-        tensor_strided_dma_inflight_q <= 1'b1;
-        tensor_strided_dma_issued_q[31:0] <=
-          tensor_strided_dma_issued_q[31:0] + 32'd1;
-        if (tensor_strided_dma_inner_q[31:0] ==
-            (tensor_strided_dma_x_max_q[31:0] - 32'd1)) begin
-          tensor_strided_dma_inner_q[31:0] <= 32'b0;
-          tensor_strided_dma_group_base_q[VALUE_WIDTH-1:0] <=
-            tensor_strided_dma_group_base_q[VALUE_WIDTH-1:0] +
-            {{(VALUE_WIDTH-32){1'b0}}, tensor_strided_dma_y_stride_q[31:0]};
-          tensor_strided_dma_src_q[VALUE_WIDTH-1:0] <=
-            tensor_strided_dma_group_base_q[VALUE_WIDTH-1:0] +
-            {{(VALUE_WIDTH-32){1'b0}}, tensor_strided_dma_y_stride_q[31:0]};
-        end else begin
-          tensor_strided_dma_inner_q[31:0] <=
-            tensor_strided_dma_inner_q[31:0] + 32'd1;
-          tensor_strided_dma_src_q[VALUE_WIDTH-1:0] <=
-            tensor_strided_dma_src_q[VALUE_WIDTH-1:0] +
-            {{(VALUE_WIDTH-32){1'b0}}, tensor_strided_dma_stride_q[31:0]};
-        end
-        tensor_strided_dma_dst_q[VALUE_WIDTH-1:0] <=
-          tensor_strided_dma_dst_q[VALUE_WIDTH-1:0] +
-          {{(VALUE_WIDTH-32){1'b0}}, tensor_strided_dma_len_q[31:0]};
-      end
-
-      if (tensor_strided_dma_done_pulse) begin
-        tensor_strided_dma_inflight_q <= 1'b0;
-        if (tensor_strided_dma_issued_q[31:0] >=
-            tensor_strided_dma_total_q[31:0])
-          tensor_strided_dma_active_q <= 1'b0;
-      end
-    end
-  end
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
     if (!cpurst_b)
       scalar_cache_op_pending_q <= 1'b0;
     else begin
@@ -1621,15 +1533,31 @@ module edge_core_base #(
   assign tensor_dma_strided_start_req = tensor_dma_start_req &&
                                         tensor_dma_start_use_xy &&
                                         !tensor_dma_start_circular;
-  assign tensor_strided_dma_done_pulse =
-    tensor_strided_dma_inflight_q && edge_dma_busy_q && !edge_dma_busy;
-  assign tensor_strided_dma_busy = tensor_strided_dma_active_q ||
-                                    tensor_strided_dma_inflight_q;
-  assign tensor_strided_dma_launch =
-    tensor_strided_dma_active_q && !tensor_strided_dma_inflight_q &&
-    (tensor_strided_dma_issued_q < tensor_strided_dma_total_q) &&
-    !edge_dma_busy && !edge_dma_start_req && !tensor_dma_start_req &&
-    !tensor_circular_dma_launch;
+  edge_core_strided_dma_ctrl #(
+    .ADDR_WIDTH(PC_WIDTH),
+    .VALUE_WIDTH(VALUE_WIDTH)
+  ) strided_dma_ctrl (
+    .forever_cpuclk(forever_cpuclk),
+    .cpurst_b(cpurst_b),
+    .start_req(tensor_dma_strided_start_req),
+    .start_src(tensor_dma_start_src),
+    .start_dst(tensor_dma_start_dst),
+    .start_len(tensor_dma_start_len[31:0]),
+    .start_x_stride(tensor_dma_start_x[31:0]),
+    .start_y_stride(tensor_dma_start_y[31:0]),
+    .start_x_count(tensor_dma_start_x[63:32]),
+    .start_y_count(tensor_dma_start_y[63:32]),
+    .start_total(tensor_dma_start_xy_total[31:0]),
+    .dma_busy(edge_dma_busy),
+    .edge_start_pending(edge_dma_start_req),
+    .tensor_start_pending(tensor_dma_start_req),
+    .circular_launch(tensor_circular_dma_launch),
+    .launch(tensor_strided_dma_launch),
+    .launch_src(tensor_strided_dma_src),
+    .launch_dst(tensor_strided_dma_dst),
+    .launch_len(tensor_strided_dma_len),
+    .busy(tensor_strided_dma_busy)
+  );
   assign tensor_circular_busy =
     tensor_circular_dma_active_q || dma_stream_busy ||
     (tensor_circular_produced_entries_q != tensor_circular_consumed_entries_q);
@@ -1763,17 +1691,17 @@ module edge_core_base #(
   assign dtcm_dma_start_addr_src = edge_dma_start_req ?
     edge_dma_start_addr_src[PC_WIDTH-1:0] :
     (tensor_dma_direct_start_req ? tensor_dma_start_src[PC_WIDTH-1:0] :
-      (tensor_strided_dma_launch ? tensor_strided_dma_src_q[PC_WIDTH-1:0] :
+      (tensor_strided_dma_launch ? tensor_strided_dma_src[PC_WIDTH-1:0] :
                                   scalar_dma_start_src[PC_WIDTH-1:0]));
   assign dtcm_dma_start_addr_dst = edge_dma_start_req ?
     edge_dma_start_addr_dst[PC_WIDTH-1:0] :
     (tensor_dma_direct_start_req ? tensor_dma_start_dst[PC_WIDTH-1:0] :
-      (tensor_strided_dma_launch ? tensor_strided_dma_dst_q[PC_WIDTH-1:0] :
+      (tensor_strided_dma_launch ? tensor_strided_dma_dst[PC_WIDTH-1:0] :
                                   scalar_dma_start_dst[PC_WIDTH-1:0]));
   assign dtcm_dma_start_len = edge_dma_start_req ?
     edge_dma_start_len[31:0] :
     (tensor_dma_direct_start_req ? tensor_dma_start_len[31:0] :
-      (tensor_strided_dma_launch ? tensor_strided_dma_len_q[31:0] :
+      (tensor_strided_dma_launch ? tensor_strided_dma_len[31:0] :
                                   scalar_dma_start_len[31:0]));
 
   edge_core_write_axi_mux #(
