@@ -1,4 +1,5 @@
 edge_core/edge_core_top.v
+edge_core/rtl/edge_core_dma_axi_mux.v
 edge_core/rtl/edge_core_base.v
 edge_core/rtl/edge_core_debug.v
 ../edge-rv/edge_ifu_fetch/edge_ifu_fetch.v

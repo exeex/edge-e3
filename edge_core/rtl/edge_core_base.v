@@ -949,19 +949,10 @@ module edge_core_base #(
   reg [3:0]               icache_starve_q;
   reg [3:0]               dcache_starve_q;
 
-  reg                     dma_read_owner_dtcm_q;
-  reg                     dma_read_owner_stream_q;
-  reg                     dma_write_owner_dtcm_q;
   reg                     edge_dma_active_q;
   reg                     scalar_cache_op_pending_q;
 
 
-  wire                    select_dtcm_dma_read;
-  wire                    select_dtcm_dma_write;
-  wire                    biu_dma_ar_fire;
-  wire                    biu_dma_r_fire;
-  wire                    biu_dma_aw_fire;
-  wire                    biu_dma_b_fire;
   wire                    core_read_idle;
   wire                    icache_refill_pending;
   wire                    icache_refill_req_fire;
@@ -1077,118 +1068,119 @@ module edge_core_base #(
     end
   end
 
-  // The stream reader presents ARVALID before its first request has become
-  // busy.  Select it from the request itself so ready/valid has no startup
-  // cycle; legacy DMA still owns its request through the same signal.
-  assign select_dtcm_dma_read = dtcm_dma_arvalid;
-  assign select_dtcm_dma_write = edge_dma_active_q && dtcm_dma_awvalid;
-
-  assign biu_dma_araddr[PC_WIDTH-1:0] =
-         select_dtcm_dma_read ? dtcm_dma_araddr[PC_WIDTH-1:0]
-                              : bringup_dma_araddr[PC_WIDTH-1:0];
-  assign biu_dma_arburst[1:0] =
-         select_dtcm_dma_read ? dtcm_dma_arburst[1:0] : bringup_dma_arburst[1:0];
-  assign biu_dma_arcache[3:0] =
-         select_dtcm_dma_read ? dtcm_dma_arcache[3:0] : bringup_dma_arcache[3:0];
-  assign biu_dma_arid[AXI_ID_WIDTH-1:0] =
-         select_dtcm_dma_read ? dtcm_dma_arid[AXI_ID_WIDTH-1:0]
-                              : bringup_dma_arid[AXI_ID_WIDTH-1:0];
-  assign biu_dma_arlen[AXI_LEN_WIDTH-1:0] =
-         select_dtcm_dma_read ? dtcm_dma_arlen[AXI_LEN_WIDTH-1:0]
-                              : bringup_dma_arlen[AXI_LEN_WIDTH-1:0];
-  assign biu_dma_arlock = select_dtcm_dma_read ? dtcm_dma_arlock : bringup_dma_arlock;
-  assign biu_dma_arprot[2:0] =
-         select_dtcm_dma_read ? dtcm_dma_arprot[2:0] : bringup_dma_arprot[2:0];
-  assign biu_dma_arsize[2:0] =
-         select_dtcm_dma_read ? dtcm_dma_arsize[2:0] : bringup_dma_arsize[2:0];
-  assign biu_dma_arvalid = select_dtcm_dma_read || bringup_dma_arvalid;
-  assign dtcm_dma_arready = select_dtcm_dma_read && biu_dma_arready;
-  assign bringup_dma_arready = !select_dtcm_dma_read && biu_dma_arready;
-  assign biu_dma_ar_fire = biu_dma_arvalid && biu_dma_arready;
-
-  assign biu_dma_rready = (dma_read_owner_dtcm_q || dma_stream_busy)
-                        ? dtcm_dma_rready : bringup_dma_rready;
-  assign dtcm_dma_rdata[AXI_DATA_WIDTH-1:0] = biu_dma_rdata[AXI_DATA_WIDTH-1:0];
-  assign dtcm_dma_rlast = biu_dma_rlast;
-  assign dtcm_dma_rvalid = (dma_read_owner_dtcm_q || dma_stream_busy) &&
-                           biu_dma_rvalid;
-  assign bringup_dma_rdata[AXI_DATA_WIDTH-1:0] = biu_dma_rdata[AXI_DATA_WIDTH-1:0];
-  assign bringup_dma_rid[AXI_ID_WIDTH-1:0] = biu_dma_rid[AXI_ID_WIDTH-1:0];
-  assign bringup_dma_rlast = !(dma_read_owner_dtcm_q || dma_stream_busy) &&
-                             biu_dma_rvalid && biu_dma_rlast;
-  assign bringup_dma_rresp[1:0] = biu_dma_rresp[1:0];
-  assign bringup_dma_rvalid = !(dma_read_owner_dtcm_q || dma_stream_busy) &&
-                              biu_dma_rvalid;
-  assign biu_dma_r_fire = biu_dma_rvalid && biu_dma_rready && biu_dma_rlast;
-
-  assign biu_dma_awaddr[PC_WIDTH-1:0] =
-         select_dtcm_dma_write ? dtcm_dma_awaddr[PC_WIDTH-1:0]
-                               : bringup_dma_awaddr[PC_WIDTH-1:0];
-  assign biu_dma_awburst[1:0] =
-         select_dtcm_dma_write ? dtcm_dma_awburst[1:0] : bringup_dma_awburst[1:0];
-  assign biu_dma_awcache[3:0] =
-         select_dtcm_dma_write ? dtcm_dma_awcache[3:0] : bringup_dma_awcache[3:0];
-  assign biu_dma_awid[AXI_ID_WIDTH-1:0] =
-         select_dtcm_dma_write ? dtcm_dma_awid[AXI_ID_WIDTH-1:0]
-                               : bringup_dma_awid[AXI_ID_WIDTH-1:0];
-  assign biu_dma_awlen[AXI_LEN_WIDTH-1:0] =
-         select_dtcm_dma_write ? dtcm_dma_awlen[AXI_LEN_WIDTH-1:0]
-                               : bringup_dma_awlen[AXI_LEN_WIDTH-1:0];
-  assign biu_dma_awlock = select_dtcm_dma_write ? dtcm_dma_awlock : bringup_dma_awlock;
-  assign biu_dma_awprot[2:0] =
-         select_dtcm_dma_write ? dtcm_dma_awprot[2:0] : bringup_dma_awprot[2:0];
-  assign biu_dma_awsize[2:0] =
-         select_dtcm_dma_write ? dtcm_dma_awsize[2:0] : bringup_dma_awsize[2:0];
-  assign biu_dma_awvalid = select_dtcm_dma_write || bringup_dma_awvalid;
-  assign dtcm_dma_awready = select_dtcm_dma_write && biu_dma_awready;
-  assign bringup_dma_awready = !select_dtcm_dma_write && biu_dma_awready;
-  assign biu_dma_aw_fire = biu_dma_awvalid && biu_dma_awready;
-
-  assign biu_dma_wdata[AXI_DATA_WIDTH-1:0] =
-         dma_write_owner_dtcm_q ? dtcm_dma_wdata[AXI_DATA_WIDTH-1:0]
-                                : bringup_dma_wdata[AXI_DATA_WIDTH-1:0];
-  assign biu_dma_wlast = dma_write_owner_dtcm_q ? dtcm_dma_wlast : bringup_dma_wlast;
-  assign biu_dma_wstrb[(AXI_DATA_WIDTH/8)-1:0] =
-         dma_write_owner_dtcm_q ? dtcm_dma_wstrb[(AXI_DATA_WIDTH/8)-1:0]
-                                : bringup_dma_wstrb[(AXI_DATA_WIDTH/8)-1:0];
-  assign biu_dma_wvalid = dma_write_owner_dtcm_q ? dtcm_dma_wvalid : bringup_dma_wvalid;
-  assign dtcm_dma_wready = dma_write_owner_dtcm_q && biu_dma_wready;
-  assign bringup_dma_wready = !dma_write_owner_dtcm_q && biu_dma_wready;
-
-  assign biu_dma_bready = dma_write_owner_dtcm_q ? dtcm_dma_bready : bringup_dma_bready;
-  assign dtcm_dma_bvalid = dma_write_owner_dtcm_q && biu_dma_bvalid;
-  assign bringup_dma_bid[AXI_ID_WIDTH-1:0] = biu_dma_bid[AXI_ID_WIDTH-1:0];
-  assign bringup_dma_bresp[1:0] = biu_dma_bresp[1:0];
-  assign bringup_dma_bvalid = !dma_write_owner_dtcm_q && biu_dma_bvalid;
-  assign biu_dma_b_fire = biu_dma_bvalid && biu_dma_bready;
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      dma_read_owner_dtcm_q <= 1'b0;
-      dma_read_owner_stream_q <= 1'b0;
-    end else if (biu_dma_ar_fire) begin
-      dma_read_owner_dtcm_q <= select_dtcm_dma_read;
-      dma_read_owner_stream_q <= select_dtcm_dma_read &&
-                                 tensor_circular_dma_cmd_valid;
-    end else if (dma_read_owner_dtcm_q && dma_read_owner_stream_q &&
-                 !dma_stream_busy && !dtcm_dma_arvalid) begin
-      dma_read_owner_dtcm_q <= 1'b0;
-      dma_read_owner_stream_q <= 1'b0;
-    end else if (dma_read_owner_dtcm_q && !dma_read_owner_stream_q &&
-                 biu_dma_r_fire) begin
-      dma_read_owner_dtcm_q <= 1'b0;
-    end
-  end
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      dma_write_owner_dtcm_q <= 1'b0;
-    end else if (biu_dma_aw_fire) begin
-      dma_write_owner_dtcm_q <= select_dtcm_dma_write;
-    end else if (biu_dma_b_fire) begin
-      dma_write_owner_dtcm_q <= 1'b0;
-    end
-  end
+  edge_core_dma_axi_mux #(
+    .ADDR_WIDTH(PC_WIDTH),
+    .DATA_WIDTH(AXI_DATA_WIDTH),
+    .ID_WIDTH(AXI_ID_WIDTH),
+    .LEN_WIDTH(AXI_LEN_WIDTH)
+  ) dma_axi_mux (
+    .forever_cpuclk(forever_cpuclk),
+    .cpurst_b(cpurst_b),
+    .dtcm_write_select_enable(edge_dma_active_q),
+    .dtcm_read_is_stream(tensor_circular_dma_cmd_valid),
+    .dtcm_stream_busy(dma_stream_busy),
+    .dtcm_araddr(dtcm_dma_araddr),
+    .dtcm_arburst(dtcm_dma_arburst),
+    .dtcm_arcache(dtcm_dma_arcache),
+    .dtcm_arid(dtcm_dma_arid),
+    .dtcm_arlen(dtcm_dma_arlen),
+    .dtcm_arlock(dtcm_dma_arlock),
+    .dtcm_arprot(dtcm_dma_arprot),
+    .dtcm_arsize(dtcm_dma_arsize),
+    .dtcm_arvalid(dtcm_dma_arvalid),
+    .dtcm_arready(dtcm_dma_arready),
+    .dtcm_rdata(dtcm_dma_rdata),
+    .dtcm_rlast(dtcm_dma_rlast),
+    .dtcm_rready(dtcm_dma_rready),
+    .dtcm_rvalid(dtcm_dma_rvalid),
+    .dtcm_awaddr(dtcm_dma_awaddr),
+    .dtcm_awburst(dtcm_dma_awburst),
+    .dtcm_awcache(dtcm_dma_awcache),
+    .dtcm_awid(dtcm_dma_awid),
+    .dtcm_awlen(dtcm_dma_awlen),
+    .dtcm_awlock(dtcm_dma_awlock),
+    .dtcm_awprot(dtcm_dma_awprot),
+    .dtcm_awsize(dtcm_dma_awsize),
+    .dtcm_awvalid(dtcm_dma_awvalid),
+    .dtcm_awready(dtcm_dma_awready),
+    .dtcm_bvalid(dtcm_dma_bvalid),
+    .dtcm_bready(dtcm_dma_bready),
+    .dtcm_wdata(dtcm_dma_wdata),
+    .dtcm_wlast(dtcm_dma_wlast),
+    .dtcm_wready(dtcm_dma_wready),
+    .dtcm_wstrb(dtcm_dma_wstrb),
+    .dtcm_wvalid(dtcm_dma_wvalid),
+    .bringup_araddr(bringup_dma_araddr),
+    .bringup_arburst(bringup_dma_arburst),
+    .bringup_arcache(bringup_dma_arcache),
+    .bringup_arid(bringup_dma_arid),
+    .bringup_arlen(bringup_dma_arlen),
+    .bringup_arlock(bringup_dma_arlock),
+    .bringup_arprot(bringup_dma_arprot),
+    .bringup_arsize(bringup_dma_arsize),
+    .bringup_arvalid(bringup_dma_arvalid),
+    .bringup_arready(bringup_dma_arready),
+    .bringup_rdata(bringup_dma_rdata),
+    .bringup_rid(bringup_dma_rid),
+    .bringup_rlast(bringup_dma_rlast),
+    .bringup_rready(bringup_dma_rready),
+    .bringup_rresp(bringup_dma_rresp),
+    .bringup_rvalid(bringup_dma_rvalid),
+    .bringup_awaddr(bringup_dma_awaddr),
+    .bringup_awburst(bringup_dma_awburst),
+    .bringup_awcache(bringup_dma_awcache),
+    .bringup_awid(bringup_dma_awid),
+    .bringup_awlen(bringup_dma_awlen),
+    .bringup_awlock(bringup_dma_awlock),
+    .bringup_awprot(bringup_dma_awprot),
+    .bringup_awsize(bringup_dma_awsize),
+    .bringup_awvalid(bringup_dma_awvalid),
+    .bringup_awready(bringup_dma_awready),
+    .bringup_bid(bringup_dma_bid),
+    .bringup_bready(bringup_dma_bready),
+    .bringup_bresp(bringup_dma_bresp),
+    .bringup_bvalid(bringup_dma_bvalid),
+    .bringup_wdata(bringup_dma_wdata),
+    .bringup_wlast(bringup_dma_wlast),
+    .bringup_wready(bringup_dma_wready),
+    .bringup_wstrb(bringup_dma_wstrb),
+    .bringup_wvalid(bringup_dma_wvalid),
+    .dma_araddr(biu_dma_araddr),
+    .dma_arburst(biu_dma_arburst),
+    .dma_arcache(biu_dma_arcache),
+    .dma_arid(biu_dma_arid),
+    .dma_arlen(biu_dma_arlen),
+    .dma_arlock(biu_dma_arlock),
+    .dma_arprot(biu_dma_arprot),
+    .dma_arsize(biu_dma_arsize),
+    .dma_arvalid(biu_dma_arvalid),
+    .dma_arready(biu_dma_arready),
+    .dma_rdata(biu_dma_rdata),
+    .dma_rid(biu_dma_rid),
+    .dma_rlast(biu_dma_rlast),
+    .dma_rready(biu_dma_rready),
+    .dma_rresp(biu_dma_rresp),
+    .dma_rvalid(biu_dma_rvalid),
+    .dma_awaddr(biu_dma_awaddr),
+    .dma_awburst(biu_dma_awburst),
+    .dma_awcache(biu_dma_awcache),
+    .dma_awid(biu_dma_awid),
+    .dma_awlen(biu_dma_awlen),
+    .dma_awlock(biu_dma_awlock),
+    .dma_awprot(biu_dma_awprot),
+    .dma_awsize(biu_dma_awsize),
+    .dma_awvalid(biu_dma_awvalid),
+    .dma_awready(biu_dma_awready),
+    .dma_bid(biu_dma_bid),
+    .dma_bready(biu_dma_bready),
+    .dma_bresp(biu_dma_bresp),
+    .dma_bvalid(biu_dma_bvalid),
+    .dma_wdata(biu_dma_wdata),
+    .dma_wlast(biu_dma_wlast),
+    .dma_wready(biu_dma_wready),
+    .dma_wstrb(biu_dma_wstrb),
+    .dma_wvalid(biu_dma_wvalid)
+  );
 
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
     if (!cpurst_b)
