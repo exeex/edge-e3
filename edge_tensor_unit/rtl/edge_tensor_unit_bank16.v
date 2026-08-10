@@ -573,6 +573,12 @@ edge_tensor_engine #(
   .weight_preactivate(engine_weight_preactivate),
   .start_use_active(engine_start_use_active),
   .weight_idle(engine_weight_idle),
+  .packed_weight_start(1'b0), .packed_weight_start_ready(),
+  .packed_weight_bf16_mode(1'b0), .packed_weight_transpose(1'b0),
+  .packed_weight_busy(), .packed_weight_done(),
+  .packed_weight_load_valid(1'b0), .packed_weight_load_ready(),
+  .packed_weight_load_idx(3'b0),
+  .packed_weight_load_data({PAIR_WIDTH{1'b0}}),
   .next_input_prefetch_valid(queued_start_valid_q),
   .next_input_prefetch_base_addr(queued_in_q[ADDR_WIDTH-1:0]),
   .next_input_prefetch_vector_count(

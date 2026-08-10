@@ -16,7 +16,7 @@ input  [3:0]   weight_fill_lane_valid_i;
 input  [1:0]   weight_fill_format_i;
 input  [127:0] weight_fill_data_i;
 input  [11:0]  weight_fill_target_dot_i;
-input  [1:0]   weight_fill_slot_i;
+input  [7:0]   weight_fill_slot_i;
 input          weight_fill_bank_i;
 input          weight_activate_i;
 input          weight_activate_bank_i;
@@ -29,6 +29,7 @@ output [127:0] output_bf16_o;
 wire [7:0] dot_valid;
 reg [7:0] dot_fill_valid;
 reg [31:0] dot_fill_data [0:7];
+reg [1:0] dot_fill_slot [0:7];
 integer lane_i;
 integer dot_i;
 
@@ -36,8 +37,10 @@ assign out_valid = dot_valid[0];
 
 always @(*) begin
   dot_fill_valid = 8'b0;
-  for (dot_i = 0; dot_i < 8; dot_i = dot_i + 1)
+  for (dot_i = 0; dot_i < 8; dot_i = dot_i + 1) begin
     dot_fill_data[dot_i] = 32'b0;
+    dot_fill_slot[dot_i] = 2'b0;
+  end
   if (weight_fill_valid_i) begin
     for (lane_i = 0; lane_i < 4; lane_i = lane_i + 1) begin
       for (dot_i = 0; dot_i < 8; dot_i = dot_i + 1) begin
@@ -45,6 +48,7 @@ always @(*) begin
             && weight_fill_target_dot_i[lane_i*3 +: 3] == dot_i[2:0]) begin
           dot_fill_valid[dot_i] = 1'b1;
           dot_fill_data[dot_i] = weight_fill_data_i[lane_i*32 +: 32];
+          dot_fill_slot[dot_i] = weight_fill_slot_i[lane_i*2 +: 2];
         end
       end
     end
@@ -58,7 +62,7 @@ generate
       .clk(clk), .rst_b(rst_b),
       .weight_fill_valid_i(dot_fill_valid[row_g]),
       .weight_fill_format_i(weight_fill_format_i),
-      .weight_fill_slot_i(weight_fill_slot_i),
+      .weight_fill_slot_i(dot_fill_slot[row_g]),
       .weight_fill_data_i(dot_fill_data[row_g]),
       .weight_fill_bank_i(weight_fill_bank_i),
       .weight_activate_i(weight_activate_i),

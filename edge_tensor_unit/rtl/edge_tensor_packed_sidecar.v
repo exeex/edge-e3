@@ -34,30 +34,33 @@ output dot_ready_o;
 output output_valid_o;
 output [127:0] output_bf16_o;
 
-wire drain_valid;
 wire [127:0] drain_data;
 wire [3:0] drain_lane_valid;
-wire [1:0] drain_format, drain_slot;
+wire [7:0] drain_slot;
 wire [11:0] drain_target_dot;
+wire circular_busy;
+reg [1:0] drain_format_q;
+wire [2:0] circular_mode = weight_format_i == 2'd0
+                             ? (weight_transpose_i ? 3'd1 : 3'd0)
+                             : (weight_transpose_i ? 3'd3 : 3'd2);
 
-edge_weight_circular4 x_weight_circular (
+edge_weight_circular4_mux6 x_weight_circular (
   .clk(clk), .rst_b(rst_b),
-  .start(weight_start_i), .start_ready(weight_start_ready_o),
-  .start_weight_format(weight_format_i),
-  .start_transpose(weight_transpose_i), .busy(), .done(weight_done_o),
-  .load_valid(weight_load_valid_i), .load_ready(weight_load_ready_o),
-  .load_data(weight_load_data_i),
-  .drain_valid(drain_valid), .drain_ready(weight_drain_ready_i),
-  .drain_data(drain_data), .drain_lane_valid(drain_lane_valid),
-  .drain_weight_format(drain_format),
-  .drain_target_dot(drain_target_dot), .drain_fill_slot(drain_slot)
+  .start_i(weight_start_i), .start_ready_o(weight_start_ready_o),
+  .mode_i(circular_mode), .busy_o(circular_busy), .done_o(weight_done_o),
+  .load_valid_i(weight_load_valid_i), .load_ready_o(weight_load_ready_o),
+  .load_data_i(weight_load_data_i),
+  .drain_valid_o(drain_lane_valid),
+  .drain_ready_i({4{weight_drain_ready_i}}),
+  .drain_data_o(drain_data), .drain_target_dot_o(drain_target_dot),
+  .drain_fill_slot_o(drain_slot)
 );
 
 edge_tile8x8_packed32_scale_psum_sidecar x_tile (
   .clk(clk), .rst_b(rst_b),
-  .weight_fill_valid_i(drain_valid && weight_drain_ready_i),
-  .weight_fill_lane_valid_i(drain_lane_valid),
-  .weight_fill_format_i(drain_format), .weight_fill_data_i(drain_data),
+  .weight_fill_valid_i(|drain_lane_valid && weight_drain_ready_i),
+  .weight_fill_lane_valid_i(drain_lane_valid & {4{weight_drain_ready_i}}),
+  .weight_fill_format_i(drain_format_q), .weight_fill_data_i(drain_data),
   .weight_fill_target_dot_i(drain_target_dot),
   .weight_fill_slot_i(drain_slot), .weight_fill_bank_i(weight_fill_bank_i),
   .weight_activate_i(weight_activate_i),
@@ -71,4 +74,13 @@ edge_tile8x8_packed32_scale_psum_sidecar x_tile (
   .rsum_last_i(rsum_last_i), .dot_ready_o(dot_ready_o),
   .out_valid(output_valid_o), .output_bf16_o(output_bf16_o)
 );
+
+always @(posedge clk or negedge rst_b) begin
+  if (!rst_b)
+    drain_format_q <= 2'd0;
+  else if (weight_start_i && weight_start_ready_o)
+    drain_format_q <= weight_format_i;
+end
+
+wire unused_circular_busy = circular_busy;
 endmodule

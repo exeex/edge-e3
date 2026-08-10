@@ -6,6 +6,11 @@ module edge_tensor_engine(
   weight_fill_valid, weight_fill_ready, weight_fill_pair_idx,
   weight_fill_data, weight_fill_last, weight_pending_valid,
   weight_active_valid, weight_preactivate, start_use_active, weight_idle,
+  packed_weight_start, packed_weight_start_ready,
+  packed_weight_bf16_mode, packed_weight_transpose,
+  packed_weight_busy, packed_weight_done,
+  packed_weight_load_valid, packed_weight_load_ready,
+  packed_weight_load_idx, packed_weight_load_data,
   next_input_prefetch_valid, next_input_prefetch_base_addr,
   next_input_prefetch_vector_count,
   handoff_ready, busy, done, host_req, host_we, host_addr, host_wdata,
@@ -26,6 +31,7 @@ parameter DATA_WIDTH = 64;
 parameter BANK_NUM = 16;
 parameter BANK_INDEX_WIDTH = 4;
 parameter VECTOR_COUNT_WIDTH = 16;
+parameter PACKED_WEIGHT = 0;
 
 localparam BYTE_WIDTH = DATA_WIDTH / 8;
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
@@ -61,6 +67,14 @@ output weight_active_valid;
 input weight_preactivate;
 input start_use_active;
 output weight_idle;
+input packed_weight_start;
+output packed_weight_start_ready;
+input packed_weight_bf16_mode, packed_weight_transpose;
+output packed_weight_busy, packed_weight_done;
+input packed_weight_load_valid;
+output packed_weight_load_ready;
+input [2:0] packed_weight_load_idx;
+input [PAIR_WIDTH-1:0] packed_weight_load_data;
 input next_input_prefetch_valid;
 input [ADDR_WIDTH-1:0] next_input_prefetch_base_addr;
 input [VECTOR_COUNT_WIDTH-1:0] next_input_prefetch_vector_count;
@@ -597,7 +611,7 @@ edge_tensor_input_window #(
   .prefetch_valid(next_input_slot_valid_q)
 );
 
-edge_tile8x8_unit x_tile8x8 (
+edge_tensor_tile_backend #(.PACKED_WEIGHT(PACKED_WEIGHT)) x_tile8x8 (
   .clk(clk), .rst_b(cpurst_b), .compute_valid(compute_valid_q),
   .late_psum_mode_i(dot_needs_psum),
   .late_psum_valid_i(dot_needs_psum ? aligned_psum_valid : 1'b1),
@@ -610,20 +624,29 @@ edge_tile8x8_unit x_tile8x8 (
   .rsum_last_i(rsum_mode_q
                && (input_consume_count_q + {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1}
                    == target_count_q)),
-  .weight_fill_bf16_mode_i(weight_fill_bf16_mode),
-  .weight_fill_start(weight_fill_start),
-  .weight_fill_start_ready(tensor_weight_fill_start_ready),
-  .weight_fill_valid(weight_fill_valid),
-  .weight_fill_ready(tensor_weight_fill_ready),
-  .weight_fill_pair_idx(weight_fill_pair_idx),
-  .weight_fill_data(weight_fill_data), .weight_fill_last(weight_fill_last),
-  .weight_activate(weight_preactivate || (start_accept && !start_use_active)),
-  .weight_activate_ready(tensor_weight_activate_ready),
-  .weight_fill_busy(tensor_weight_fill_busy),
-  .weight_active_valid(tensor_weight_active_valid),
-  .weight_pending_valid(tensor_weight_pending_valid),
+  .legacy_fill_bf16_mode_i(weight_fill_bf16_mode),
+  .legacy_fill_start_i(weight_fill_start),
+  .legacy_fill_start_ready_o(tensor_weight_fill_start_ready),
+  .legacy_fill_valid_i(weight_fill_valid),
+  .legacy_fill_ready_o(tensor_weight_fill_ready),
+  .legacy_fill_pair_idx_i(weight_fill_pair_idx),
+  .legacy_fill_data_i(weight_fill_data), .legacy_fill_last_i(weight_fill_last),
+  .packed_start_i(packed_weight_start),
+  .packed_start_ready_o(packed_weight_start_ready),
+  .packed_bf16_mode_i(packed_weight_bf16_mode),
+  .packed_transpose_i(packed_weight_transpose),
+  .packed_busy_o(packed_weight_busy), .packed_done_o(packed_weight_done),
+  .packed_load_valid_i(packed_weight_load_valid),
+  .packed_load_ready_o(packed_weight_load_ready),
+  .packed_load_idx_i(packed_weight_load_idx),
+  .packed_load_data_i(packed_weight_load_data),
+  .weight_activate_i(weight_preactivate || (start_accept && !start_use_active)),
+  .weight_activate_ready_o(tensor_weight_activate_ready),
+  .weight_fill_busy_o(tensor_weight_fill_busy),
+  .weight_active_valid_o(tensor_weight_active_valid),
+  .weight_pending_valid_o(tensor_weight_pending_valid),
   .dot_ready_o(dot_ready),
-  .output_valid(tensor_output_valid), .output_bf16_o(tensor_output_data)
+  .output_valid_o(tensor_output_valid), .output_bf16_o(tensor_output_data)
 );
 
 always @(posedge clk or negedge cpurst_b) begin

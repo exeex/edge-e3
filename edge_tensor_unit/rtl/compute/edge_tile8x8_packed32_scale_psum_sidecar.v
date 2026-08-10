@@ -16,7 +16,7 @@ input [3:0] weight_fill_lane_valid_i;
 input [1:0] weight_fill_format_i;
 input [127:0] weight_fill_data_i;
 input [11:0] weight_fill_target_dot_i;
-input [1:0] weight_fill_slot_i;
+input [7:0] weight_fill_slot_i;
 input weight_fill_bank_i, weight_activate_i, weight_activate_bank_i;
 input in_valid;
 input late_psum_mode_i, late_psum_valid_i;

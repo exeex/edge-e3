@@ -39,7 +39,7 @@ edge_tile8x8_packed32_sidecar x_dot_tile (
   .weight_fill_format_i(weight_fill_format_i),
   .weight_fill_data_i(weight_fill_data_i),
   .weight_fill_target_dot_i(weight_fill_target_dot_i),
-  .weight_fill_slot_i(weight_fill_slot_i),
+  .weight_fill_slot_i({4{weight_fill_slot_i}}),
   .weight_fill_bank_i(weight_fill_bank_i),
   .weight_activate_i(weight_activate_i),
   .weight_activate_bank_i(weight_activate_bank_i),
