@@ -51,6 +51,15 @@ edge_tensor_unit/rtl/compute/edge_dot8_kernel.v
 edge_tensor_unit/rtl/compute/edge_dot8_unit.v
 edge_tensor_unit/rtl/compute/edge_psum.v
 edge_tensor_unit/rtl/compute/edge_tile8x8_unit.v
+edge_tensor_unit/rtl/weight/edge_weight_circular4_mux6.v
+edge_tensor_unit/rtl/compute/edge_dot8_weight_bank_packed32.v
+edge_tensor_unit/rtl/compute/edge_dot8_packed32_sidecar.v
+edge_tensor_unit/rtl/compute/edge_tile8x8_packed32_sidecar.v
+edge_tensor_unit/rtl/compute/edge_tile8x8_packed32_scale_psum_sidecar.v
+edge_tensor_unit/rtl/edge_tensor_packed_sidecar.v
+edge_tensor_unit/rtl/edge_tensor_packed_bank_sidecar.v
+edge_tensor_unit/rtl/edge_tensor_packed_wld_tile.v
+edge_tensor_unit/rtl/compute/edge_tensor_tile_backend.v
 edge_accel_io/edge_accel_io_unit.v
 edge_accel_io/edge_accel_unit.v
 edge_accel_io/edge_accel_io.v

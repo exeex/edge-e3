@@ -1,4 +1,20 @@
-module edge_dtcm_subsys_core(
+module edge_dtcm_subsys_core #(
+  parameter ADDR_WIDTH = 14,
+  parameter DATA_WIDTH = 64,
+  parameter BYTE_WIDTH = DATA_WIDTH / 8,
+  parameter DMA_DATA_WIDTH = 128,
+  parameter DMA_BYTE_WIDTH = DMA_DATA_WIDTH / 8,
+  parameter BANK_NUM = 16,
+  parameter BANK_INDEX_WIDTH = 4,
+  parameter SEGMENT_NUM = 1,
+  parameter SEGMENT_INDEX_WIDTH = 1,
+  parameter SRAM_ADDR_WIDTH = 10,
+  parameter [3:0] LSU_LOOKAHEAD = 4'd1,
+  parameter [3:0] TENSOR_IO_LOOKAHEAD = 4'd2,
+  parameter [3:0] TENSOR_WLD_LOOKAHEAD = 4'd2,
+  parameter [3:0] DMA_LOOKAHEAD = 4'd3,
+  parameter TENSOR_PACKED_WEIGHT = 1
+)(
   clk,
   cpurst_b,
   cp0_lsu_dtcm_base,
@@ -139,21 +155,6 @@ module edge_dtcm_subsys_core(
   edge_tensor_wld_lease_delay,
   edge_tensor_wld_lease_valid
 );
-
-parameter ADDR_WIDTH          = 14;
-parameter DATA_WIDTH          = 64;
-parameter BYTE_WIDTH          = DATA_WIDTH / 8;
-parameter DMA_DATA_WIDTH      = 128;
-parameter DMA_BYTE_WIDTH      = DMA_DATA_WIDTH / 8;
-parameter BANK_NUM            = 16;
-parameter BANK_INDEX_WIDTH    = 4;
-parameter SEGMENT_NUM         = 1;
-parameter SEGMENT_INDEX_WIDTH = 1;
-parameter SRAM_ADDR_WIDTH     = 10;
-parameter [3:0] LSU_LOOKAHEAD       = 4'd1;
-parameter [3:0] TENSOR_IO_LOOKAHEAD = 4'd2;
-parameter [3:0] TENSOR_WLD_LOOKAHEAD = 4'd2;
-parameter [3:0] DMA_LOOKAHEAD       = 4'd3;
 
 input                         clk;
 input                         cpurst_b;
@@ -439,7 +440,8 @@ edge_tensor_unit_bank16 #(
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
-  .VECTOR_COUNT_WIDTH(16)
+  .VECTOR_COUNT_WIDTH(16),
+  .PACKED_WEIGHT(TENSOR_PACKED_WEIGHT)
 ) x_edge_tensor_unit_bank16 (
   .clk(clk),
   .cpurst_b(cpurst_b),
