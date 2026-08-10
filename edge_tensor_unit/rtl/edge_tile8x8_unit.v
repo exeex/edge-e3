@@ -258,7 +258,7 @@ endmodule
 // both values to BF16. BF16 fill consumes one BF16 value per row on each of
 // eight sequential beats. Both modes populate the same 8x8 BF16 buffers.
 
-module edge_bf16_int8_dot8x8_psum(
+module edge_tile8x8_unit(
   clk,
   rst_b,
   compute_valid,
@@ -440,7 +440,7 @@ generate
                                       ? psum_bf16_i[lane*16 +: 16]
                                       : psum_d5[lane*16 +: 16];
 
-    edge_bf16_int8_dot8 x_dot8 (
+    edge_dot8_unit x_dot8 (
       .clk        (clk),
       .rst_b      (rst_b),
       .in_valid   (compute_valid),

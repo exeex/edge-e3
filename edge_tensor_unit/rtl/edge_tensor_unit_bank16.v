@@ -550,14 +550,14 @@ assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
                       || (|cmd_start_mode[7:5])
                       || engine_done;
 
-edge_tensor8x8_bank16 #(
+edge_tensor_engine #(
   .ADDR_WIDTH(ADDR_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
   .BANK_NUM(BANK_NUM),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .VECTOR_COUNT_WIDTH(VECTOR_COUNT_WIDTH)
-) x_bank16_engine (
+) x_tensor_engine (
   .clk(clk),
   .cpurst_b(cpurst_b),
   .start(engine_start),

@@ -1156,7 +1156,7 @@ edge_tensor_wld8x8_fill x_edge_tensor_wld8x8_fill (
   .weight_fill_last       (tensor_weight_fill_last)
 );
 
-edge_bf16_int8_dot8x8_psum x_edge_bf16_int8_dot8x8_psum (
+edge_tile8x8_unit x_tile8x8 (
   .clk                 (clk),
   .rst_b               (cpurst_b),
   .compute_valid       (compute_valid_q),

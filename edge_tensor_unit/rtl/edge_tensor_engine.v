@@ -1,4 +1,4 @@
-module edge_tensor8x8_bank16(
+module edge_tensor_engine(
   clk, cpurst_b, start, in_base_addr, psum_base_addr, out_base_addr,
   weight_base_addr, vector_count, start_mode, scale_bf16,
   scale_stream_valid, scale_stream_data, scale_stream_ready,
@@ -598,7 +598,7 @@ edge_tensor_input_window #(
   .prefetch_valid(next_input_slot_valid_q)
 );
 
-edge_bf16_int8_dot8x8_psum x_tensor8x8 (
+edge_tile8x8_unit x_tile8x8 (
   .clk(clk), .rst_b(cpurst_b), .compute_valid(compute_valid_q),
   .late_psum_mode_i(dot_needs_psum),
   .late_psum_valid_i(dot_needs_psum ? aligned_psum_valid : 1'b1),

@@ -2,7 +2,7 @@
 //
 // This variant keeps a signed two's-complement internal mantissa and reduces
 // lanes through a pipelined exponent-aligned adder tree. It is intended for
-// resource/timing comparison against edge_bf16_int8_dot8.
+// resource/timing comparison against edge_dot8_unit.
 
 module edge_bf16_int8_dot8_tree(
   clk,

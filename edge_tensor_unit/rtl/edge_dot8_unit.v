@@ -10,7 +10,7 @@
 //       successive row sums in the private BF22 RSUM accumulator
 //   r6: emit one BF16 result when the RSUM sequence marks its last row
 
-module edge_bf16_int8_dot8(
+module edge_dot8_unit(
   clk,
   rst_b,
   in_valid,
