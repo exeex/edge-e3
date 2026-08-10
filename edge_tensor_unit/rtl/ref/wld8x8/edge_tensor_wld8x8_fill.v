@@ -1,3 +1,4 @@
+// Reference wrapper for the original full 8x8 WLD staging array.
 module edge_tensor_wld8x8_fill(
   clk,
   rst_b,

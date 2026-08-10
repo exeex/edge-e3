@@ -1,7 +1,8 @@
 // Experimental 8-row router for four 32-bit WLD channels.
 module edge_tile8x8_32b_sidecar(
   clk, rst_b,
-  weight_fill_valid_i, weight_fill_data_i, weight_fill_target_dot_i,
+  weight_fill_valid_i, weight_fill_lane_valid_i, weight_fill_transpose_i,
+  weight_fill_data_i, weight_fill_target_dot_i,
   weight_fill_quarter_i, weight_fill_bank_i,
   weight_activate_i, weight_activate_bank_i,
   in_valid, input_bf16_i,
@@ -11,6 +12,8 @@ module edge_tile8x8_32b_sidecar(
 input          clk;
 input          rst_b;
 input          weight_fill_valid_i;
+input  [3:0]   weight_fill_lane_valid_i;
+input          weight_fill_transpose_i;
 input  [127:0] weight_fill_data_i;
 input  [11:0]  weight_fill_target_dot_i;
 input  [1:0]   weight_fill_quarter_i;
@@ -34,16 +37,29 @@ always @(*) begin
   for (route_i = 0; route_i < 8; route_i = route_i + 1)
     dot_fill_data[route_i] = 32'b0;
   if (weight_fill_valid_i) begin
-    for (route_i = 0; route_i < 4; route_i = route_i + 1) begin
-      // A circular 2x2 channel only selects one of its fixed dot pair.
-      // The upper target bits are descriptive metadata, not a crossbar address.
-      if (weight_fill_target_dot_i[route_i*3]) begin
-        dot_fill_valid[route_i*2+1] = 1'b1;
-        dot_fill_data[route_i*2+1] = weight_fill_data_i[route_i*32 +: 32];
-      end else begin
-        dot_fill_valid[route_i*2] = 1'b1;
-        dot_fill_data[route_i*2] = weight_fill_data_i[route_i*32 +: 32];
+    if (weight_fill_transpose_i) begin
+      for (route_i = 0; route_i < 4; route_i = route_i + 1) begin
+        // Transpose channels each select one member of a fixed dot pair.
+        if (weight_fill_lane_valid_i[route_i]) begin
+          if (weight_fill_target_dot_i[route_i*3]) begin
+            dot_fill_valid[route_i*2+1] = 1'b1;
+            dot_fill_data[route_i*2+1] =
+                weight_fill_data_i[route_i*32 +: 32];
+          end else begin
+            dot_fill_valid[route_i*2] = 1'b1;
+            dot_fill_data[route_i*2] =
+                weight_fill_data_i[route_i*32 +: 32];
+          end
+        end
       end
+    end else begin
+      // Normal mode broadcasts one selected circular output and decodes valid.
+      for (route_i = 0; route_i < 8; route_i = route_i + 1)
+        if (weight_fill_lane_valid_i[0]
+            && weight_fill_target_dot_i[2:0] == route_i[2:0]) begin
+          dot_fill_valid[route_i] = 1'b1;
+          dot_fill_data[route_i] = weight_fill_data_i[31:0];
+        end
     end
   end
 end

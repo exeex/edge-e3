@@ -1,3 +1,4 @@
+// Readable 8x8 transpose reference retained beside the circular implementation.
 module edge_tensor_wld_reg(
   clk,
   clear,
