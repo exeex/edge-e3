@@ -40,6 +40,7 @@ edge_core/rtl/edge_core_debug.v
 edge_accel_cmd_queue/edge_accel_cmd_queue.v
 ../edge-rv/edge_accel_pipe/edge_accel_pipe.v
 edge_tensor_unit/edge_tensor_unit.v
+edge_tensor_unit/rtl/edge_tensor_skew_buffer.v
 edge_tensor_unit/rtl/edge_tensor8x8_bank16.v
 edge_tensor_unit/rtl/edge_tensor_unit_bank16.v
 edge_tensor_unit/rtl/edge_tensor_iopsum_remux.v
