@@ -113,26 +113,23 @@ wire [DMA_DATA_WIDTH-1:0]     dma_pair_wdata;
 wire [DMA_BYTE_WIDTH-1:0]     dma_pair_wstrb;
 wire [BANK_INDEX_WIDTH-1:0]   dma_rsp_bank0_unused;
 wire [BANK_INDEX_WIDTH-1:0]   dma_rsp_bank1_unused;
-wire                          sld_pair_req;
-wire                          sld_unused_bank_we;
-wire [BANK_INDEX_WIDTH-1:0]   sld_pair_bank0;
-wire [BANK_INDEX_WIDTH-1:0]   sld_pair_bank1;
-wire                          sld_unused_bank1_valid;
-wire [SRAM_ADDR_WIDTH-1:0]    sld_pair_addr;
-wire [DMA_DATA_WIDTH-1:0]     sld_unused_bank_wdata;
-wire [DMA_BYTE_WIDTH-1:0]     sld_unused_bank_wstrb;
-wire [BANK_INDEX_WIDTH-1:0]   sld_rsp_bank0_unused;
-wire [BANK_INDEX_WIDTH-1:0]   sld_rsp_bank1_unused;
-wire                          wld_pair_req;
-wire                          wld_unused_bank_we;
-wire [BANK_INDEX_WIDTH-1:0]   wld_pair_bank0;
-wire [BANK_INDEX_WIDTH-1:0]   wld_pair_bank1;
-wire                          wld_unused_bank1_valid;
-wire [SRAM_ADDR_WIDTH-1:0]    wld_pair_addr;
-wire [DMA_DATA_WIDTH-1:0]     wld_unused_bank_wdata;
-wire [DMA_BYTE_WIDTH-1:0]     wld_unused_bank_wstrb;
-wire [BANK_INDEX_WIDTH-1:0]   wld_rsp_bank0_unused;
-wire [BANK_INDEX_WIDTH-1:0]   wld_rsp_bank1_unused;
+wire                          shared_ld_pair_req;
+wire                          shared_ld_unused_bank_we;
+wire [BANK_INDEX_WIDTH-1:0]   shared_ld_pair_bank0;
+wire [BANK_INDEX_WIDTH-1:0]   shared_ld_pair_bank1;
+wire                          shared_ld_unused_bank1_valid;
+wire [SRAM_ADDR_WIDTH-1:0]    shared_ld_pair_addr;
+wire [DMA_DATA_WIDTH-1:0]     shared_ld_unused_bank_wdata;
+wire [DMA_BYTE_WIDTH-1:0]     shared_ld_unused_bank_wstrb;
+wire [BANK_INDEX_WIDTH-1:0]   shared_ld_rsp_bank0_unused;
+wire [BANK_INDEX_WIDTH-1:0]   shared_ld_rsp_bank1_unused;
+wire                          shared_ld_select_wld;
+wire                          shared_ld_req;
+wire [ADDR_WIDTH-1:0]         shared_ld_addr;
+wire                          shared_ld_ready;
+wire                          shared_ld_rvalid;
+wire [DMA_DATA_WIDTH-1:0]     shared_ld_rdata;
+reg                           shared_ld_rsp_owner_wld_q;
 
 wire [1:0]                    lsu_lane_req;
 wire [1:0]                    lsu_lane_we;
@@ -140,8 +137,8 @@ wire [PAIR_DATA_WIDTH-1:0]    lsu_lane_wdata;
 wire [PAIR_BYTE_WIDTH-1:0]    lsu_lane_wstrb;
 wire [REQUEST_PAYLOAD_WIDTH-1:0] lsu_request_payload;
 wire [REQUEST_PAYLOAD_WIDTH-1:0] dma_request_payload;
-wire [REQUEST_PAYLOAD_WIDTH-1:0] sld_request_payload;
-wire [REQUEST_PAYLOAD_WIDTH-1:0] wld_request_payload;
+wire [REQUEST_PAYLOAD_WIDTH-1:0] shared_ld_request_payload;
+wire [REQUEST_PAYLOAD_WIDTH-1:0] unused_channel_request_payload;
 wire [4*REQUEST_PAYLOAD_WIDTH-1:0] logical_request_payload;
 wire [PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0] physical_request_payload;
 wire [2:0]                    pair_phase;
@@ -173,17 +170,17 @@ assign dma_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
      dma_pair_wdata[PAIR_DATA_WIDTH-1:0],
      dma_pair_addr[SRAM_ADDR_WIDTH-1:0],
      ({2{dma_pair_we}} & {2{dma_pair_req}}), {2{dma_pair_req}}};
-assign wld_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
+assign shared_ld_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
     {{PAIR_BYTE_WIDTH{1'b0}}, {PAIR_DATA_WIDTH{1'b0}},
-     wld_pair_addr[SRAM_ADDR_WIDTH-1:0], 2'b00, {2{wld_pair_req}}};
-assign sld_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
-    {{PAIR_BYTE_WIDTH{1'b0}}, {PAIR_DATA_WIDTH{1'b0}},
-     sld_pair_addr[SRAM_ADDR_WIDTH-1:0], 2'b00, {2{sld_pair_req}}};
+     shared_ld_pair_addr[SRAM_ADDR_WIDTH-1:0], 2'b00,
+     {2{shared_ld_pair_req}}};
+assign unused_channel_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
+    {REQUEST_PAYLOAD_WIDTH{1'b0}};
 
 // Compressed logical groups 0, 1, 2, and 3 represent fixed channels
-// 1, 3, 5, and 7 for LSU, DMA, WLD, and SLD.
+// 1, 3, 5, and 7. SLD and WLD share channel 5; channel 7 is unused.
 assign logical_request_payload[4*REQUEST_PAYLOAD_WIDTH-1:0] =
-    {sld_request_payload, wld_request_payload,
+    {unused_channel_request_payload, shared_ld_request_payload,
      dma_request_payload, lsu_request_payload};
 
 edge_dtcm_upper_pair_router #(
@@ -266,42 +263,48 @@ edge_dtcm_upper_io #(
                                             +: DATA_WIDTH])
 );
 
-edge_dtcm_upper_io #(
-  .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(2),
-  .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
-  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(3'd7), .ALLOW_WRITE(0)
-) x_sld_io (
-  .clk(clk), .cpurst_b(cpurst_b), .phase(phase),
-  .req(sld_req), .req_we(1'b0), .req_addr(sld_addr),
-  .req_wdata({DMA_DATA_WIDTH{1'b0}}),
-  .req_wstrb({DMA_BYTE_WIDTH{1'b0}}),
-  .ready(sld_ready), .rvalid(sld_rvalid), .rdata(sld_rdata),
-  .bank_req(sld_pair_req), .bank_we(sld_unused_bank_we),
-  .bank0(sld_pair_bank0), .bank1(sld_pair_bank1),
-  .bank1_valid(sld_unused_bank1_valid), .bank_addr(sld_pair_addr),
-  .bank_wdata(sld_unused_bank_wdata), .bank_wstrb(sld_unused_bank_wstrb),
-  .rsp_bank0(sld_rsp_bank0_unused), .rsp_bank1(sld_rsp_bank1_unused),
-  .rsp_bank0_rdata(logical_response_payload[3*PAIR_DATA_WIDTH
-                                            +: DATA_WIDTH]),
-  .rsp_bank1_rdata(logical_response_payload[3*PAIR_DATA_WIDTH+DATA_WIDTH
-                                            +: DATA_WIDTH])
-);
+// WLD wins a simultaneous request and SLD keeps its request asserted until
+// WLD releases the shared port. Only the selected requester observes ready.
+// Capture the accepted owner so the one-cycle SRAM response cannot be routed
+// to a requester that arrived later.
+assign shared_ld_select_wld = wld_req;
+assign shared_ld_req = wld_req || sld_req;
+assign shared_ld_addr[ADDR_WIDTH-1:0] =
+    shared_ld_select_wld ? wld_addr[ADDR_WIDTH-1:0]
+                         : sld_addr[ADDR_WIDTH-1:0];
+assign wld_ready = shared_ld_ready && shared_ld_select_wld;
+assign sld_ready = shared_ld_ready && !shared_ld_select_wld && sld_req;
+assign wld_rvalid = shared_ld_rvalid && shared_ld_rsp_owner_wld_q;
+assign sld_rvalid = shared_ld_rvalid && !shared_ld_rsp_owner_wld_q;
+assign wld_rdata[DMA_DATA_WIDTH-1:0] = shared_ld_rdata[DMA_DATA_WIDTH-1:0];
+assign sld_rdata[DMA_DATA_WIDTH-1:0] = shared_ld_rdata[DMA_DATA_WIDTH-1:0];
+
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b)
+    shared_ld_rsp_owner_wld_q <= 1'b0;
+  else if (shared_ld_ready)
+    shared_ld_rsp_owner_wld_q <= shared_ld_select_wld;
+end
 
 edge_dtcm_upper_io #(
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(2),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(3'd5), .ALLOW_WRITE(0)
-) x_wld_io (
+) x_shared_ld_io (
   .clk(clk), .cpurst_b(cpurst_b), .phase(phase),
-  .req(wld_req), .req_we(1'b0), .req_addr(wld_addr),
+  .req(shared_ld_req), .req_we(1'b0), .req_addr(shared_ld_addr),
   .req_wdata({DMA_DATA_WIDTH{1'b0}}),
   .req_wstrb({DMA_BYTE_WIDTH{1'b0}}),
-  .ready(wld_ready), .rvalid(wld_rvalid), .rdata(wld_rdata),
-  .bank_req(wld_pair_req), .bank_we(wld_unused_bank_we),
-  .bank0(wld_pair_bank0), .bank1(wld_pair_bank1),
-  .bank1_valid(wld_unused_bank1_valid), .bank_addr(wld_pair_addr),
-  .bank_wdata(wld_unused_bank_wdata), .bank_wstrb(wld_unused_bank_wstrb),
-  .rsp_bank0(wld_rsp_bank0_unused), .rsp_bank1(wld_rsp_bank1_unused),
+  .ready(shared_ld_ready), .rvalid(shared_ld_rvalid),
+  .rdata(shared_ld_rdata),
+  .bank_req(shared_ld_pair_req), .bank_we(shared_ld_unused_bank_we),
+  .bank0(shared_ld_pair_bank0), .bank1(shared_ld_pair_bank1),
+  .bank1_valid(shared_ld_unused_bank1_valid),
+  .bank_addr(shared_ld_pair_addr),
+  .bank_wdata(shared_ld_unused_bank_wdata),
+  .bank_wstrb(shared_ld_unused_bank_wstrb),
+  .rsp_bank0(shared_ld_rsp_bank0_unused),
+  .rsp_bank1(shared_ld_rsp_bank1_unused),
   .rsp_bank0_rdata(logical_response_payload[2*PAIR_DATA_WIDTH
                                             +: DATA_WIDTH]),
   .rsp_bank1_rdata(logical_response_payload[2*PAIR_DATA_WIDTH+DATA_WIDTH
