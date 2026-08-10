@@ -927,12 +927,6 @@ module edge_core_base #(
   wire                    biu_core_wready;
   wire [(AXI_DATA_WIDTH/8)-1:0] biu_core_wstrb;
   wire                    biu_core_wvalid;
-  reg                     clean_wb_buf_valid_q;
-  reg                     clean_wb_aw_sent_q;
-  reg                     clean_wb_w_sent_q;
-  reg [PC_WIDTH-1:0]      clean_wb_addr_q;
-  reg [AXI_DATA_WIDTH-1:0] clean_wb_data_q;
-  reg                     clean_wb_last_q;
   reg                     edge_dma_active_q;
   reg                     scalar_cache_op_pending_q;
 
@@ -1793,92 +1787,59 @@ module edge_core_base #(
       (tensor_strided_dma_launch ? tensor_strided_dma_len_q[31:0] :
                                   scalar_dma_start_len[31:0]));
 
-  assign dcache_clean_wb_ready = !clean_wb_buf_valid_q;
-  assign dcache_clean_wb_complete =
-    clean_wb_buf_valid_q && clean_wb_last_q &&
-    biu_core_bvalid && biu_core_bready;
-  assign biu_core_awvalid =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ?
-      1'b1 : bringup_core_awvalid;
-  assign biu_core_awaddr[PC_WIDTH-1:0] =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ?
-      clean_wb_addr_q[PC_WIDTH-1:0] : bringup_core_awaddr[PC_WIDTH-1:0];
-  assign biu_core_awburst[1:0] =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ? 2'b01 : bringup_core_awburst[1:0];
-  assign biu_core_awcache[3:0] =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ? 4'h0 : bringup_core_awcache[3:0];
-  assign biu_core_awid[AXI_ID_WIDTH-1:0] =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ?
-      8'hc1 : bringup_core_awid[AXI_ID_WIDTH-1:0];
-  assign biu_core_awlen[AXI_LEN_WIDTH-1:0] =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ?
-      {AXI_LEN_WIDTH{1'b0}} : bringup_core_awlen[AXI_LEN_WIDTH-1:0];
-  assign biu_core_awlock =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ? 1'b0 : bringup_core_awlock;
-  assign biu_core_awprot[2:0] =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ? 3'b000 : bringup_core_awprot[2:0];
-  assign biu_core_awsize[2:0] =
-    clean_wb_buf_valid_q && !clean_wb_aw_sent_q ? 3'b100 : bringup_core_awsize[2:0];
-  assign bringup_core_awready =
-    clean_wb_buf_valid_q ? 1'b0 : biu_core_awready;
-
-  assign biu_core_wvalid =
-    clean_wb_buf_valid_q && clean_wb_aw_sent_q && !clean_wb_w_sent_q ?
-      1'b1 : bringup_core_wvalid;
-  assign biu_core_wdata[AXI_DATA_WIDTH-1:0] =
-    clean_wb_buf_valid_q && clean_wb_aw_sent_q && !clean_wb_w_sent_q ?
-      clean_wb_data_q[AXI_DATA_WIDTH-1:0] : bringup_core_wdata[AXI_DATA_WIDTH-1:0];
-  assign biu_core_wlast =
-    clean_wb_buf_valid_q && clean_wb_aw_sent_q && !clean_wb_w_sent_q ?
-      1'b1 : bringup_core_wlast;
-  assign biu_core_wstrb[(AXI_DATA_WIDTH/8)-1:0] =
-    clean_wb_buf_valid_q && clean_wb_aw_sent_q && !clean_wb_w_sent_q ?
-      {(AXI_DATA_WIDTH/8){1'b1}} : bringup_core_wstrb[(AXI_DATA_WIDTH/8)-1:0];
-  assign bringup_core_wready =
-    clean_wb_buf_valid_q ? 1'b0 : biu_core_wready;
-
-  assign biu_core_bready =
-    clean_wb_buf_valid_q && clean_wb_w_sent_q ? 1'b1 : bringup_core_bready;
-  assign bringup_core_bid[AXI_ID_WIDTH-1:0] = biu_core_bid[AXI_ID_WIDTH-1:0];
-  assign bringup_core_bresp[1:0] = biu_core_bresp[1:0];
-  assign bringup_core_bvalid = clean_wb_buf_valid_q ? 1'b0 : biu_core_bvalid;
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      clean_wb_buf_valid_q <= 1'b0;
-      clean_wb_aw_sent_q <= 1'b0;
-      clean_wb_w_sent_q <= 1'b0;
-      clean_wb_addr_q <= {PC_WIDTH{1'b0}};
-      clean_wb_data_q <= {AXI_DATA_WIDTH{1'b0}};
-      clean_wb_last_q <= 1'b0;
-    end else begin
-      if (dcache_clean_wb_valid && dcache_clean_wb_ready) begin
-        clean_wb_buf_valid_q <= 1'b1;
-        clean_wb_aw_sent_q <= 1'b0;
-        clean_wb_w_sent_q <= 1'b0;
-        clean_wb_addr_q <= dcache_clean_wb_addr[PC_WIDTH-1:0];
-        clean_wb_data_q <= dcache_clean_wb_data[AXI_DATA_WIDTH-1:0];
-        clean_wb_last_q <= dcache_clean_wb_last;
-      end
-
-      if (clean_wb_buf_valid_q && !clean_wb_aw_sent_q &&
-          biu_core_awready) begin
-        clean_wb_aw_sent_q <= 1'b1;
-      end
-
-      if (clean_wb_buf_valid_q && clean_wb_aw_sent_q &&
-          !clean_wb_w_sent_q && biu_core_wready) begin
-        clean_wb_w_sent_q <= 1'b1;
-      end
-
-      if (clean_wb_buf_valid_q && clean_wb_w_sent_q &&
-          biu_core_bvalid && biu_core_bready) begin
-        clean_wb_buf_valid_q <= 1'b0;
-        clean_wb_aw_sent_q <= 1'b0;
-        clean_wb_w_sent_q <= 1'b0;
-      end
-    end
-  end
+  edge_core_write_axi_mux #(
+    .ADDR_WIDTH(PC_WIDTH),
+    .DATA_WIDTH(AXI_DATA_WIDTH),
+    .ID_WIDTH(AXI_ID_WIDTH),
+    .LEN_WIDTH(AXI_LEN_WIDTH)
+  ) write_axi_mux (
+    .forever_cpuclk(forever_cpuclk),
+    .cpurst_b(cpurst_b),
+    .clean_valid(dcache_clean_wb_valid),
+    .clean_ready(dcache_clean_wb_ready),
+    .clean_addr(dcache_clean_wb_addr[PC_WIDTH-1:0]),
+    .clean_data(dcache_clean_wb_data),
+    .clean_last(dcache_clean_wb_last),
+    .clean_complete(dcache_clean_wb_complete),
+    .bringup_awaddr(bringup_core_awaddr),
+    .bringup_awburst(bringup_core_awburst),
+    .bringup_awcache(bringup_core_awcache),
+    .bringup_awid(bringup_core_awid),
+    .bringup_awlen(bringup_core_awlen),
+    .bringup_awlock(bringup_core_awlock),
+    .bringup_awprot(bringup_core_awprot),
+    .bringup_awsize(bringup_core_awsize),
+    .bringup_awvalid(bringup_core_awvalid),
+    .bringup_awready(bringup_core_awready),
+    .bringup_bid(bringup_core_bid),
+    .bringup_bready(bringup_core_bready),
+    .bringup_bresp(bringup_core_bresp),
+    .bringup_bvalid(bringup_core_bvalid),
+    .bringup_wdata(bringup_core_wdata),
+    .bringup_wlast(bringup_core_wlast),
+    .bringup_wready(bringup_core_wready),
+    .bringup_wstrb(bringup_core_wstrb),
+    .bringup_wvalid(bringup_core_wvalid),
+    .core_awaddr(biu_core_awaddr),
+    .core_awburst(biu_core_awburst),
+    .core_awcache(biu_core_awcache),
+    .core_awid(biu_core_awid),
+    .core_awlen(biu_core_awlen),
+    .core_awlock(biu_core_awlock),
+    .core_awprot(biu_core_awprot),
+    .core_awsize(biu_core_awsize),
+    .core_awvalid(biu_core_awvalid),
+    .core_awready(biu_core_awready),
+    .core_bid(biu_core_bid),
+    .core_bready(biu_core_bready),
+    .core_bresp(biu_core_bresp),
+    .core_bvalid(biu_core_bvalid),
+    .core_wdata(biu_core_wdata),
+    .core_wlast(biu_core_wlast),
+    .core_wready(biu_core_wready),
+    .core_wstrb(biu_core_wstrb),
+    .core_wvalid(biu_core_wvalid)
+  );
 
   edge_pc_redirect_ctrl #(
     .PC_WIDTH(PC_WIDTH),
