@@ -265,6 +265,7 @@ edge_dtcm_bank16_raw_fabric #(
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .ADDR_WIDTH(SRAM_ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
+  .SEGMENT_NUM(SEGMENT_NUM),
   .SPLIT_MODE(1)
 ) x_raw_fabric (
   .clk(clk),

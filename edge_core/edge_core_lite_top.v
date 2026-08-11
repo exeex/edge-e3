@@ -1,7 +1,9 @@
 module edge_core_lite_top #(
   parameter ADDR_WIDTH=40,parameter DATA_WIDTH=128,
   parameter ID_WIDTH=8,parameter LEN_WIDTH=8,
-  parameter ICACHE_BYTES=16384,parameter DCACHE_BYTES=16384
+  parameter ICACHE_BYTES=16384,parameter DCACHE_BYTES=16384,
+  parameter DTCM_ADDR_WIDTH=14,parameter DTCM_SRAM_ADDR_WIDTH=10,
+  parameter DTCM_SEGMENT_NUM=1
 )(
   input wire forever_cpuclk,input wire cpurst_b,
   input wire [ADDR_WIDTH-1:0] mem_region_base,input wire [ADDR_WIDTH-1:0] mem_region_mask,
@@ -48,12 +50,14 @@ module edge_core_lite_top #(
   wire accel_req_valid,accel_req_ready,accel_resp_valid,accel_resp_error;
   wire [63:0] accel_req_inst,accel_req_src0,accel_req_src1,accel_resp_value;
   wire dtcm_lsu_req,dtcm_lsu_ready,dtcm_lsu_we,dtcm_lsu_rvalid;
-  wire [13:0] dtcm_lsu_addr; wire [63:0] dtcm_lsu_wdata,dtcm_lsu_rdata;
+  wire [DTCM_ADDR_WIDTH-1:0] dtcm_lsu_addr;
+  wire [63:0] dtcm_lsu_wdata,dtcm_lsu_rdata;
   wire [7:0] dtcm_lsu_wstrb;
 
   edge_rv_lite_axi_core #(.PC_WIDTH(ADDR_WIDTH),.AXI_DATA_WIDTH(DATA_WIDTH),
     .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH),.ICACHE_BYTES(ICACHE_BYTES),
-    .DCACHE_BYTES(DCACHE_BYTES),.ENABLE_DTCM_PORT(1)) core(
+    .DCACHE_BYTES(DCACHE_BYTES),.DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),
+    .ENABLE_DTCM_PORT(1)) core(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),
     .biu_pad_araddr(bringup_araddr),.biu_pad_arburst(bringup_arburst),
     .biu_pad_arcache(bringup_arcache),.biu_pad_arid(bringup_arid),
@@ -86,7 +90,9 @@ module edge_core_lite_top #(
     .cycle_count(cycle_count),.instret_count(instret_count));
 
   edge_lite_accel_platform #(.AXI_ADDR_WIDTH(ADDR_WIDTH),.AXI_DATA_WIDTH(DATA_WIDTH),
-    .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH)) platform(
+    .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH),
+    .DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),.DTCM_SRAM_ADDR_WIDTH(DTCM_SRAM_ADDR_WIDTH),
+    .DTCM_SEGMENT_NUM(DTCM_SEGMENT_NUM)) platform(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),.mem_region_base(mem_region_base),
     .mem_region_mask(mem_region_mask),.mem_region_enable(mem_region_enable),
     .req_valid(accel_req_valid),.req_ready(accel_req_ready),.req_inst(accel_req_inst),

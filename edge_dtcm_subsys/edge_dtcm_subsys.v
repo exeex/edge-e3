@@ -6,7 +6,9 @@ module edge_dtcm_subsys #(
   parameter AXI_ID_WIDTH = 8,
   parameter AXI_LEN_WIDTH = 8,
   parameter DTCM_ADDR_WIDTH = 14,
-  parameter LSU_DATA_WIDTH = 64
+  parameter LSU_DATA_WIDTH = 64,
+  parameter SRAM_ADDR_WIDTH = 10,
+  parameter SEGMENT_NUM = 1
 ) (
   input  wire                         forever_cpuclk,
   input  wire                         cpurst_b,
@@ -189,7 +191,9 @@ module edge_dtcm_subsys #(
   edge_dtcm_subsys_core #(
     .ADDR_WIDTH(DTCM_ADDR_WIDTH),
     .DATA_WIDTH(LSU_DATA_WIDTH),
-    .DMA_DATA_WIDTH(AXI_DATA_WIDTH)
+    .DMA_DATA_WIDTH(AXI_DATA_WIDTH),
+    .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),
+    .SEGMENT_NUM(SEGMENT_NUM)
   ) x_edge_dtcm_subsys_core (
     .clk(forever_cpuclk),
     .cpurst_b(cpurst_b),

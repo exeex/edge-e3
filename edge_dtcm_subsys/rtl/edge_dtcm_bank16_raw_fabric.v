@@ -28,6 +28,7 @@ parameter BANK_INDEX_WIDTH = 4;
 parameter ADDR_WIDTH      = 10;
 parameter DATA_WIDTH      = 64;
 parameter BYTE_WIDTH      = DATA_WIDTH / 8;
+parameter SEGMENT_NUM     = 1;
 parameter SPLIT_MODE      = 0;
 
 input                         clk;
@@ -63,6 +64,7 @@ assign unused_split_enable = split_enable;
 
 genvar bank_i;
 genvar byte_i;
+genvar segment_i;
 
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b)
@@ -87,6 +89,8 @@ generate
     wire [ADDR_WIDTH-1:0] local_addr;
     wire [DATA_WIDTH-1:0] local_wdata;
     wire [BYTE_WIDTH-1:0] local_wstrb;
+    wire [SEGMENT_NUM*DATA_WIDTH-1:0] segment_rdata;
+    localparam PHYSICAL_ADDR_WIDTH = ADDR_WIDTH - ((SEGMENT_NUM <= 1) ? 0 : $clog2(SEGMENT_NUM));
 
     if (SPLIT_MODE != 0) begin: SPLIT_BANK
       wire use_lower;
@@ -136,18 +140,43 @@ generate
           local_wstrb[byte_i] ? 8'h00 : 8'hff;
     end
 
-    edge_dtcm_spsram_1024x64 #(
-      .ADDR_WIDTH(ADDR_WIDTH),
-      .DATA_WIDTH(DATA_WIDTH)
-    ) x_sram (
-      .A    (local_addr[ADDR_WIDTH-1:0]),
-      .CEN  (!local_req),
-      .CLK  (clk),
-      .D    (local_wdata[DATA_WIDTH-1:0]),
-      .GWEN (!local_we),
-      .Q    (bank_rdata[bank_i*DATA_WIDTH +: DATA_WIDTH]),
-      .WEN  (bank_wen[DATA_WIDTH-1:0])
-    );
+    if (SEGMENT_NUM == 1) begin: ONE_SEGMENT_RDATA
+      assign bank_rdata[bank_i*DATA_WIDTH +: DATA_WIDTH] =
+          segment_rdata[DATA_WIDTH-1:0];
+    end else begin: MANY_SEGMENT_RDATA
+      reg [$clog2(SEGMENT_NUM)-1:0] read_segment_q;
+      always @(posedge clk or negedge cpurst_b) begin
+        if (!cpurst_b)
+          read_segment_q <= 0;
+        else if (local_req && !local_we)
+          read_segment_q <=
+              local_addr[ADDR_WIDTH-1 -: $clog2(SEGMENT_NUM)];
+      end
+      assign bank_rdata[bank_i*DATA_WIDTH +: DATA_WIDTH] =
+          segment_rdata[read_segment_q*DATA_WIDTH +: DATA_WIDTH];
+    end
+
+    for (segment_i = 0; segment_i < SEGMENT_NUM; segment_i = segment_i + 1) begin: SEGMENT
+      wire segment_select;
+      if (SEGMENT_NUM == 1) begin: ONE_SEGMENT
+        assign segment_select = 1'b1;
+      end else begin: MANY_SEGMENTS
+        assign segment_select =
+            local_addr[ADDR_WIDTH-1 -: $clog2(SEGMENT_NUM)] == segment_i;
+      end
+      edge_dtcm_spsram_1024x64 #(
+        .ADDR_WIDTH(PHYSICAL_ADDR_WIDTH),
+        .DATA_WIDTH(DATA_WIDTH)
+      ) x_sram (
+        .A    (local_addr[PHYSICAL_ADDR_WIDTH-1:0]),
+        .CEN  (!(local_req && segment_select)),
+        .CLK  (clk),
+        .D    (local_wdata[DATA_WIDTH-1:0]),
+        .GWEN (!local_we),
+        .Q    (segment_rdata[segment_i*DATA_WIDTH +: DATA_WIDTH]),
+        .WEN  (bank_wen[DATA_WIDTH-1:0])
+      );
+    end
   end
 endgenerate
 

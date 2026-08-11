@@ -1,13 +1,16 @@
 module edge_lite_accel_platform #(
   parameter AXI_ADDR_WIDTH=40,parameter AXI_DATA_WIDTH=128,
-  parameter AXI_ID_WIDTH=8,parameter AXI_LEN_WIDTH=8
+  parameter AXI_ID_WIDTH=8,parameter AXI_LEN_WIDTH=8,
+  parameter DTCM_ADDR_WIDTH=14,parameter DTCM_SRAM_ADDR_WIDTH=10,
+  parameter DTCM_SEGMENT_NUM=1
 )(
   input wire forever_cpuclk,input wire cpurst_b,
   input wire [AXI_ADDR_WIDTH-1:0] mem_region_base,input wire [AXI_ADDR_WIDTH-1:0] mem_region_mask,
   input wire mem_region_enable,input wire req_valid,output wire req_ready,
   input wire [63:0] req_inst,input wire [63:0] req_capture_value,
   output wire resp_valid,output wire resp_error,output wire [63:0] resp_value,
-  input wire [13:0] scalar_lsu_addr,input wire scalar_lsu_req,input wire scalar_lsu_we,
+  input wire [DTCM_ADDR_WIDTH-1:0] scalar_lsu_addr,
+  input wire scalar_lsu_req,input wire scalar_lsu_we,
   input wire [63:0] scalar_lsu_wdata,input wire [7:0] scalar_lsu_wstrb,
   output wire [63:0] scalar_lsu_rdata,output wire scalar_lsu_ready,output wire scalar_lsu_rvalid,
   output wire [AXI_ADDR_WIDTH-1:0] dma_axi_araddr,output wire [1:0] dma_axi_arburst,
@@ -219,7 +222,9 @@ module edge_lite_accel_platform #(
 
   /* verilator lint_off PINMISSING */
   edge_dtcm_subsys #(.AXI_ADDR_WIDTH(AXI_ADDR_WIDTH),.AXI_DATA_WIDTH(AXI_DATA_WIDTH),
-    .AXI_ID_WIDTH(AXI_ID_WIDTH),.AXI_LEN_WIDTH(AXI_LEN_WIDTH)) dtcm(
+    .AXI_ID_WIDTH(AXI_ID_WIDTH),.AXI_LEN_WIDTH(AXI_LEN_WIDTH),
+    .DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),.SRAM_ADDR_WIDTH(DTCM_SRAM_ADDR_WIDTH),
+    .SEGMENT_NUM(DTCM_SEGMENT_NUM)) dtcm(
     .tensor_cmd_wld_ptr(tensor_unit_cmd_wld_ptr),
     .tensor_cmd_wld_req(tensor_unit_cmd_wld_req),
     .tensor_cmd_wld_trans_req(tensor_unit_cmd_wld_trans_req),
@@ -236,6 +241,7 @@ module edge_lite_accel_platform #(
     .dma_start_len(dtcm_dma_start_len),.dma_start_req(dtcm_dma_start_req),
     .dma_stream_cmd_valid(dma_stream_cmd_valid),
     .dma_stream_cmd_axi_addr(dma_stream_cmd_axi_addr),
-    .dma_stream_cmd_dtcm_addr(dma_stream_cmd_dtcm_addr[13:0]),.*);
+    .dma_stream_cmd_dtcm_addr(
+      dma_stream_cmd_dtcm_addr[DTCM_ADDR_WIDTH-1:0]),.*);
   /* verilator lint_on PINMISSING */
 endmodule
