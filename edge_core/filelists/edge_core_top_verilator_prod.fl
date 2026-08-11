@@ -2,6 +2,7 @@ edge_core/edge_core_top.v
 edge_core/rtl/edge_core_dma_axi_mux.v
 edge_core/rtl/edge_lite_accel_owner.v
 edge_core/rtl/edge_lite_accel_dispatch.v
+edge_core/rtl/edge_lite_accel_platform.v
 edge_core/rtl/edge_core_read_axi_mux.v
 edge_core/rtl/edge_core_write_axi_mux.v
 edge_core/rtl/edge_core_strided_dma_ctrl.v
