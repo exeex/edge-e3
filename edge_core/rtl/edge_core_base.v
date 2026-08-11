@@ -667,82 +667,16 @@ module edge_core_base #(
   wire [PC_WIDTH-1:0]     dtcm_dma_start_addr_src;
   wire [PC_WIDTH-1:0]     dtcm_dma_start_addr_dst;
   wire [31:0]             dtcm_dma_start_len;
-  reg                     tensor_circular_dma_active_q;
-  reg                     tensor_circular_dma_inflight_q;
-  reg [VALUE_WIDTH-1:0]   tensor_circular_dma_src_base_q;
-  reg [VALUE_WIDTH-1:0]   tensor_circular_dma_src_addr_q;
-  reg [VALUE_WIDTH-1:0]   tensor_circular_dma_group_base_q;
-  reg [15:0]              tensor_circular_base_q;
-  reg [15:0]              tensor_circular_ring_capacity_entries_q;
-  reg [31:0]              tensor_circular_dma_total_fragments_q;
-  reg [15:0]              tensor_circular_dma_inner_q;
-  reg [15:0]              tensor_circular_dma_x_max_q;
-  // The stream engine accepts one 16-byte AXI/DTCM beat per command. Keep its
-  // position within a logical source item separate from the ring-entry offset:
-  // one source item can span beats, and one entry can gather several items.
-  reg [15:0]              tensor_circular_dma_source_offset_words_q;
-  reg [15:0]              tensor_circular_dma_fragment_words_q;
-  reg                     tensor_circular_dma_use_xy_q;
-  reg [31:0]              tensor_circular_dma_len_q;
-  reg [31:0]              tensor_circular_dma_stride_q;
-  reg [31:0]              tensor_circular_dma_y_stride_q;
-  reg [31:0]              tensor_circular_dma_issued_fragments_q;
-  reg [15:0]              tensor_circular_produced_entries_q;
-  reg [15:0]              tensor_circular_consumed_entries_q;
-  reg [15:0]              tensor_circular_producer_entry_q;
-  reg [15:0]              tensor_circular_consumer_entry_q;
-  reg [15:0]              tensor_circular_producer_addr_q;
-  reg [15:0]              tensor_circular_consumer_addr_q;
-  reg [15:0]              tensor_circular_entry_words_q;
-  reg [15:0]              tensor_circular_producer_entry_offset_words_q;
-  reg [15:0]              tensor_circular_complete_entry_offset_words_q;
-  reg [15:0]              tensor_circular_reserved_entries_q;
-  reg                     tensor_circular_wld_active_q;
-  reg                     tensor_wsld_active_q;
-  reg                     tensor_sld_circular_active_q;
-  reg                     tensor_sld_circular_inflight_q;
-  reg                     tensor_wsld_group_active_q;
-  reg                     tensor_wsld_transpose_q;
-  reg [2:0]               tensor_wsld_sld_issued_q;
-  reg                     tensor_wsld_sld_done_q;
-  reg [2:0]               tensor_wsld_wld_issued_q;
-  reg [2:0]               tensor_wsld_wld_done_q;
-  reg [2:0]               tensor_wsld_start_done_q;
-  reg [15:0]              tensor_wsld_group_addr_q;
-  wire                    tensor_circular_config_valid;
-  wire [15:0]             tensor_circular_occupied_entries;
-  wire                    tensor_circular_ring_empty;
-  wire                    tensor_circular_ring_full;
-  wire                    tensor_circular_dma_done_pulse;
-  wire                    tensor_circular_dma_launch;
-  wire                    tensor_circular_entry_complete_on_done;
-  wire                    tensor_circular_source_item_complete_on_launch;
-  wire                    tensor_circular_stream_drained;
-  wire                    tensor_circular_wld_launch;
-  wire                    tensor_wsld_group_claim;
-  wire                    tensor_wsld_sld_launch;
-  wire                    tensor_wsld_wld_launch;
-  wire                    tensor_wsld_group_release;
-  wire                    tensor_sld_circular_launch;
-  wire [15:0]             tensor_circular_producer_addr;
-  wire [15:0]             tensor_circular_consumer_addr;
-  wire [15:0]             tensor_circular_start_base;
-  wire [PC_WIDTH-1:0]     tensor_circular_start_offset;
-  wire [VALUE_WIDTH-1:0]  tensor_circular_dma_src_addr;
-  wire [PC_WIDTH-1:0]     tensor_circular_dma_dst_addr;
-  wire [63:0]             tensor_dma_start_xy_total;
-  wire                    tensor_circular_busy;
-  wire                    tensor_dma_direct_start_req;
-  wire                    tensor_dma_strided_start_req;
-  wire                    tensor_strided_dma_launch;
-  wire                    tensor_strided_dma_busy;
-  wire [PC_WIDTH-1:0]     tensor_strided_dma_src;
-  wire [PC_WIDTH-1:0]     tensor_strided_dma_dst;
-  wire [31:0]             tensor_strided_dma_len;
   wire                    dma_stream_cmd_ready;
   wire                    dma_stream_beat_done;
   wire                    dma_stream_busy;
-  wire                    tensor_circular_dma_cmd_valid;
+  wire                    tensor_dma_stream_cmd_valid;
+  wire [PC_WIDTH-1:0]     tensor_dma_stream_axi_addr;
+  wire [15:0]             tensor_dma_stream_dtcm_addr;
+  wire                    tensor_dma_start_ready;
+  wire                    tensor_dma_start_circular_ready;
+  wire                    tensor_dma_sync_done;
+  wire                    accel_dma_active;
 
   wire                    retire_alloc_ready;
   wire                    retire_alloc_valid;
@@ -909,7 +843,6 @@ module edge_core_base #(
   wire                    biu_core_wready;
   wire [(AXI_DATA_WIDTH/8)-1:0] biu_core_wstrb;
   wire                    biu_core_wvalid;
-  reg                     edge_dma_active_q;
   reg                     scalar_cache_op_pending_q;
 
 
@@ -1023,8 +956,8 @@ module edge_core_base #(
   ) dma_axi_mux (
     .forever_cpuclk(forever_cpuclk),
     .cpurst_b(cpurst_b),
-    .dtcm_write_select_enable(edge_dma_active_q),
-    .dtcm_read_is_stream(tensor_circular_dma_cmd_valid),
+    .dtcm_write_select_enable(accel_dma_active),
+    .dtcm_read_is_stream(tensor_dma_stream_cmd_valid),
     .dtcm_stream_busy(dma_stream_busy),
     .dtcm_araddr(dtcm_dma_araddr),
     .dtcm_arburst(dtcm_dma_arburst),
@@ -1131,320 +1064,6 @@ module edge_core_base #(
 
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
     if (!cpurst_b)
-      edge_dma_active_q <= 1'b0;
-    else if (dtcm_dma_start_req)
-      edge_dma_active_q <= 1'b1;
-    else if (edge_dma_active_q && !edge_dma_busy)
-      edge_dma_active_q <= 1'b0;
-  end
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b) begin
-      tensor_circular_dma_active_q <= 1'b0;
-      tensor_circular_dma_inflight_q <= 1'b0;
-      tensor_circular_dma_src_base_q[VALUE_WIDTH-1:0] <= {VALUE_WIDTH{1'b0}};
-      tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <= {VALUE_WIDTH{1'b0}};
-      tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] <= {VALUE_WIDTH{1'b0}};
-      tensor_circular_base_q[15:0] <= 16'd0;
-      tensor_circular_ring_capacity_entries_q[15:0] <= 16'd0;
-      tensor_circular_dma_total_fragments_q[31:0] <= 32'd0;
-      tensor_circular_dma_inner_q[15:0] <= 16'd0;
-      tensor_circular_dma_x_max_q[15:0] <= 16'd0;
-      tensor_circular_dma_source_offset_words_q[15:0] <= 16'd0;
-      tensor_circular_dma_fragment_words_q[15:0] <= 16'd2;
-      tensor_circular_dma_use_xy_q <= 1'b0;
-      tensor_circular_dma_len_q[31:0] <= 32'd64;
-      tensor_circular_dma_stride_q[31:0] <= 32'd64;
-      tensor_circular_dma_y_stride_q[31:0] <= 32'd0;
-      tensor_circular_dma_issued_fragments_q[31:0] <= 32'd0;
-      tensor_circular_produced_entries_q[15:0] <= 16'd0;
-      tensor_circular_consumed_entries_q[15:0] <= 16'd0;
-      tensor_circular_producer_entry_q[15:0] <= 16'd0;
-      tensor_circular_consumer_entry_q[15:0] <= 16'd0;
-      tensor_circular_producer_addr_q[15:0] <= 16'd0;
-      tensor_circular_consumer_addr_q[15:0] <= 16'd0;
-      tensor_circular_entry_words_q[15:0] <= 16'd8;
-      tensor_circular_producer_entry_offset_words_q[15:0] <= 16'd0;
-      tensor_circular_complete_entry_offset_words_q[15:0] <= 16'd0;
-      tensor_circular_reserved_entries_q[15:0] <= 16'd0;
-      tensor_circular_wld_active_q <= 1'b0;
-      tensor_wsld_active_q <= 1'b0;
-      tensor_sld_circular_active_q <= 1'b0;
-      tensor_sld_circular_inflight_q <= 1'b0;
-      tensor_wsld_group_active_q <= 1'b0;
-      tensor_wsld_transpose_q <= 1'b0;
-      tensor_wsld_sld_issued_q[2:0] <= 3'd0;
-      tensor_wsld_sld_done_q <= 1'b0;
-      tensor_wsld_wld_issued_q[2:0] <= 3'd0;
-      tensor_wsld_wld_done_q[2:0] <= 3'd0;
-      tensor_wsld_start_done_q[2:0] <= 3'd0;
-      tensor_wsld_group_addr_q[15:0] <= 16'd0;
-    end else begin
-      if (tensor_dma_start_circular_req) begin
-        tensor_circular_dma_active_q <=
-          (tensor_dma_start_circular_tiles[15:0] != 16'b0) &&
-          (!tensor_dma_start_use_xy ||
-           ((tensor_dma_start_len[31:0] != 32'b0) &&
-            (tensor_dma_start_entry_bytes[31:0] != 32'b0) &&
-            (tensor_dma_start_len[2:0] == 3'b0) &&
-            (tensor_dma_start_entry_bytes[2:0] == 3'b0) &&
-            (tensor_dma_start_len[31:0] <=
-             tensor_dma_start_entry_bytes[31:0]) &&
-            (tensor_dma_start_x[63:32] != 32'b0) &&
-            (tensor_dma_start_y[63:32] != 32'b0)));
-        tensor_circular_dma_src_base_q[VALUE_WIDTH-1:0] <=
-          tensor_dma_start_src[VALUE_WIDTH-1:0];
-        tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
-          tensor_dma_start_src[VALUE_WIDTH-1:0];
-        tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] <=
-          tensor_dma_start_src[VALUE_WIDTH-1:0];
-        tensor_circular_base_q[15:0] <= tensor_circular_start_base[15:0];
-        tensor_circular_ring_capacity_entries_q[15:0] <=
-          tensor_dma_start_circular_tiles[15:0];
-        tensor_circular_dma_total_fragments_q[31:0] <=
-          (tensor_dma_start_use_xy
-           ? {16'b0, tensor_dma_start_xy_total[15:0]}
-           : {16'b0, tensor_dma_start_circular_tiles[15:0]}) *
-          (tensor_dma_start_use_xy
-           ? {17'b0, tensor_dma_start_len[18:4]}
-           : {27'b0, tensor_wld_tile_words[4:1]});
-        tensor_circular_dma_inner_q[15:0] <= 16'd0;
-        tensor_circular_dma_x_max_q[15:0] <=
-          tensor_dma_start_use_xy ? tensor_dma_start_x[47:32] :
-                                    tensor_dma_start_circular_tiles[15:0];
-        tensor_circular_dma_use_xy_q <= tensor_dma_start_use_xy;
-        tensor_circular_dma_source_offset_words_q[15:0] <= 16'd0;
-        tensor_circular_dma_fragment_words_q[15:0] <= 16'd2;
-        tensor_circular_dma_len_q[31:0] <=
-          tensor_dma_start_use_xy
-          ? tensor_dma_start_len[31:0]
-          : {24'b0, tensor_wld_tile_words[4:0], 3'b000};
-        tensor_circular_dma_stride_q[31:0] <=
-          tensor_dma_start_use_xy
-          ? tensor_dma_start_x[31:0]
-          : {24'b0, tensor_wld_tile_words[4:0], 3'b000};
-        tensor_circular_dma_y_stride_q[31:0] <=
-          tensor_dma_start_use_xy ? tensor_dma_start_y[31:0] : 32'd0;
-        tensor_circular_dma_issued_fragments_q[31:0] <= 32'd0;
-        tensor_circular_produced_entries_q[15:0] <= 16'd0;
-        tensor_circular_consumed_entries_q[15:0] <= 16'd0;
-        tensor_circular_producer_entry_q[15:0] <= 16'd0;
-        tensor_circular_consumer_entry_q[15:0] <= 16'd0;
-        tensor_circular_producer_addr_q[15:0] <= tensor_circular_start_base[15:0];
-        tensor_circular_consumer_addr_q[15:0] <= tensor_circular_start_base[15:0];
-        tensor_circular_entry_words_q[15:0] <=
-          tensor_dma_start_use_xy
-          ? tensor_dma_start_entry_bytes[18:3]
-          : {11'b0, tensor_wld_tile_words[4:0]};
-        tensor_circular_producer_entry_offset_words_q[15:0] <= 16'd0;
-        tensor_circular_complete_entry_offset_words_q[15:0] <= 16'd0;
-        tensor_circular_reserved_entries_q[15:0] <= 16'd0;
-        tensor_circular_wld_active_q <= 1'b0;
-        tensor_wsld_active_q <= 1'b0;
-        tensor_sld_circular_active_q <= 1'b0;
-        tensor_sld_circular_inflight_q <= 1'b0;
-        tensor_wsld_group_active_q <= 1'b0;
-      end
-
-      if (tensor_circular_dma_launch) begin
-        tensor_circular_dma_issued_fragments_q[31:0] <=
-          tensor_circular_dma_issued_fragments_q[31:0] + 32'd1;
-        if (tensor_circular_producer_entry_offset_words_q[15:0] == 16'd0)
-          tensor_circular_reserved_entries_q[15:0] <=
-            tensor_circular_reserved_entries_q[15:0] + 16'd1;
-        if (tensor_circular_entry_complete_on_done) begin
-          tensor_circular_producer_entry_offset_words_q[15:0] <= 16'd0;
-          if (tensor_circular_producer_entry_q[15:0] ==
-              (tensor_circular_ring_capacity_entries_q[15:0] - 16'd1)) begin
-            tensor_circular_producer_entry_q[15:0] <= 16'd0;
-            tensor_circular_producer_addr_q[15:0] <=
-              tensor_circular_base_q[15:0];
-          end else begin
-            tensor_circular_producer_entry_q[15:0] <=
-              tensor_circular_producer_entry_q[15:0] + 16'd1;
-            tensor_circular_producer_addr_q[15:0] <=
-              tensor_circular_producer_addr_q[15:0] +
-              tensor_circular_entry_words_q[15:0];
-          end
-        end else begin
-          tensor_circular_producer_entry_offset_words_q[15:0] <=
-            tensor_circular_producer_entry_offset_words_q[15:0] +
-            tensor_circular_dma_fragment_words_q[15:0];
-        end
-        if ((tensor_circular_dma_issued_fragments_q[31:0] + 32'd1) >=
-            tensor_circular_dma_total_fragments_q[31:0])
-          tensor_circular_dma_active_q <= 1'b0;
-        if (tensor_circular_source_item_complete_on_launch) begin
-          tensor_circular_dma_source_offset_words_q[15:0] <= 16'd0;
-          if (tensor_circular_dma_use_xy_q) begin
-            if (tensor_circular_dma_inner_q[15:0] ==
-                (tensor_circular_dma_x_max_q[15:0] - 16'd1)) begin
-              tensor_circular_dma_inner_q[15:0] <= 16'd0;
-              tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] <=
-                tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] +
-                {{(VALUE_WIDTH-32){1'b0}},
-                  tensor_circular_dma_y_stride_q[31:0]};
-              tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
-                tensor_circular_dma_group_base_q[VALUE_WIDTH-1:0] +
-                {{(VALUE_WIDTH-32){1'b0}},
-                  tensor_circular_dma_y_stride_q[31:0]};
-            end else begin
-              tensor_circular_dma_inner_q[15:0] <=
-                tensor_circular_dma_inner_q[15:0] + 16'd1;
-              tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
-                tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] +
-                {{(VALUE_WIDTH-32){1'b0}},
-                  tensor_circular_dma_stride_q[31:0]};
-            end
-          end else begin
-            tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] <=
-              tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] +
-              {{(VALUE_WIDTH-32){1'b0}},
-                tensor_circular_dma_stride_q[31:0]};
-          end
-        end else begin
-          tensor_circular_dma_source_offset_words_q[15:0] <=
-            tensor_circular_dma_source_offset_words_q[15:0] +
-            tensor_circular_dma_fragment_words_q[15:0];
-        end
-      end
-
-      if (tensor_circular_dma_done_pulse) begin
-        if ((tensor_circular_complete_entry_offset_words_q[15:0] +
-             tensor_circular_dma_fragment_words_q[15:0]) ==
-            tensor_circular_entry_words_q[15:0]) begin
-          tensor_circular_produced_entries_q[15:0] <=
-            tensor_circular_produced_entries_q[15:0] + 16'd1;
-          tensor_circular_complete_entry_offset_words_q[15:0] <= 16'd0;
-        end else begin
-          tensor_circular_complete_entry_offset_words_q[15:0] <=
-            tensor_circular_complete_entry_offset_words_q[15:0] +
-            tensor_circular_dma_fragment_words_q[15:0];
-        end
-      end
-
-      tensor_circular_dma_inflight_q <= dma_stream_busy;
-
-      if (tensor_wld_fill_done && tensor_circular_wld_active_q)
-        tensor_circular_wld_active_q <= 1'b0;
-
-      if (tensor_circular_wld_launch) begin
-        tensor_circular_wld_active_q <= 1'b1;
-        // Advance the read pointer at launch so a same-cycle fill completion
-        // plus next launch addresses the following slot.  The occupancy/free
-        // counter below still advances only after the complete WLD tile fill.
-        if (tensor_circular_consumer_entry_q[15:0] ==
-            (tensor_circular_ring_capacity_entries_q[15:0] - 16'd1)) begin
-          tensor_circular_consumer_entry_q[15:0] <= 16'd0;
-          tensor_circular_consumer_addr_q[15:0] <= tensor_circular_base_q[15:0];
-        end else begin
-          tensor_circular_consumer_entry_q[15:0] <=
-            tensor_circular_consumer_entry_q[15:0] + 16'd1;
-          tensor_circular_consumer_addr_q[15:0] <=
-            tensor_circular_consumer_addr_q[15:0] +
-            tensor_circular_entry_words_q[15:0];
-        end
-      end
-
-      if (tensor_cmd_wsld_circular_req && tensor_wsld_circular_ready) begin
-        tensor_wsld_active_q <= 1'b1;
-        tensor_wsld_transpose_q <= tensor_cmd_wsld_circular_transpose;
-      end
-
-      if (tensor_cmd_sld_circular_req && tensor_sld_circular_ready)
-        tensor_sld_circular_active_q <= 1'b1;
-
-      if (tensor_sld_circular_launch) begin
-        tensor_sld_circular_inflight_q <= 1'b1;
-        if (tensor_circular_consumer_entry_q[15:0] ==
-            (tensor_circular_ring_capacity_entries_q[15:0] - 16'd1)) begin
-          tensor_circular_consumer_entry_q[15:0] <= 16'd0;
-          tensor_circular_consumer_addr_q[15:0] <= tensor_circular_base_q[15:0];
-        end else begin
-          tensor_circular_consumer_entry_q[15:0] <=
-            tensor_circular_consumer_entry_q[15:0] + 16'd1;
-          tensor_circular_consumer_addr_q[15:0] <=
-            tensor_circular_consumer_addr_q[15:0] + tensor_circular_entry_words_q[15:0];
-        end
-      end
-
-      if (tensor_sld_circular_active_q && tensor_sld_circular_inflight_q &&
-          tensor_sld_fill_done) begin
-        tensor_sld_circular_inflight_q <= 1'b0;
-        tensor_circular_consumed_entries_q[15:0] <=
-          tensor_circular_consumed_entries_q[15:0] + 16'd1;
-        if (tensor_circular_stream_drained)
-          tensor_sld_circular_active_q <= 1'b0;
-      end
-
-      if (tensor_wsld_group_claim) begin
-        tensor_wsld_group_active_q <= 1'b1;
-        tensor_wsld_group_addr_q[15:0] <= tensor_circular_consumer_addr_q[15:0];
-        tensor_wsld_sld_issued_q[2:0] <= 3'd0;
-        tensor_wsld_sld_done_q <= 1'b0;
-        tensor_wsld_wld_issued_q[2:0] <= 3'd0;
-        tensor_wsld_wld_done_q[2:0] <= 3'd0;
-        tensor_wsld_start_done_q[2:0] <= 3'd0;
-        if (tensor_circular_consumer_entry_q[15:0] ==
-            (tensor_circular_ring_capacity_entries_q[15:0] - 16'd1)) begin
-          tensor_circular_consumer_entry_q[15:0] <= 16'd0;
-          tensor_circular_consumer_addr_q[15:0] <= tensor_circular_base_q[15:0];
-        end else begin
-          tensor_circular_consumer_entry_q[15:0] <=
-            tensor_circular_consumer_entry_q[15:0] + 16'd1;
-          tensor_circular_consumer_addr_q[15:0] <=
-            tensor_circular_consumer_addr_q[15:0] +
-            tensor_circular_entry_words_q[15:0];
-        end
-      end
-
-      if (tensor_wsld_sld_launch)
-        tensor_wsld_sld_issued_q[2:0] <=
-          tensor_wsld_sld_issued_q[2:0] + 3'd1;
-      if (tensor_wsld_active_q && tensor_sld_fill_done)
-        tensor_wsld_sld_done_q <= 1'b1;
-      if (tensor_wsld_wld_launch)
-        tensor_wsld_wld_issued_q[2:0] <= tensor_wsld_wld_issued_q[2:0] + 3'd1;
-      if (tensor_wsld_group_active_q && tensor_wld_fill_done &&
-          (tensor_wsld_wld_done_q[2:0] < 3'd4))
-        tensor_wsld_wld_done_q[2:0] <= tensor_wsld_wld_done_q[2:0] + 3'd1;
-      if (tensor_wsld_group_active_q && tensor_start_retire_valid &&
-          (tensor_wsld_start_done_q[2:0] < 3'd4))
-        tensor_wsld_start_done_q[2:0] <= tensor_wsld_start_done_q[2:0] + 3'd1;
-
-      if (tensor_wsld_group_release) begin
-        tensor_wsld_group_active_q <= 1'b0;
-        tensor_circular_consumed_entries_q[15:0] <=
-          tensor_circular_consumed_entries_q[15:0] + 16'd1;
-        if (tensor_circular_stream_drained)
-          tensor_wsld_active_q <= 1'b0;
-      end
-
-      // A ring slot remains reserved until its tagged WLD fill completes;
-      // release at launch would permit wrapped DMA overwrite.
-      if (!tensor_wsld_active_q && tensor_circular_wld_active_q &&
-          tensor_wld_fill_done &&
-          (tensor_circular_produced_entries_q !=
-           tensor_circular_consumed_entries_q)) begin
-        tensor_circular_consumed_entries_q[15:0] <=
-          tensor_circular_consumed_entries_q[15:0] + 16'd1;
-      end
-
-      if (tensor_circular_config_valid &&
-          ((tensor_circular_consumed_entries_q[15:0] +
-            ((!tensor_wsld_active_q && tensor_circular_wld_active_q &&
-              tensor_wld_fill_done &&
-              (tensor_circular_produced_entries_q !=
-               tensor_circular_consumed_entries_q)) ?
-             16'd1 : 16'd0)) >=
-           tensor_circular_produced_entries_q[15:0]) &&
-          !tensor_circular_dma_active_q && !tensor_circular_dma_inflight_q)
-        tensor_circular_wld_active_q <= 1'b0;
-    end
-  end
-
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if (!cpurst_b)
       scalar_cache_op_pending_q <= 1'b0;
     else begin
       if (scalar_cache_op_complete_valid)
@@ -1512,197 +1131,82 @@ module edge_core_base #(
     .core_rvalid(biu_core_rvalid)
   );
 
-  assign tensor_circular_config_valid =
-    (tensor_circular_ring_capacity_entries_q != 16'd0) &&
-    (tensor_circular_entry_words_q != 16'd0);
-  assign tensor_dma_start_xy_total =
-    tensor_dma_start_x[63:32] * tensor_dma_start_y[63:32];
-  assign tensor_circular_occupied_entries =
-    tensor_circular_produced_entries_q - tensor_circular_consumed_entries_q;
-  assign tensor_circular_ring_empty =
-    (tensor_circular_produced_entries_q == tensor_circular_consumed_entries_q);
-  assign tensor_circular_ring_full =
-    tensor_circular_config_valid &&
-    ((tensor_circular_reserved_entries_q -
-      tensor_circular_consumed_entries_q) >=
-     tensor_circular_ring_capacity_entries_q);
-  assign tensor_circular_dma_done_pulse = dma_stream_beat_done;
-  assign tensor_dma_direct_start_req = tensor_dma_start_req &&
-                                       !tensor_dma_start_use_xy &&
-                                       !tensor_dma_start_circular;
-  assign tensor_dma_strided_start_req = tensor_dma_start_req &&
-                                        tensor_dma_start_use_xy &&
-                                        !tensor_dma_start_circular;
-  edge_core_strided_dma_ctrl #(
+  edge_accel_data_ctrl #(
     .ADDR_WIDTH(PC_WIDTH),
     .VALUE_WIDTH(VALUE_WIDTH)
-  ) strided_dma_ctrl (
+  ) accel_data_ctrl (
     .forever_cpuclk(forever_cpuclk),
     .cpurst_b(cpurst_b),
-    .start_req(tensor_dma_strided_start_req),
-    .start_src(tensor_dma_start_src),
-    .start_dst(tensor_dma_start_dst),
-    .start_len(tensor_dma_start_len[31:0]),
-    .start_x_stride(tensor_dma_start_x[31:0]),
-    .start_y_stride(tensor_dma_start_y[31:0]),
-    .start_x_count(tensor_dma_start_x[63:32]),
-    .start_y_count(tensor_dma_start_y[63:32]),
-    .start_total(tensor_dma_start_xy_total[31:0]),
-    .dma_busy(edge_dma_busy),
-    .edge_start_pending(edge_dma_start_req),
-    .tensor_start_pending(tensor_dma_start_req),
-    .circular_launch(tensor_circular_dma_launch),
-    .launch(tensor_strided_dma_launch),
-    .launch_src(tensor_strided_dma_src),
-    .launch_dst(tensor_strided_dma_dst),
-    .launch_len(tensor_strided_dma_len),
-    .busy(tensor_strided_dma_busy)
+    .mem_region_base(mem_region_base_q),
+    .edge_start_req(edge_dma_start_req),
+    .edge_start_src(edge_dma_start_addr_src),
+    .edge_start_dst(edge_dma_start_addr_dst),
+    .edge_start_len(edge_dma_start_len),
+    .scalar_start_valid(scalar_dma_start_valid),
+    .scalar_start_src(scalar_dma_start_src),
+    .scalar_start_dst(scalar_dma_start_dst),
+    .scalar_start_len(scalar_dma_start_len),
+    .tensor_dma_start_req(tensor_dma_start_req),
+    .tensor_dma_start_circular_req(tensor_dma_start_circular_req),
+    .tensor_dma_start_src(tensor_dma_start_src),
+    .tensor_dma_start_dst(tensor_dma_start_dst),
+    .tensor_dma_start_len(tensor_dma_start_len),
+    .tensor_dma_start_entry_bytes(tensor_dma_start_entry_bytes),
+    .tensor_dma_start_circular_tiles(tensor_dma_start_circular_tiles),
+    .tensor_dma_start_use_xy(tensor_dma_start_use_xy),
+    .tensor_dma_start_circular(tensor_dma_start_circular),
+    .tensor_dma_start_x(tensor_dma_start_x),
+    .tensor_dma_start_y(tensor_dma_start_y),
+    .edge_dma_busy(edge_dma_busy),
+    .dma_stream_cmd_ready(dma_stream_cmd_ready),
+    .dma_stream_beat_done(dma_stream_beat_done),
+    .dma_stream_busy(dma_stream_busy),
+    .tensor_cmd_wld_req(tensor_cmd_wld_req),
+    .tensor_cmd_wld_circular_req(tensor_cmd_wld_circular_req),
+    .tensor_cmd_wld_trans_req(tensor_cmd_wld_trans_req),
+    .tensor_cmd_wld_reuse(tensor_cmd_wld_reuse),
+    .tensor_cmd_wld_ptr(tensor_cmd_wld_ptr),
+    .tensor_cmd_wsld_circular_req(tensor_cmd_wsld_circular_req),
+    .tensor_cmd_wsld_circular_transpose(tensor_cmd_wsld_circular_transpose),
+    .tensor_cmd_sld_req(tensor_cmd_sld_req),
+    .tensor_cmd_sld_circular_req(tensor_cmd_sld_circular_req),
+    .tensor_cmd_sld_reuse(tensor_cmd_sld_reuse),
+    .tensor_cmd_sld_ptr(tensor_cmd_sld_ptr),
+    .tensor_unit_sync_stall(tensor_unit_sync_stall),
+    .tensor_wld_unit_cmd_ready(tensor_wld_unit_cmd_ready),
+    .tensor_sld_unit_cmd_ready(tensor_sld_unit_cmd_ready),
+    .tensor_wld_fill_done(tensor_wld_fill_done),
+    .tensor_sld_fill_done(tensor_sld_fill_done),
+    .tensor_wld_tile_words(tensor_wld_tile_words),
+    .tensor_start_retire_valid(tensor_start_retire_valid),
+    .dma_start_ready(tensor_dma_start_ready),
+    .dma_start_circular_ready(tensor_dma_start_circular_ready),
+    .dma_sync_done(tensor_dma_sync_done),
+    .dma_active(accel_dma_active),
+    .scalar_start_ready(scalar_dma_start_ready),
+    .scalar_sync_ready(scalar_dma_sync_ready),
+    .dtcm_dma_start_req(dtcm_dma_start_req),
+    .dtcm_dma_start_src(dtcm_dma_start_addr_src),
+    .dtcm_dma_start_dst(dtcm_dma_start_addr_dst),
+    .dtcm_dma_start_len(dtcm_dma_start_len),
+    .dma_stream_cmd_valid(tensor_dma_stream_cmd_valid),
+    .dma_stream_cmd_axi_addr(tensor_dma_stream_axi_addr),
+    .dma_stream_cmd_dtcm_addr(tensor_dma_stream_dtcm_addr),
+    .tensor_wld_cmd_ready(tensor_wld_cmd_ready),
+    .tensor_sld_cmd_ready(tensor_sld_cmd_ready),
+    .tensor_wld_circular_ready(tensor_wld_circular_ready),
+    .tensor_wsld_circular_ready(tensor_wsld_circular_ready),
+    .tensor_sld_circular_ready(tensor_sld_circular_ready),
+    .tensor_sync_stall(tensor_sync_stall),
+    .tensor_unit_cmd_wld_ptr(tensor_unit_cmd_wld_ptr),
+    .tensor_unit_cmd_wld_req(tensor_unit_cmd_wld_req),
+    .tensor_unit_cmd_wld_trans_req(tensor_unit_cmd_wld_trans_req),
+    .tensor_unit_cmd_wld_reuse(tensor_unit_cmd_wld_reuse),
+    .tensor_unit_cmd_sld_ptr(tensor_unit_cmd_sld_ptr),
+    .tensor_unit_cmd_sld_req(tensor_unit_cmd_sld_req),
+    .tensor_unit_cmd_sld_reuse(tensor_unit_cmd_sld_reuse),
+    .tensor_unit_cmd_sld_stream(tensor_unit_cmd_sld_stream)
   );
-  assign tensor_circular_busy =
-    tensor_circular_dma_active_q || dma_stream_busy ||
-    (tensor_circular_produced_entries_q != tensor_circular_consumed_entries_q);
-  assign tensor_circular_dma_cmd_valid =
-    tensor_circular_dma_active_q && tensor_circular_config_valid &&
-    (!tensor_circular_ring_full ||
-     (tensor_circular_producer_entry_offset_words_q != 16'd0)) &&
-    (tensor_circular_dma_issued_fragments_q <
-     tensor_circular_dma_total_fragments_q) &&
-    !edge_dma_start_req && !tensor_dma_start_req;
-  assign tensor_circular_dma_launch =
-    tensor_circular_dma_cmd_valid && dma_stream_cmd_ready;
-  assign tensor_circular_producer_addr = tensor_circular_producer_addr_q[15:0];
-  assign tensor_circular_consumer_addr = tensor_circular_consumer_addr_q[15:0];
-  assign tensor_circular_dma_src_addr =
-    tensor_circular_dma_src_addr_q[VALUE_WIDTH-1:0] +
-    {{(VALUE_WIDTH-19){1'b0}},
-      tensor_circular_dma_source_offset_words_q[15:0], 3'b000};
-  assign tensor_circular_start_offset[PC_WIDTH-1:0] =
-    tensor_dma_start_dst[PC_WIDTH-1:0] - mem_region_base_q;
-  assign tensor_circular_start_base[15:0] =
-    tensor_circular_start_offset[18:3];
-  assign tensor_circular_dma_dst_addr =
-    mem_region_base_q +
-    {{(PC_WIDTH-19){1'b0}},
-      (tensor_circular_producer_addr[15:0] +
-       tensor_circular_producer_entry_offset_words_q[15:0]), 3'b000};
-  assign tensor_circular_entry_complete_on_done =
-    (tensor_circular_producer_entry_offset_words_q[15:0] +
-     tensor_circular_dma_fragment_words_q[15:0]) ==
-    tensor_circular_entry_words_q[15:0];
-  assign tensor_circular_source_item_complete_on_launch =
-    (tensor_circular_dma_source_offset_words_q[15:0] +
-     tensor_circular_dma_fragment_words_q[15:0]) ==
-    tensor_circular_dma_len_q[18:3];
-  assign tensor_circular_stream_drained =
-    !tensor_circular_dma_active_q && !dma_stream_busy &&
-    ((tensor_circular_consumed_entries_q[15:0] + 16'd1) >=
-     tensor_circular_produced_entries_q[15:0]);
-  assign tensor_wld_circular_ready =
-    tensor_wld_cmd_ready && tensor_circular_config_valid &&
-    !tensor_circular_ring_empty &&
-    (tensor_circular_entry_words_q[15:0] ==
-     {11'b0, tensor_wld_tile_words[4:0]});
-  assign tensor_wsld_circular_ready = tensor_circular_config_valid &&
-                                      !tensor_wsld_active_q &&
-                                      !tensor_circular_wld_active_q &&
-                                      !tensor_unit_sync_stall &&
-                                      tensor_wld_unit_cmd_ready &&
-                                      tensor_sld_unit_cmd_ready &&
-                                      (tensor_circular_entry_words_q == 16'd34);
-  assign tensor_sld_circular_ready = tensor_circular_config_valid &&
-                                     !tensor_sld_circular_active_q &&
-                                     !tensor_wsld_active_q &&
-                                     !tensor_circular_wld_active_q &&
-                                     (tensor_circular_entry_words_q == 16'd2);
-  assign tensor_wld_cmd_ready = tensor_wld_unit_cmd_ready &&
-                                !tensor_wsld_active_q &&
-                                !tensor_sld_circular_active_q;
-  assign tensor_sld_cmd_ready = tensor_sld_unit_cmd_ready &&
-                                !tensor_wsld_active_q &&
-                                !tensor_sld_circular_active_q;
-  assign tensor_sync_stall = tensor_unit_sync_stall || tensor_wsld_active_q ||
-                             tensor_sld_circular_active_q;
-  assign tensor_sld_circular_launch = tensor_sld_circular_active_q &&
-                                      !tensor_sld_circular_inflight_q &&
-                                      !tensor_circular_ring_empty &&
-                                      tensor_sld_unit_cmd_ready;
-  assign tensor_circular_wld_launch = tensor_cmd_wld_circular_req &&
-                                      tensor_wld_circular_ready;
-  assign tensor_wsld_group_claim = tensor_wsld_active_q &&
-                                   !tensor_wsld_group_active_q &&
-                                   !tensor_circular_ring_empty;
-  assign tensor_wsld_sld_launch = tensor_wsld_group_active_q &&
-                                  (tensor_wsld_sld_issued_q[2:0] < 3'd4) &&
-                                  (tensor_wsld_sld_issued_q[2:0] <=
-                                   tensor_wsld_start_done_q[2:0]) &&
-                                  tensor_sld_unit_cmd_ready;
-  assign tensor_wsld_wld_launch = tensor_wsld_group_active_q &&
-                                  tensor_wsld_sld_done_q &&
-                                  (tensor_wsld_wld_issued_q[2:0] < 3'd4) &&
-                                  (tensor_wsld_wld_issued_q[2:0] <
-                                   tensor_wsld_sld_issued_q[2:0]) &&
-                                  (tensor_wsld_wld_issued_q[2:0] <=
-                                   tensor_wsld_start_done_q[2:0]) &&
-                                  tensor_wld_unit_cmd_ready;
-  assign tensor_wsld_group_release = tensor_wsld_group_active_q &&
-                                     (tensor_wsld_wld_done_q[2:0] == 3'd4) &&
-                                     (tensor_wsld_start_done_q[2:0] == 3'd4);
-  assign tensor_unit_cmd_wld_ptr =
-    tensor_wsld_wld_launch ?
-      (tensor_wsld_group_addr_q + 16'd2 +
-       {tensor_wsld_wld_issued_q[2:0], 3'b000}) :
-    tensor_circular_wld_launch ? tensor_circular_consumer_addr :
-                                  tensor_cmd_wld_ptr;
-  assign tensor_unit_cmd_wld_req =
-    (tensor_cmd_wld_req && !tensor_wsld_active_q) ||
-    (tensor_wsld_wld_launch && !tensor_wsld_transpose_q) ||
-    (tensor_circular_wld_launch && !tensor_cmd_wld_trans_req);
-  assign tensor_unit_cmd_wld_trans_req =
-    (tensor_cmd_wld_trans_req && !tensor_wsld_active_q) ||
-    (tensor_wsld_wld_launch && tensor_wsld_transpose_q);
-  assign tensor_unit_cmd_wld_reuse = tensor_cmd_wld_reuse &&
-                                     !tensor_wsld_active_q;
-  assign tensor_unit_cmd_sld_ptr = tensor_sld_circular_launch ?
-                                    tensor_circular_consumer_addr :
-                                    tensor_wsld_sld_launch ?
-                                    tensor_wsld_group_addr_q :
-                                    tensor_cmd_sld_ptr;
-  assign tensor_unit_cmd_sld_req = tensor_sld_circular_launch ||
-                                   tensor_wsld_sld_launch ||
-                                   (tensor_cmd_sld_req && !tensor_wsld_active_q &&
-                                    !tensor_sld_circular_active_q);
-  assign tensor_unit_cmd_sld_reuse = tensor_wsld_active_q ?
-                                      (tensor_wsld_sld_issued_q[2:0] != 3'd0) :
-                                      tensor_cmd_sld_reuse;
-  assign tensor_unit_cmd_sld_stream = tensor_sld_circular_launch;
-
-  assign scalar_dma_start_ready = !edge_dma_busy && !edge_dma_start_req &&
-                                  !tensor_dma_start_req &&
-                                  !tensor_circular_dma_launch &&
-                                  !tensor_strided_dma_launch;
-  assign scalar_dma_sync_ready = !edge_dma_busy && !edge_dma_start_req &&
-                                 !edge_dma_active_q &&
-                                 !tensor_dma_start_req &&
-                                 !tensor_circular_busy &&
-                                 !tensor_strided_dma_busy;
-  assign dtcm_dma_start_req = edge_dma_start_req || tensor_dma_direct_start_req ||
-                              tensor_strided_dma_launch ||
-                              scalar_dma_start_valid;
-  assign dtcm_dma_start_addr_src = edge_dma_start_req ?
-    edge_dma_start_addr_src[PC_WIDTH-1:0] :
-    (tensor_dma_direct_start_req ? tensor_dma_start_src[PC_WIDTH-1:0] :
-      (tensor_strided_dma_launch ? tensor_strided_dma_src[PC_WIDTH-1:0] :
-                                  scalar_dma_start_src[PC_WIDTH-1:0]));
-  assign dtcm_dma_start_addr_dst = edge_dma_start_req ?
-    edge_dma_start_addr_dst[PC_WIDTH-1:0] :
-    (tensor_dma_direct_start_req ? tensor_dma_start_dst[PC_WIDTH-1:0] :
-      (tensor_strided_dma_launch ? tensor_strided_dma_dst[PC_WIDTH-1:0] :
-                                  scalar_dma_start_dst[PC_WIDTH-1:0]));
-  assign dtcm_dma_start_len = edge_dma_start_req ?
-    edge_dma_start_len[31:0] :
-    (tensor_dma_direct_start_req ? tensor_dma_start_len[31:0] :
-      (tensor_strided_dma_launch ? tensor_strided_dma_len[31:0] :
-                                  scalar_dma_start_len[31:0]));
 
   edge_core_write_axi_mux #(
     .ADDR_WIDTH(PC_WIDTH),
@@ -2049,20 +1553,9 @@ module edge_core_base #(
     .cmd_epoch(tensor_issue_epoch),
     .cmd_capture_valid(tensor_issue_n_valid),
     .cmd_capture_value(tensor_issue_n_value),
-    .dma_start_ready(!edge_dma_busy && !edge_dma_start_req &&
-                     !tensor_circular_dma_inflight_q &&
-                     !tensor_strided_dma_busy &&
-                     !tensor_circular_dma_launch &&
-                     !tensor_strided_dma_launch),
-    .dma_start_circular_ready(!edge_dma_busy && !edge_dma_start_req &&
-                              !tensor_circular_dma_active_q &&
-                              !tensor_circular_dma_inflight_q &&
-                              !tensor_strided_dma_busy),
-    .dma_sync_done(!edge_dma_busy && !edge_dma_start_req &&
-                   !edge_dma_active_q &&
-                   !tensor_circular_dma_inflight_q &&
-                   !tensor_circular_dma_launch &&
-                   !tensor_strided_dma_busy),
+    .dma_start_ready(tensor_dma_start_ready),
+    .dma_start_circular_ready(tensor_dma_start_circular_ready),
+    .dma_sync_done(tensor_dma_sync_done),
     .tensor_cmd_ready(tensor_cmd_ready),
     .tensor_start_ready(tensor_start_ready),
     .tensor_wld_cmd_ready(tensor_wld_cmd_ready),
@@ -2812,11 +2305,10 @@ module edge_core_base #(
     .dma_start_len(dtcm_dma_start_len[31:0]),
     .dma_start_req(dtcm_dma_start_req),
     .dma_busy(edge_dma_busy),
-    .dma_stream_cmd_valid(tensor_circular_dma_cmd_valid),
+    .dma_stream_cmd_valid(tensor_dma_stream_cmd_valid),
     .dma_stream_cmd_ready(dma_stream_cmd_ready),
-    .dma_stream_cmd_axi_addr(tensor_circular_dma_src_addr[PC_WIDTH-1:0]),
-    .dma_stream_cmd_dtcm_addr(
-      tensor_circular_dma_dst_addr[18:3]),
+    .dma_stream_cmd_axi_addr(tensor_dma_stream_axi_addr),
+    .dma_stream_cmd_dtcm_addr(tensor_dma_stream_dtcm_addr),
     .dma_stream_beat_done(dma_stream_beat_done),
     .dma_stream_busy(dma_stream_busy),
     .tensor_io_lease_channel_mask(tensor_io_lease_channel_mask[7:0]),

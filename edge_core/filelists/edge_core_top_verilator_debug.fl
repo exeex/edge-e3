@@ -6,6 +6,7 @@ edge_core/rtl/edge_lite_accel_platform.v
 edge_core/rtl/edge_core_read_axi_mux.v
 edge_core/rtl/edge_core_write_axi_mux.v
 edge_core/rtl/edge_core_strided_dma_ctrl.v
+edge_core/rtl/edge_accel_data_ctrl.v
 edge_core/rtl/edge_core_base.v
 edge_core/rtl/edge_core_debug.v
 ../edge-rv/edge_ifu_fetch/edge_ifu_fetch.v
