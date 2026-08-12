@@ -3,7 +3,8 @@ module edge_core_lite_top #(
   parameter ID_WIDTH=8,parameter LEN_WIDTH=8,
   parameter ICACHE_BYTES=16384,parameter DCACHE_BYTES=16384,
   parameter DTCM_ADDR_WIDTH=14,parameter DTCM_SRAM_ADDR_WIDTH=10,
-  parameter DTCM_SEGMENT_NUM=1
+  parameter DTCM_SEGMENT_NUM=1,
+  parameter [46:0] EDGE_ASIC_ID={15'd3,4'd3,4'd3,8'h03,8'h01,8'h01}
 )(
   input wire forever_cpuclk,input wire cpurst_b,
   input wire [ADDR_WIDTH-1:0] mem_region_base,input wire [ADDR_WIDTH-1:0] mem_region_mask,
@@ -57,7 +58,7 @@ module edge_core_lite_top #(
   edge_rv_lite_axi_core #(.PC_WIDTH(ADDR_WIDTH),.AXI_DATA_WIDTH(DATA_WIDTH),
     .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH),.ICACHE_BYTES(ICACHE_BYTES),
     .DCACHE_BYTES(DCACHE_BYTES),.DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),
-    .ENABLE_DTCM_PORT(1)) core(
+    .ENABLE_DTCM_PORT(1),.EDGE_ASIC_ID(EDGE_ASIC_ID)) core(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),
     .biu_pad_araddr(bringup_araddr),.biu_pad_arburst(bringup_arburst),
     .biu_pad_arcache(bringup_arcache),.biu_pad_arid(bringup_arid),

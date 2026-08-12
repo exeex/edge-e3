@@ -15,6 +15,12 @@ activation unit (ACTU), and one compare unit (CMPU).
 | SiLU throughput | 1 G elements/s |
 | Softmax throughput | 0.333 G elements/s |
 
+The edge-e3 hardware-identification fields are product ID 3, `P=3`, `Q=3`,
+BF16 and INT8 weight support, BF16 scale support, and Tensor specification v1.
+The product passes these 47 constant bits into either RV core with the
+`EDGE_ASIC_ID` elaboration parameter. The selected core completes CSR `0xfc0`
+with its own core/FPU/VPU fields; no runtime ID signals cross the boundary.
+
 Tensor throughput assumes one complete tensor MAC-array operation per cycle
 and counts one multiply-accumulate as two floating-point operations. Softmax
 throughput assumes three ACTU passes.

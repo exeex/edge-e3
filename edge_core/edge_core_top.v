@@ -7,6 +7,9 @@ module edge_core_top #(
   parameter VALUE_WIDTH = 64,
   parameter PRODUCER_TAG_WIDTH = 16,
   parameter PSEUDO_WIDTH = 3,
+  parameter [46:0] EDGE_ASIC_ID = {
+    15'd3, 4'd3, 4'd3, 8'h03, 8'h01, 8'h01
+  },
   parameter AXI_DATA_WIDTH = 128,
   parameter AXI_ID_WIDTH = 8,
   parameter AXI_LEN_WIDTH = 8,
@@ -73,6 +76,7 @@ module edge_core_top #(
     .VALUE_WIDTH(VALUE_WIDTH),
     .PRODUCER_TAG_WIDTH(PRODUCER_TAG_WIDTH),
     .PSEUDO_WIDTH(PSEUDO_WIDTH),
+    .EDGE_ASIC_ID(EDGE_ASIC_ID),
     .AXI_DATA_WIDTH(AXI_DATA_WIDTH),
     .AXI_ID_WIDTH(AXI_ID_WIDTH),
     .AXI_LEN_WIDTH(AXI_LEN_WIDTH),
