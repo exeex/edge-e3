@@ -118,14 +118,18 @@ module edge_core_dma_axi_mux #(
 
   reg read_owner_dtcm_q;
   reg read_owner_stream_q;
+  reg stream_yield_q;
+  reg read_inflight_q;
   reg write_owner_dtcm_q;
-  wire select_dtcm_read = dtcm_arvalid;
+  wire stream_defer_to_core = dtcm_read_is_stream && stream_yield_q
+                            && bringup_arvalid;
+  wire select_dtcm_read = dtcm_arvalid && !stream_defer_to_core;
   wire select_dtcm_write = dtcm_write_select_enable && dtcm_awvalid;
   wire ar_fire = dma_arvalid && dma_arready;
   wire r_done = dma_rvalid && dma_rready && dma_rlast;
   wire aw_fire = dma_awvalid && dma_awready;
   wire b_fire = dma_bvalid && dma_bready;
-  wire read_owner_dtcm = read_owner_dtcm_q || dtcm_stream_busy;
+  wire read_owner_dtcm = read_owner_dtcm_q;
 
   assign dma_araddr = select_dtcm_read ? dtcm_araddr : bringup_araddr;
   assign dma_arburst = select_dtcm_read ? dtcm_arburst : bringup_arburst;
@@ -135,9 +139,11 @@ module edge_core_dma_axi_mux #(
   assign dma_arlock = select_dtcm_read ? dtcm_arlock : bringup_arlock;
   assign dma_arprot = select_dtcm_read ? dtcm_arprot : bringup_arprot;
   assign dma_arsize = select_dtcm_read ? dtcm_arsize : bringup_arsize;
-  assign dma_arvalid = select_dtcm_read || bringup_arvalid;
-  assign dtcm_arready = select_dtcm_read && dma_arready;
-  assign bringup_arready = !select_dtcm_read && dma_arready;
+  assign dma_arvalid = !read_inflight_q
+                     && (select_dtcm_read || bringup_arvalid);
+  assign dtcm_arready = !read_inflight_q && select_dtcm_read && dma_arready;
+  assign bringup_arready = !read_inflight_q && !select_dtcm_read
+                         && dma_arready;
 
   assign dma_rready = read_owner_dtcm ? dtcm_rready : bringup_rready;
   assign dtcm_rdata = dma_rdata;
@@ -178,15 +184,17 @@ module edge_core_dma_axi_mux #(
     if (!cpurst_b) begin
       read_owner_dtcm_q <= 1'b0;
       read_owner_stream_q <= 1'b0;
+      stream_yield_q <= 1'b0;
+      read_inflight_q <= 1'b0;
     end else if (ar_fire) begin
+      read_inflight_q <= 1'b1;
       read_owner_dtcm_q <= select_dtcm_read;
       read_owner_stream_q <= select_dtcm_read && dtcm_read_is_stream;
-    end else if (read_owner_dtcm_q && read_owner_stream_q &&
-                 !dtcm_stream_busy && !dtcm_arvalid) begin
+      if(!select_dtcm_read)stream_yield_q<=1'b0;
+    end else if (r_done) begin
+      read_inflight_q <= 1'b0;
       read_owner_dtcm_q <= 1'b0;
-      read_owner_stream_q <= 1'b0;
-    end else if (read_owner_dtcm_q && !read_owner_stream_q && r_done) begin
-      read_owner_dtcm_q <= 1'b0;
+      if(read_owner_dtcm_q&&read_owner_stream_q)stream_yield_q<=1'b1;
     end
   end
 
