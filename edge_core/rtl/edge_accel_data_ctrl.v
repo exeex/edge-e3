@@ -4,7 +4,8 @@
 // Command production (dual-issue queue or serialized lite owner) stays outside.
 module edge_accel_data_ctrl #(
   parameter ADDR_WIDTH = 40,
-  parameter VALUE_WIDTH = 64
+  parameter VALUE_WIDTH = 64,
+  parameter CIRCULAR_FRAGMENT_WORDS = 2
 ) (
   input  wire                   forever_cpuclk,
   input  wire                   cpurst_b,
@@ -52,7 +53,7 @@ module edge_accel_data_ctrl #(
   input  wire                   tensor_sld_unit_cmd_ready,
   input  wire                   tensor_wld_fill_done,
   input  wire                   tensor_sld_fill_done,
-  input  wire [4:0]             tensor_wld_tile_words,
+  input  wire [6:0]             tensor_wld_tile_words,
   input  wire                   tensor_start_retire_valid,
 
   output wire                   dma_start_ready,
@@ -110,6 +111,10 @@ module edge_accel_data_ctrl #(
 
   wire [63:0] dma_xy_total = tensor_dma_start_x[63:32] *
                              tensor_dma_start_y[63:32];
+  wire [31:0] circular_xy_fragments_per_item =
+    {16'b0, tensor_dma_start_len[18:3]} / CIRCULAR_FRAGMENT_WORDS;
+  wire [31:0] circular_tile_fragments =
+    {25'b0, tensor_wld_tile_words} / CIRCULAR_FRAGMENT_WORDS;
   wire circular_config_valid = (circular_ring_capacity_entries_q != 16'd0) &&
                                (circular_entry_words_q != 16'd0);
   wire circular_ring_empty = circular_produced_entries_q ==
@@ -211,7 +216,7 @@ module edge_accel_data_ctrl #(
                                 !wsld_active_q && !sld_circular_active_q;
   assign tensor_wld_circular_ready = tensor_wld_cmd_ready &&
     circular_config_valid && !circular_ring_empty &&
-    (circular_entry_words_q == {11'b0, tensor_wld_tile_words});
+    (circular_entry_words_q == {9'b0, tensor_wld_tile_words});
   assign tensor_wsld_circular_ready = circular_config_valid &&
     !wsld_active_q && !circular_wld_active_q && !tensor_unit_sync_stall &&
     tensor_wld_unit_cmd_ready && tensor_sld_unit_cmd_ready &&
@@ -279,7 +284,7 @@ module edge_accel_data_ctrl #(
       circular_dma_inner_q <= 16'd0;
       circular_dma_x_max_q <= 16'd0;
       circular_dma_source_offset_words_q <= 16'd0;
-      circular_dma_fragment_words_q <= 16'd2;
+      circular_dma_fragment_words_q <= CIRCULAR_FRAGMENT_WORDS;
       circular_dma_use_xy_q <= 1'b0;
       circular_dma_len_q <= 32'd64;
       circular_dma_stride_q <= 32'd64;
@@ -325,18 +330,18 @@ module edge_accel_data_ctrl #(
         circular_dma_total_fragments_q <=
           (tensor_dma_start_use_xy ? {16'b0, dma_xy_total[15:0]} :
                                      {16'b0, tensor_dma_start_circular_tiles}) *
-          (tensor_dma_start_use_xy ? {17'b0, tensor_dma_start_len[18:4]} :
-                                     {27'b0, tensor_wld_tile_words[4:1]});
+          (tensor_dma_start_use_xy ? circular_xy_fragments_per_item :
+                                     circular_tile_fragments);
         circular_dma_inner_q <= 16'd0;
         circular_dma_x_max_q <= tensor_dma_start_use_xy ?
           tensor_dma_start_x[47:32] : tensor_dma_start_circular_tiles;
         circular_dma_use_xy_q <= tensor_dma_start_use_xy;
         circular_dma_source_offset_words_q <= 16'd0;
-        circular_dma_fragment_words_q <= 16'd2;
+        circular_dma_fragment_words_q <= CIRCULAR_FRAGMENT_WORDS;
         circular_dma_len_q <= tensor_dma_start_use_xy ? tensor_dma_start_len :
-          {24'b0, tensor_wld_tile_words, 3'b000};
+          {22'b0, tensor_wld_tile_words, 3'b000};
         circular_dma_stride_q <= tensor_dma_start_use_xy ?
-          tensor_dma_start_x[31:0] : {24'b0, tensor_wld_tile_words, 3'b000};
+          tensor_dma_start_x[31:0] : {22'b0, tensor_wld_tile_words, 3'b000};
         circular_dma_y_stride_q <= tensor_dma_start_use_xy ?
           tensor_dma_start_y[31:0] : 32'd0;
         circular_dma_issued_fragments_q <= 32'd0;
@@ -347,7 +352,7 @@ module edge_accel_data_ctrl #(
         circular_producer_addr_q <= circular_start_base;
         circular_consumer_addr_q <= circular_start_base;
         circular_entry_words_q <= tensor_dma_start_use_xy ?
-          tensor_dma_start_entry_bytes[18:3] : {11'b0, tensor_wld_tile_words};
+          tensor_dma_start_entry_bytes[18:3] : {9'b0, tensor_wld_tile_words};
         circular_producer_entry_offset_words_q <= 16'd0;
         circular_complete_entry_offset_words_q <= 16'd0;
         circular_reserved_entries_q <= 16'd0;
