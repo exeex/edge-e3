@@ -471,7 +471,7 @@ endgenerate
 
 // Scale mode uses the same fixed-width product/exponent representation as
 // vec8dot.  Its two internal stages preserve the wrapper's existing one-cycle
-// latency difference from bypass while remaining full-rate.  The mode only
+// two-cycle latency difference from bypass while remaining full-rate. The mode only
 // changes after the compute pipeline drains, so the shorter bypass path cannot
 // overtake an older scaled operation.
 edge_bf16_mul8_pipe x_scale_mul (
