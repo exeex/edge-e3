@@ -219,10 +219,14 @@ always @(posedge clk or negedge rst_b) begin
   end else begin
     s0_valid <= in_valid;
     s1_valid <= s0_valid;
-    for (lane = 0; lane < 8; lane = lane + 1) begin
-      s0_a[lane] <= sanitize_bf16(a_vec_i[lane*16 +: 16]);
-      s0_b[lane] <= sanitize_bf16(b_vec_i[lane*16 +: 16]);
-
+    if (in_valid) begin
+      for (lane = 0; lane < 8; lane = lane + 1) begin
+        s0_a[lane] <= sanitize_bf16(a_vec_i[lane*16 +: 16]);
+        s0_b[lane] <= sanitize_bf16(b_vec_i[lane*16 +: 16]);
+      end
+    end
+    if (s0_valid) begin
+      for (lane = 0; lane < 8; lane = lane + 1) begin
       a_sig_comb = (s0_a[lane][14:7] == 8'b0)
                  ? {1'b0, s0_a[lane][6:0]}
                  : {1'b1, s0_a[lane][6:0]};
@@ -238,6 +242,7 @@ always @(posedge clk or negedge rst_b) begin
                     + $signed({2'b0, (s0_b[lane][14:7] == 0)
                                       ? 8'd1 : s0_b[lane][14:7]})
                     - 10'sd134;
+      end
     end
   end
 end
