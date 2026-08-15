@@ -11,7 +11,8 @@
 //   r6: emit one BF16 result when the RSUM sequence marks its last row
 
 module edge_dot8_kernel #(
-  parameter PARTIAL_ONLY = 0
+  parameter PARTIAL_ONLY = 0,
+  parameter FPGA_DSP_ADD = 0
 )(
   clk,
   rst_b,
@@ -114,6 +115,38 @@ integer shift_amount_comb;
 wire [31:0] rsum_base_bits;
 wire [31:0] rsum_next_bits;
 wire [31:0] rsum_next_bf16_bits;
+wire signed [23:0] s4_sum_next;
+wire signed [23:0] s3_lane_ext [0:7];
+
+genvar lane_idx;
+generate
+  for (lane_idx = 0; lane_idx < 8; lane_idx = lane_idx + 1) begin : gen_lane_ext
+    assign s3_lane_ext[lane_idx] =
+      {{3{s3_lane[lane_idx][20]}}, s3_lane[lane_idx]};
+  end
+endgenerate
+
+generate
+  if (FPGA_DSP_ADD) begin : gen_fpga_dsp_add
+    (* use_dsp = "simd" *) wire signed [23:0] sum01 =
+      s3_lane_ext[0] + s3_lane_ext[1];
+    (* use_dsp = "simd" *) wire signed [23:0] sum23 =
+      s3_lane_ext[2] + s3_lane_ext[3];
+    (* use_dsp = "simd" *) wire signed [23:0] sum45 =
+      s3_lane_ext[4] + s3_lane_ext[5];
+    (* use_dsp = "simd" *) wire signed [23:0] sum67 =
+      s3_lane_ext[6] + s3_lane_ext[7];
+    (* use_dsp = "simd" *) wire signed [23:0] sum0123 = sum01 + sum23;
+    (* use_dsp = "simd" *) wire signed [23:0] sum4567 = sum45 + sum67;
+    (* use_dsp = "simd" *) wire signed [23:0] sum_all = sum0123 + sum4567;
+    assign s4_sum_next = sum_all;
+  end else begin : gen_logic_add
+    assign s4_sum_next = s3_lane_ext[0] + s3_lane_ext[1]
+                       + s3_lane_ext[2] + s3_lane_ext[3]
+                       + s3_lane_ext[4] + s3_lane_ext[5]
+                       + s3_lane_ext[6] + s3_lane_ext[7];
+  end
+endgenerate
 
 assign out_valid = PARTIAL_ONLY ? 1'b0
   : (rsum_output_valid_q || (s5_valid && !s5_rsum_enable));
@@ -657,7 +690,10 @@ always @(posedge clk or negedge rst_b) begin
     for (i = 0; i < 8; i = i + 1) begin
       shift_amount_comb = s1_max_exp - s1_exp[i];
       s2_fine[i] <= shift_amount_comb[2:0];
-      s2_force_zero[i] <= (shift_amount_comb >= 31);
+      // A 16-bit unsigned product shifted by 17 or more is strictly below
+      // half an output LSB, so per-lane RNE is exactly zero.  Shift 16 must
+      // remain live because products at or above 16'h8000 round to one.
+      s2_force_zero[i] <= (shift_amount_comb >= 17);
       s2_sign[i] <= s1_sign[i];
       case (shift_amount_comb[4:3])
         2'd0: begin
@@ -691,8 +727,7 @@ always @(posedge clk or negedge rst_b) begin
     end
 
     s4_max_exp <= s3_max_exp;
-    s4_sum <= s3_lane[0] + s3_lane[1] + s3_lane[2] + s3_lane[3]
-            + s3_lane[4] + s3_lane[5] + s3_lane[6] + s3_lane[7];
+    s4_sum <= s4_sum_next;
 
     s5_bf16 <= normalize_sum_to_bf16(s4_sum, s4_max_exp);
     s5_bf22_bits <= bf22_round_bits(
