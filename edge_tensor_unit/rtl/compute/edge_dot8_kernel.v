@@ -10,7 +10,9 @@
 //       successive row sums in the private BF22 RSUM accumulator
 //   r6: emit one BF16 result when the RSUM sequence marks its last row
 
-module edge_dot8_kernel(
+module edge_dot8_kernel #(
+  parameter PARTIAL_ONLY = 0
+)(
   clk,
   rst_b,
   in_valid,
@@ -23,7 +25,10 @@ module edge_dot8_kernel(
   rsum_last_i,
   out_valid,
   bf22_o,
-  bf16_o
+  bf16_o,
+  partial_valid_o,
+  partial_sum_o,
+  partial_exp_o
 );
 
 input          clk;
@@ -39,6 +44,9 @@ input          rsum_last_i;
 output         out_valid;
 output [31:0]  bf22_o;
 output [15:0]  bf16_o;
+output         partial_valid_o;
+output signed [23:0] partial_sum_o;
+output signed [9:0]  partial_exp_o;
 
 reg         s0_valid;
 reg         s1_valid;
@@ -107,9 +115,15 @@ wire [31:0] rsum_base_bits;
 wire [31:0] rsum_next_bits;
 wire [31:0] rsum_next_bf16_bits;
 
-assign out_valid = rsum_output_valid_q || (s5_valid && !s5_rsum_enable);
-assign bf22_o = rsum_output_valid_q ? rsum_output_bf22_q : s5_bf22_bits;
-assign bf16_o = rsum_output_valid_q ? rsum_output_bf16_q : s5_bf16;
+assign out_valid = PARTIAL_ONLY ? 1'b0
+  : (rsum_output_valid_q || (s5_valid && !s5_rsum_enable));
+assign bf22_o = PARTIAL_ONLY ? 32'b0
+  : (rsum_output_valid_q ? rsum_output_bf22_q : s5_bf22_bits);
+assign bf16_o = PARTIAL_ONLY ? 16'b0
+  : (rsum_output_valid_q ? rsum_output_bf16_q : s5_bf16);
+assign partial_valid_o = s4_valid;
+assign partial_sum_o = s4_sum;
+assign partial_exp_o = s4_max_exp;
 assign rsum_base_bits = s5_rsum_first ? 32'b0 : rsum_accum_q;
 assign rsum_next_bits = bf22_round_bits(
     fp32_add_bits(rsum_base_bits, s5_bf22_bits));
