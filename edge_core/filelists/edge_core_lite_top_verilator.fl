@@ -12,4 +12,5 @@ edge_core/edge_core_lite_top.v
 ../edge-rv-lite/rtl/edge_rv_lite_icache_adapter.v
 ../edge-rv-lite/rtl/edge_rv_lite_instruction_assembler.v
 ../edge-rv-lite/rtl/edge_rv_lite_lsu.v
+../edge-rv-lite/rtl/edge_rv_lite_fp_mem_format.v
 ../edge-rv-lite/rtl/edge_rv_lite_pipeline.v
