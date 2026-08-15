@@ -12,7 +12,10 @@
 
 module edge_dot8_kernel #(
   parameter PARTIAL_ONLY = 0,
-  parameter FPGA_DSP_ADD = 0
+  parameter FPGA_DSP_ADD = 0,
+  parameter LANES = 8,
+  parameter SUM_WIDTH = (LANES == 16) ? 25 : 24,
+  parameter ALIGN_GUARD_BITS = 0
 )(
   clk,
   rst_b,
@@ -35,10 +38,10 @@ module edge_dot8_kernel #(
 input          clk;
 input          rst_b;
 input          in_valid;
-input  [127:0] bf16_vec_i;
-input  [63:0]  int8_vec_i;
+input  [LANES*16-1:0] bf16_vec_i;
+input  [LANES*8-1:0]  int8_vec_i;
 input          weight_bf16_mode_i;
-input  [127:0] bf16_weight_vec_i;
+input  [LANES*16-1:0] bf16_weight_vec_i;
 input          rsum_enable_i;
 input          rsum_first_i;
 input          rsum_last_i;
@@ -46,7 +49,7 @@ output         out_valid;
 output [31:0]  bf22_o;
 output [15:0]  bf16_o;
 output         partial_valid_o;
-output signed [23:0] partial_sum_o;
+output signed [SUM_WIDTH-1:0] partial_sum_o;
 output signed [9:0]  partial_exp_o;
 
 reg         s0_valid;
@@ -55,24 +58,24 @@ reg         s2_valid;
 reg         s3_valid;
 reg         s4_valid;
 reg         s5_valid;
-reg [15:0]  s0_bf16 [0:7];
-reg [7:0]   s0_int8 [0:7];
-reg [15:0]  s0_weight_bf16 [0:7];
+reg [15:0]  s0_bf16 [0:LANES-1];
+reg [7:0]   s0_int8 [0:LANES-1];
+reg [15:0]  s0_weight_bf16 [0:LANES-1];
 reg         s0_weight_bf16_mode;
-reg [15:0]  s1_prod [0:7];
-reg         s1_sign [0:7];
-reg signed [9:0] s1_exp [0:7];
+reg [15:0]  s1_prod [0:LANES-1];
+reg         s1_sign [0:LANES-1];
+reg signed [9:0] s1_exp [0:LANES-1];
 reg signed [9:0] s1_max_exp;
-reg [15:0]  s2_coarse [0:7];
-reg [2:0]   s2_fine [0:7];
-reg         s2_coarse_guard [0:7];
-reg         s2_coarse_sticky [0:7];
-reg         s2_force_zero [0:7];
-reg         s2_sign [0:7];
+reg [17:0]  s2_coarse [0:LANES-1];
+reg [2:0]   s2_fine [0:LANES-1];
+reg         s2_coarse_guard [0:LANES-1];
+reg         s2_coarse_sticky [0:LANES-1];
+reg         s2_force_zero [0:LANES-1];
+reg         s2_sign [0:LANES-1];
 reg signed [9:0] s2_max_exp;
-reg signed [20:0] s3_lane [0:7];
+reg signed [20:0] s3_lane [0:LANES-1];
 reg signed [9:0] s3_max_exp;
-reg signed [23:0] s4_sum;
+reg signed [SUM_WIDTH-1:0] s4_sum;
 reg signed [9:0] s4_max_exp;
 reg [15:0]  s5_bf16;
 reg [31:0]  s5_bf22_bits;
@@ -111,18 +114,19 @@ reg [7:0]  sig_comb;
 reg [7:0]  weight_sig_comb;
 reg [7:0]  wmag_comb;
 integer shift_amount_comb;
+reg [17:0] expanded_prod_comb;
 
 wire [31:0] rsum_base_bits;
 wire [31:0] rsum_next_bits;
 wire [31:0] rsum_next_bf16_bits;
-wire signed [23:0] s4_sum_next;
-wire signed [23:0] s3_lane_ext [0:7];
+wire signed [SUM_WIDTH-1:0] s4_sum_next;
+wire signed [SUM_WIDTH-1:0] s3_lane_ext [0:LANES-1];
 
 genvar lane_idx;
 generate
-  for (lane_idx = 0; lane_idx < 8; lane_idx = lane_idx + 1) begin : gen_lane_ext
+  for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin : gen_lane_ext
     assign s3_lane_ext[lane_idx] =
-      {{3{s3_lane[lane_idx][20]}}, s3_lane[lane_idx]};
+      {{(SUM_WIDTH-21){s3_lane[lane_idx][20]}}, s3_lane[lane_idx]};
   end
 endgenerate
 
@@ -140,11 +144,20 @@ generate
     (* use_dsp = "simd" *) wire signed [23:0] sum4567 = sum45 + sum67;
     (* use_dsp = "simd" *) wire signed [23:0] sum_all = sum0123 + sum4567;
     assign s4_sum_next = sum_all;
-  end else begin : gen_logic_add
+  end else if (LANES == 8) begin : gen_logic_add8
     assign s4_sum_next = s3_lane_ext[0] + s3_lane_ext[1]
                        + s3_lane_ext[2] + s3_lane_ext[3]
                        + s3_lane_ext[4] + s3_lane_ext[5]
                        + s3_lane_ext[6] + s3_lane_ext[7];
+  end else begin : gen_logic_add16
+    assign s4_sum_next = s3_lane_ext[0] + s3_lane_ext[1]
+                       + s3_lane_ext[2] + s3_lane_ext[3]
+                       + s3_lane_ext[4] + s3_lane_ext[5]
+                       + s3_lane_ext[6] + s3_lane_ext[7]
+                       + s3_lane_ext[8] + s3_lane_ext[9]
+                       + s3_lane_ext[10] + s3_lane_ext[11]
+                       + s3_lane_ext[12] + s3_lane_ext[13]
+                       + s3_lane_ext[14] + s3_lane_ext[15];
   end
 endgenerate
 
@@ -156,7 +169,7 @@ assign bf16_o = PARTIAL_ONLY ? 16'b0
   : (rsum_output_valid_q ? rsum_output_bf16_q : s5_bf16);
 assign partial_valid_o = s4_valid;
 assign partial_sum_o = s4_sum;
-assign partial_exp_o = s4_max_exp;
+assign partial_exp_o = s4_max_exp - ALIGN_GUARD_BITS;
 assign rsum_base_bits = s5_rsum_first ? 32'b0 : rsum_accum_q;
 assign rsum_next_bits = bf22_round_bits(
     fp32_add_bits(rsum_base_bits, s5_bf22_bits));
@@ -340,13 +353,13 @@ function [15:0] sanitize_bf16;
   end
 endfunction
 
-function [15:0] rshift_rne_fine;
-  input [15:0] value;
+function [17:0] rshift_rne_fine;
+  input [17:0] value;
   input [2:0] amount;
   input coarse_guard;
   input coarse_sticky;
   input force_zero;
-  reg [15:0] quotient;
+  reg [17:0] quotient;
   reg guard_bit;
   reg sticky_bit;
   begin
@@ -394,25 +407,25 @@ function [15:0] rshift_rne_fine;
       end
     endcase
     rshift_rne_fine = force_zero
-                    ? 16'b0
+                    ? 18'b0
                     : quotient
                       + (guard_bit && (sticky_bit || quotient[0]));
   end
 endfunction
 
 function signed [20:0] align_product_signed;
-  input [15:0] value;
+  input [17:0] value;
   input [2:0] amount;
   input coarse_guard;
   input coarse_sticky;
   input force_zero;
   input sign;
-  reg [15:0] aligned;
+  reg [17:0] aligned;
   reg signed [20:0] signed_aligned;
   begin
     aligned = rshift_rne_fine(value, amount, coarse_guard,
                               coarse_sticky, force_zero);
-    signed_aligned = {5'b0, aligned};
+    signed_aligned = {3'b0, aligned};
     if (sign)
       signed_aligned = -signed_aligned;
     align_product_signed = signed_aligned;
@@ -559,7 +572,7 @@ endfunction
 always @* begin
   max_exp_comb = 10'sd0;
   max_exp_valid_comb = 1'b0;
-  for (i = 0; i < 8; i = i + 1) begin
+  for (i = 0; i < LANES; i = i + 1) begin
     max_lane = s0_bf16[i];
     max_lane_exp = max_lane[14:7];
     max_weight_lane = s0_weight_bf16[i];
@@ -655,7 +668,7 @@ always @(posedge clk or negedge rst_b) begin
       end
     end
 
-    for (i = 0; i < 8; i = i + 1) begin
+    for (i = 0; i < LANES; i = i + 1) begin
       s0_bf16[i] <= sanitize_bf16(bf16_vec_i[i*16 +: 16]);
       s0_int8[i] <= int8_vec_i[i*8 +: 8];
       s0_weight_bf16[i] <= sanitize_bf16(
@@ -664,7 +677,7 @@ always @(posedge clk or negedge rst_b) begin
     s0_weight_bf16_mode <= weight_bf16_mode_i;
 
     s1_max_exp <= max_exp_comb;
-    for (i = 0; i < 8; i = i + 1) begin
+    for (i = 0; i < LANES; i = i + 1) begin
       sig_comb = (s0_bf16[i][14:7] == 8'b0)
                ? {1'b0, s0_bf16[i][6:0]}
                : {1'b1, s0_bf16[i][6:0]};
@@ -687,40 +700,40 @@ always @(posedge clk or negedge rst_b) begin
     end
 
     s2_max_exp <= s1_max_exp;
-    for (i = 0; i < 8; i = i + 1) begin
+    for (i = 0; i < LANES; i = i + 1) begin
       shift_amount_comb = s1_max_exp - s1_exp[i];
+      expanded_prod_comb = {2'b0, s1_prod[i]} << ALIGN_GUARD_BITS;
       s2_fine[i] <= shift_amount_comb[2:0];
-      // A 16-bit unsigned product shifted by 17 or more is strictly below
-      // half an output LSB, so per-lane RNE is exactly zero.  Shift 16 must
-      // remain live because products at or above 16'h8000 round to one.
-      s2_force_zero[i] <= (shift_amount_comb >= 17);
+      // Native dot16 retains fractional guard bits so all sixteen lanes
+      // add before the sole normalization/round. Legacy dot8 keeps zero.
+      s2_force_zero[i] <= (shift_amount_comb >= (17 + ALIGN_GUARD_BITS));
       s2_sign[i] <= s1_sign[i];
       case (shift_amount_comb[4:3])
         2'd0: begin
-          s2_coarse[i] <= s1_prod[i];
+          s2_coarse[i] <= expanded_prod_comb;
           s2_coarse_guard[i] <= 1'b0;
           s2_coarse_sticky[i] <= 1'b0;
         end
         2'd1: begin
-          s2_coarse[i] <= s1_prod[i] >> 8;
-          s2_coarse_guard[i] <= s1_prod[i][7];
-          s2_coarse_sticky[i] <= |s1_prod[i][6:0];
+          s2_coarse[i] <= expanded_prod_comb >> 8;
+          s2_coarse_guard[i] <= expanded_prod_comb[7];
+          s2_coarse_sticky[i] <= |expanded_prod_comb[6:0];
         end
         2'd2: begin
-          s2_coarse[i] <= 16'b0;
-          s2_coarse_guard[i] <= s1_prod[i][15];
-          s2_coarse_sticky[i] <= |s1_prod[i][14:0];
+          s2_coarse[i] <= expanded_prod_comb >> 16;
+          s2_coarse_guard[i] <= expanded_prod_comb[15];
+          s2_coarse_sticky[i] <= |expanded_prod_comb[14:0];
         end
         default: begin
-          s2_coarse[i] <= 16'b0;
+          s2_coarse[i] <= 18'b0;
           s2_coarse_guard[i] <= 1'b0;
-          s2_coarse_sticky[i] <= |s1_prod[i];
+          s2_coarse_sticky[i] <= |expanded_prod_comb;
         end
       endcase
     end
 
     s3_max_exp <= s2_max_exp;
-    for (i = 0; i < 8; i = i + 1) begin
+    for (i = 0; i < LANES; i = i + 1) begin
       s3_lane[i] <= align_product_signed(
           s2_coarse[i], s2_fine[i], s2_coarse_guard[i],
           s2_coarse_sticky[i], s2_force_zero[i], s2_sign[i]);
