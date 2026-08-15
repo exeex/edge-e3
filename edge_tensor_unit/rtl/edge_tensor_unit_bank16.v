@@ -90,6 +90,7 @@ module edge_tensor_unit_bank16 #(
 );
 
 localparam BYTE_WIDTH = DATA_WIDTH / 8;
+localparam BYTE_INDEX_WIDTH = $clog2(BYTE_WIDTH);
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
 
 reg  [3:0]                    cfg_dtype_q [0:1];
@@ -157,6 +158,13 @@ reg  [ADDR_WIDTH-1:0]        direct_sld_next_ptr_q;
 reg  [VECTOR_COUNT_WIDTH-1:0] direct_sld_target_q;
 reg  [VECTOR_COUNT_WIDTH-1:0] direct_sld_issued_q;
 reg  [VECTOR_COUNT_WIDTH-1:0] direct_sld_received_q;
+reg                           copy_active_q;
+reg                           copy_write_q;
+reg  [ADDR_WIDTH-1:0]         copy_in_q;
+reg  [ADDR_WIDTH-1:0]         copy_out_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] copy_bytes_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] copy_offset_q;
+reg  [DATA_WIDTH-1:0]         copy_data_q;
 
 wire                          engine_busy;
 wire                          engine_done;
@@ -234,6 +242,9 @@ wire [SRAM_ADDR_WIDTH-1:0]    engine_host_bank_addr;
 wire [DATA_WIDTH-1:0]         engine_host_bank_wdata;
 wire [BYTE_WIDTH-1:0]         engine_host_bank_wstrb;
 wire [DATA_WIDTH-1:0]         engine_host_bank_rdata;
+wire                          engine_host_ready;
+wire [DATA_WIDTH-1:0]         engine_host_rdata;
+wire                          engine_host_rvalid;
 wire                          engine_i_pair_req;
 wire [BANK_INDEX_WIDTH-1:0]   engine_i_pair_bank0;
 wire [BANK_INDEX_WIDTH-1:0]   engine_i_pair_bank1;
@@ -263,6 +274,12 @@ wire                          scale_stream_push;
 wire                          direct_sld_launch;
 wire [BANK_NUM-1:0]           lower_owned_mask;
 wire                          wld_req_owned;
+wire                          copy_mode_req;
+wire                          copy_start_accept;
+wire                          copy_host_req;
+wire                          copy_host_we;
+wire [ADDR_WIDTH-1:0]         copy_host_addr;
+wire [BYTE_WIDTH-1:0]         copy_host_wstrb;
 genvar                        bank_gen_i;
 
 function [BANK_NUM-1:0] pair_mask;
@@ -298,6 +315,7 @@ end
 endfunction
 
 assign tensor_busy = engine_busy
+                  || copy_active_q
                   || queued_start_valid_q
                   || start_pending_q
                   || wld_cmd_pending_q
@@ -315,7 +333,9 @@ assign tensor_start_ready = !queued_start_valid_q
                              || cmd_start_mode[3]
                              || cmd_start_mode[4]
                              || scale_pending_valid_q)
-                         && start_weight_available;
+                         && (cmd_start_mode[5]
+                             ? (!engine_busy && !copy_active_q)
+                             : start_weight_available);
 assign tensor_wld_cmd_ready = cmd_wld_reuse
                             ? (tensor_weight_active_valid
                                && !tensor_weight_pending_valid
@@ -351,6 +371,7 @@ assign tensor_wld_fill_done = wld_fill_done;
 assign tensor_wld_tile_words[4:0] =
     (cfg_wtype_q[cfg_write_sel_q][3:0] == 4'd1) ? 5'd16 : 5'd8;
 assign tensor_sync_stall = engine_busy
+                         || copy_active_q
                          || queued_start_valid_q
                          || start_pending_q
                          || wld_cmd_pending_q
@@ -384,6 +405,8 @@ assign tensor_wld_lease_valid = 1'b0;
 assign tensor_active_mask[BANK_NUM-1:0] = tensor_bank_req[BANK_NUM-1:0];
 assign start_accept = (cmd_start_req || cmd_start_tile_req)
                    && tensor_start_ready;
+assign copy_mode_req = cmd_start_req && cmd_start_mode[5];
+assign copy_start_accept = start_accept && copy_mode_req;
 assign start_weight_available =
     weight_reuse_token_q
     || weight_loaded_q
@@ -404,14 +427,15 @@ assign start_uses_reuse_weight =
     || (start_pending_direct_launch && start_pending_reuse_weight_q)
     || (start_pending_queue_launch && start_pending_reuse_weight_q);
 assign start_direct_accept =
-    start_accept
+    start_accept && !copy_mode_req
     && (weight_reuse_token_q || weight_loaded_q)
     && !queued_start_valid_q && !engine_busy;
 assign start_queue_accept =
-    start_accept
+    start_accept && !copy_mode_req
     && (weight_reuse_token_q || weight_loaded_q)
     && !queued_start_valid_q && engine_busy;
 assign start_wait_accept = start_accept
+                        && !copy_mode_req
                         && !((weight_reuse_token_q || weight_loaded_q)
                              && !queued_start_valid_q);
 assign start_pending_direct_launch =
@@ -459,11 +483,13 @@ assign engine_start_use_active =
 assign engine_start = start_direct_accept
                    || start_pending_direct_launch
                    || start_queue_launch;
-assign tensor_start_retire_valid = engine_start;
-assign tensor_start_retire_seq_id = start_direct_accept ? cmd_start_seq_id :
+assign tensor_start_retire_valid = engine_start || copy_start_accept;
+assign tensor_start_retire_seq_id = copy_start_accept ? cmd_start_seq_id :
+                                    start_direct_accept ? cmd_start_seq_id :
                                     (start_pending_direct_launch ?
                                      start_pending_seq_id_q : queued_start_seq_id_q);
-assign tensor_start_retire_epoch = start_direct_accept ? cmd_start_epoch :
+assign tensor_start_retire_epoch = copy_start_accept ? cmd_start_epoch :
+                                   start_direct_accept ? cmd_start_epoch :
                                    (start_pending_direct_launch ?
                                     start_pending_epoch_q : queued_start_epoch_q);
 assign start_data_in[ADDR_WIDTH-1:0] =
@@ -533,6 +559,17 @@ assign wld_read_fire = tensor_wld_req && tensor_wld_ready;
 assign wld_load_data[PAIR_WIDTH-1:0] = tensor_wld_rdata[PAIR_WIDTH-1:0];
 assign engine_host_bank_rdata[DATA_WIDTH-1:0] =
     bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_host_bank);
+assign copy_host_req = copy_active_q && engine_host_ready
+                     && (copy_host_addr[1] == tensor_phase[1])
+                     && (copy_write_q || !engine_host_rvalid);
+assign copy_host_we = copy_write_q;
+assign copy_host_addr[ADDR_WIDTH-1:0] =
+    (copy_write_q ? copy_out_q : copy_in_q)
+    + (copy_offset_q[ADDR_WIDTH-1:0] >> BYTE_INDEX_WIDTH);
+assign copy_host_wstrb[BYTE_WIDTH-1:0] =
+    (copy_bytes_q - copy_offset_q >= BYTE_WIDTH)
+    ? {BYTE_WIDTH{1'b1}}
+    : ({BYTE_WIDTH{1'b1}} >> (BYTE_WIDTH - (copy_bytes_q - copy_offset_q)));
 assign engine_i_pair_rdata[PAIR_WIDTH-1:0] =
     {bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_i_pair_rsp_bank1),
      bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_i_pair_rsp_bank0)};
@@ -596,14 +633,14 @@ edge_tensor_engine #(
   .handoff_ready(engine_handoff_ready),
   .busy(engine_busy),
   .done(engine_done),
-  .host_req(1'b0),
-  .host_we(1'b0),
-  .host_addr({ADDR_WIDTH{1'b0}}),
-  .host_wdata({DATA_WIDTH{1'b0}}),
-  .host_wstrb({BYTE_WIDTH{1'b0}}),
-  .host_ready(),
-  .host_rdata(),
-  .host_rvalid(),
+  .host_req(copy_host_req),
+  .host_we(copy_host_we),
+  .host_addr(copy_host_addr),
+  .host_wdata(copy_data_q),
+  .host_wstrb(copy_host_wstrb),
+  .host_ready(engine_host_ready),
+  .host_rdata(engine_host_rdata),
+  .host_rvalid(engine_host_rvalid),
   .fabric_phase(tensor_phase[BANK_INDEX_WIDTH-1:0]),
   .host_bank_req(engine_host_bank_req),
   .host_bank_we(engine_host_bank_we),
@@ -807,7 +844,34 @@ always @(posedge clk or negedge cpurst_b) begin
     direct_sld_target_q <= {VECTOR_COUNT_WIDTH{1'b0}};
     direct_sld_issued_q <= {VECTOR_COUNT_WIDTH{1'b0}};
     direct_sld_received_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    copy_active_q <= 1'b0;
+    copy_write_q <= 1'b0;
+    copy_in_q <= {ADDR_WIDTH{1'b0}};
+    copy_out_q <= {ADDR_WIDTH{1'b0}};
+    copy_bytes_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    copy_offset_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    copy_data_q <= {DATA_WIDTH{1'b0}};
   end else begin
+    if (copy_start_accept) begin
+      copy_active_q <= (start_data_run_count != 0);
+      copy_write_q <= 1'b0;
+      copy_in_q <= start_data_in[ADDR_WIDTH-1:0];
+      copy_out_q <= start_data_out[ADDR_WIDTH-1:0];
+      copy_bytes_q <= start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
+      copy_offset_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    end else if (copy_active_q && !copy_write_q && engine_host_rvalid) begin
+      copy_data_q <= engine_host_rdata[DATA_WIDTH-1:0];
+      copy_write_q <= 1'b1;
+    end else if (copy_active_q && copy_write_q && copy_host_req) begin
+      if (copy_offset_q + BYTE_WIDTH >= copy_bytes_q) begin
+        copy_active_q <= 1'b0;
+        copy_write_q <= 1'b0;
+      end else begin
+        copy_offset_q <= copy_offset_q + BYTE_WIDTH;
+        copy_write_q <= 1'b0;
+      end
+    end
+
     if (cmd_sld_stream_setup_req && tensor_cmd_ready) begin
       direct_sld_setup_valid_q <= 1'b1;
       direct_sld_next_ptr_q <= cmd_sld_stream_setup_ptr[ADDR_WIDTH-1:0];
