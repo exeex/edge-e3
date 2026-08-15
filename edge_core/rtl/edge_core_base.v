@@ -1379,12 +1379,14 @@ module edge_core_base #(
     .fetch_resp_valid(ifu_cache_resp_valid),
     .fetch_resp_ready(ifu_cache_resp_ready),
     .fetch_resp_bits(ifu_cache_resp_bits),
+    .fetch_resp_error(),
     .imem_req_valid(icache_refill_req_valid),
     .imem_req_ready(icache_refill_req_ready),
     .imem_req_addr(icache_refill_req_addr),
     .imem_resp_valid(icache_refill_resp_valid),
     .imem_resp_ready(icache_refill_resp_ready),
     .imem_resp_bits(icache_refill_resp_bits),
+    .imem_resp_error(1'b0),
 `ifdef EDGE_DEBUG
     .debug_icache_bytes(debug_icache_bytes),
 `else
