@@ -15,7 +15,8 @@ module edge_dot8_kernel #(
   parameter FPGA_DSP_ADD = 0,
   parameter LANES = 8,
   parameter SUM_WIDTH = (LANES == 16) ? 25 : 24,
-  parameter ALIGN_GUARD_BITS = 0
+  parameter ALIGN_GUARD_BITS = 0,
+  parameter INPUTS_SANITIZED = 0
 )(
   clk,
   rst_b,
@@ -669,10 +670,14 @@ always @(posedge clk or negedge rst_b) begin
     end
 
     for (i = 0; i < LANES; i = i + 1) begin
-      s0_bf16[i] <= sanitize_bf16(bf16_vec_i[i*16 +: 16]);
+      s0_bf16[i] <= INPUTS_SANITIZED
+                    ? bf16_vec_i[i*16 +: 16]
+                    : sanitize_bf16(bf16_vec_i[i*16 +: 16]);
       s0_int8[i] <= int8_vec_i[i*8 +: 8];
-      s0_weight_bf16[i] <= sanitize_bf16(
-          bf16_weight_vec_i[i*16 +: 16]);
+      s0_weight_bf16[i] <= INPUTS_SANITIZED
+                           ? bf16_weight_vec_i[i*16 +: 16]
+                           : sanitize_bf16(
+                               bf16_weight_vec_i[i*16 +: 16]);
     end
     s0_weight_bf16_mode <= weight_bf16_mode_i;
 
