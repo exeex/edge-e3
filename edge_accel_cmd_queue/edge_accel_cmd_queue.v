@@ -76,6 +76,7 @@ module edge_accel_cmd_queue #(
     begin
       case (inst64[38:32])
         7'h01: compact_imm8 = {6'b0, inst64[57:56]};
+        7'h09: compact_imm8 = {7'b0, inst64[56]};
         7'h10,
         7'h20: compact_imm8 = {inst64[55:52], inst64[50:47]};
         7'h27: compact_imm8 = {4'b0, inst64[50:47]};
@@ -100,6 +101,7 @@ module edge_accel_cmd_queue #(
       inst64[39:32] = opcode8;
       case (opcode8[6:0])
         7'h01: inst64[57:56] = imm8[1:0];
+        7'h09: inst64[56] = imm8[0];
         7'h10,
         7'h20: begin
           inst64[55:52] = imm8[7:4];
