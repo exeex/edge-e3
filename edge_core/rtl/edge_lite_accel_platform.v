@@ -28,8 +28,42 @@ module edge_lite_accel_platform #(
   output wire dma_axi_bready,output wire [AXI_DATA_WIDTH-1:0] dma_axi_wdata,
   output wire dma_axi_wlast,input wire dma_axi_wready,
   output wire [(AXI_DATA_WIDTH/8)-1:0] dma_axi_wstrb,output wire dma_axi_wvalid,
-  output wire tensor_busy,output wire actu_busy,output wire cmpu_busy,output wire dma_busy
+  output wire tensor_busy,output wire actu_busy,output wire cmpu_busy,output wire dma_busy,
+  output wire asic_ready_o
 );
+  localparam [6:0] ASIC_POWER=7'h09;
+  wire [6:0] req_subop=req_inst[38:32];
+  wire req_is_power=req_inst[39]&&(req_subop==ASIC_POWER);
+  wire req_power_on=req_inst[56];
+  wire dispatch_req_ready,dispatch_resp_valid,dispatch_resp_error;
+  wire [63:0] dispatch_resp_value;
+  reg asic_ready_q,power_resp_q,power_off_pending_q;
+  wire all_accel_idle=!tensor_busy&&!actu_busy&&!cmpu_busy&&!dma_busy;
+  assign asic_ready_o=asic_ready_q;
+  assign req_ready=req_is_power?!power_off_pending_q:
+                   (asic_ready_q&&dispatch_req_ready);
+  assign resp_valid=power_resp_q||dispatch_resp_valid;
+  assign resp_error=power_resp_q?1'b0:dispatch_resp_error;
+  assign resp_value=power_resp_q?64'b0:dispatch_resp_value;
+
+  always @(posedge forever_cpuclk or negedge cpurst_b) begin
+    if(!cpurst_b) begin
+      asic_ready_q<=1'b0; power_resp_q<=1'b0; power_off_pending_q<=1'b0;
+    end else begin
+      power_resp_q<=1'b0;
+      if(req_valid&&req_ready&&req_is_power) begin
+        if(req_power_on) begin
+          asic_ready_q<=1'b1; power_resp_q<=1'b1;
+        end else if(!asic_ready_q) power_resp_q<=1'b1;
+        else if(all_accel_idle) begin
+          asic_ready_q<=1'b0; power_resp_q<=1'b1;
+        end else power_off_pending_q<=1'b1;
+      end
+      if(power_off_pending_q&&all_accel_idle) begin
+        asic_ready_q<=1'b0; power_off_pending_q<=1'b0; power_resp_q<=1'b1;
+      end
+    end
+  end
   wire [3:0] tensor_cmd_setcsr_dtype,tensor_cmd_setcsr_wtype;
   wire tensor_cmd_setcsr_req,tensor_cmd_setin_req,tensor_cmd_setn_req;
   wire tensor_cmd_setout_req,tensor_cmd_setpsum_req,tensor_cmd_start_req;
@@ -103,9 +137,10 @@ module edge_lite_accel_platform #(
   edge_lite_accel_dispatch dispatch(
     .clk(forever_cpuclk),.reset_n(cpurst_b),.mem_region_base(mem_region_base),
     .mem_region_mask(mem_region_mask),.mem_region_enable(mem_region_enable),
-    .req_valid(req_valid),.req_ready(req_ready),.req_inst(req_inst),
-    .req_capture_value(req_capture_value),.resp_valid(resp_valid),
-    .resp_error(resp_error),.resp_value(resp_value),.dma_start_ready(dma_start_ready),
+    .req_valid(req_valid&&!req_is_power&&asic_ready_q),
+    .req_ready(dispatch_req_ready),.req_inst(req_inst),
+    .req_capture_value(req_capture_value),.resp_valid(dispatch_resp_valid),
+    .resp_error(dispatch_resp_error),.resp_value(dispatch_resp_value),.dma_start_ready(dma_start_ready),
     .dma_start_circular_ready(dma_start_circular_ready),
     .dma_sync_done(dma_sync_done),.tensor_cmd_ready(tensor_cmd_ready),
     .tensor_start_ready(tensor_start_ready_q),.tensor_wld_cmd_ready(tensor_wld_cmd_ready),

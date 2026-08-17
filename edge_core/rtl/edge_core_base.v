@@ -1543,7 +1543,8 @@ module edge_core_base #(
     .EPOCH_WIDTH(EPOCH_WIDTH),
     .VALUE_WIDTH(VALUE_WIDTH),
     .ADDR_WIDTH(16),
-    .COMPACT_CMD_INPUT(1)
+    .COMPACT_CMD_INPUT(1),
+    .ASIC_POWER_CONTROL(1)
   ) accel_pipe (
     .forever_cpuclk(forever_cpuclk),
     .cpurst_b(cpurst_b),

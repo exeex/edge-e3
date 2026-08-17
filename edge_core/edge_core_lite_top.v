@@ -48,7 +48,8 @@ module edge_core_lite_top #(
   wire [2:0] dtcm_arprot,dtcm_arsize,dtcm_awprot,dtcm_awsize;
   wire [DATA_WIDTH-1:0] dtcm_rdata,dtcm_wdata; wire dtcm_awvalid,dtcm_bvalid;
   wire dtcm_wlast,dtcm_wvalid; wire [(DATA_WIDTH/8)-1:0] dtcm_wstrb;
-  wire accel_req_valid,accel_req_ready,accel_resp_valid,accel_resp_error;
+  wire accel_req_valid,accel_req_ready,platform_req_ready,accel_resp_valid,accel_resp_error;
+  wire asic_ready;
   wire [63:0] accel_req_inst,accel_req_src0,accel_req_src1,accel_resp_value;
   wire dtcm_lsu_req,dtcm_lsu_ready,dtcm_lsu_we,dtcm_lsu_rvalid;
   wire [DTCM_ADDR_WIDTH-1:0] dtcm_lsu_addr;
@@ -96,7 +97,7 @@ module edge_core_lite_top #(
     .DTCM_SEGMENT_NUM(DTCM_SEGMENT_NUM)) platform(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),.mem_region_base(mem_region_base),
     .mem_region_mask(mem_region_mask),.mem_region_enable(mem_region_enable),
-    .req_valid(accel_req_valid),.req_ready(accel_req_ready),.req_inst(accel_req_inst),
+    .req_valid(accel_req_valid),.req_ready(platform_req_ready),.req_inst(accel_req_inst),
     .req_capture_value(accel_req_src1),.resp_valid(accel_resp_valid),
     .resp_error(accel_resp_error),.resp_value(accel_resp_value),
     .scalar_lsu_addr(dtcm_lsu_addr),.scalar_lsu_req(dtcm_lsu_req),
@@ -114,7 +115,12 @@ module edge_core_lite_top #(
     .dma_axi_awready(dtcm_awready),.dma_axi_bvalid(dtcm_bvalid),.dma_axi_bready(dtcm_bready),
     .dma_axi_wdata(dtcm_wdata),.dma_axi_wlast(dtcm_wlast),.dma_axi_wready(dtcm_wready),
     .dma_axi_wstrb(dtcm_wstrb),.dma_axi_wvalid(dtcm_wvalid),.tensor_busy(tensor_busy),
-    .actu_busy(actu_busy),.cmpu_busy(cmpu_busy),.dma_busy(accel_dma_busy));
+    .actu_busy(actu_busy),.cmpu_busy(cmpu_busy),.dma_busy(accel_dma_busy),
+    .asic_ready_o(asic_ready));
+
+  wire accel_req_is_power=accel_req_inst[39]&&
+      accel_req_inst[38:32]==7'h09;
+  assign accel_req_ready=platform_req_ready&&(asic_ready||accel_req_is_power);
 
   edge_core_dma_axi_mux #(.ADDR_WIDTH(ADDR_WIDTH),.DATA_WIDTH(DATA_WIDTH),
     .ID_WIDTH(ID_WIDTH),.LEN_WIDTH(LEN_WIDTH)) axi_mux(
