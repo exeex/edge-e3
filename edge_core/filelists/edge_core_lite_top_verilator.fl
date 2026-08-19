@@ -1,5 +1,12 @@
 -f edge_core/filelists/edge_core_top_verilator_prod.fl
 edge_core/edge_core_lite_top.v
+../edge-rv/edge_scalar_muldiv/rtl/edge_mul32_booth_code_33.v
+../edge-rv/edge_scalar_muldiv/rtl/edge_mul32_booth_compressor.v
+../edge-rv/edge_scalar_muldiv/rtl/edge_add16_carry_select8.v
+../edge-rv/edge_scalar_muldiv/rtl/edge_add64_carry_select16.v
+../edge-rv/edge_scalar_muldiv/rtl/edge_mul32_booth_lane.v
+../edge-rv/edge_scalar_muldiv/rtl/edge_mul32_dual_booth_pipeline.v
+../edge-rv/edge_scalar_muldiv/rtl/edge_mul64_dual_booth.v
 ../edge-rv/edge_scalar_muldiv/edge_scalar_muldiv_kernel_generic.v
 ../edge-rv/edge_scalar_muldiv/edge_scalar_muldiv_kernel_asap7.v
 ../edge-rv/edge_scalar_muldiv/edge_scalar_muldiv_kernel.v
