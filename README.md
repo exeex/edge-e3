@@ -51,6 +51,18 @@ predecoder, accelerator pipe, and scalar snapshot live in `../edge-rv`.
 Unit tests and internal implementation contracts are maintained separately
 and are not included in this public package.
 
+The minimum-area product wrapper can select its scalar implementation at
+configure time:
+
+```sh
+cmake -S . -B build-e3-rv64 -DEDGE_E3_SCALAR_CORE=rv64-lite
+cmake -S . -B build-e3-edge32 -DEDGE_E3_SCALAR_CORE=edge32
+```
+
+Both choices retain the same AXI128, 64-bit scalar-DTCM compatibility, DMA,
+Tensor, ACTU, and CMPU platform. The wrapper converts RV64-lite's legacy
+two-parcel accelerator instruction to ASIC32; Edge-32 supplies ASIC32 directly.
+
 ## License
 
 edge-e3 is available under the custom edge-e3 Hardware License 1.0. Simulation,

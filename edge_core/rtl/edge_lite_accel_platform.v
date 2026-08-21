@@ -7,7 +7,7 @@ module edge_lite_accel_platform #(
   input wire forever_cpuclk,input wire cpurst_b,
   input wire [AXI_ADDR_WIDTH-1:0] mem_region_base,input wire [AXI_ADDR_WIDTH-1:0] mem_region_mask,
   input wire mem_region_enable,input wire req_valid,output wire req_ready,
-  input wire [63:0] req_inst,input wire [63:0] req_capture_value,
+  input wire [31:0] req_inst,input wire [63:0] req_capture_value,
   output wire resp_valid,output wire resp_error,output wire [63:0] resp_value,
   input wire [DTCM_ADDR_WIDTH-1:0] scalar_lsu_addr,
   input wire scalar_lsu_req,input wire scalar_lsu_we,
@@ -32,9 +32,9 @@ module edge_lite_accel_platform #(
   output wire asic_ready_o
 );
   localparam [6:0] ASIC_POWER=7'h09;
-  wire [6:0] req_subop=req_inst[38:32];
-  wire req_is_power=req_inst[39]&&(req_subop==ASIC_POWER);
-  wire req_power_on=req_inst[56];
+  wire [6:0] req_subop=req_inst[31:25];
+  wire req_is_power=(req_inst[6:0]==7'h3f)&&(req_subop==ASIC_POWER);
+  wire req_power_on=req_inst[12];
   wire dispatch_req_ready,dispatch_resp_valid,dispatch_resp_error;
   wire [63:0] dispatch_resp_value;
   reg asic_ready_q,power_resp_q,power_off_pending_q;
