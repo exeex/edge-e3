@@ -7,6 +7,8 @@ module edge_core_lite_top #(
   parameter [46:0] EDGE_ASIC_ID={15'd3,4'd3,4'd3,8'h03,8'h01,8'h01}
 )(
   input wire forever_cpuclk,input wire cpurst_b,
+  input wire core_start,input wire core_force_stop,
+  input wire [ADDR_WIDTH-1:0] boot_pc,
   input wire [ADDR_WIDTH-1:0] mem_region_base,input wire [ADDR_WIDTH-1:0] mem_region_mask,
   input wire mem_region_enable,
   output wire [ADDR_WIDTH-1:0] dma_araddr,output wire [1:0] dma_arburst,
@@ -74,6 +76,10 @@ module edge_core_lite_top #(
     .DCACHE_BYTES(DCACHE_BYTES),.DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),
     .ENABLE_DTCM_PORT(1),.EDGE_ASIC_ID(EDGE_ASIC_ID)) core(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),
+`ifdef EDGE_SCALAR_CORE_EDGE32
+    .core_start(core_start),.core_force_stop(core_force_stop),
+    .boot_pc(boot_pc[SCALAR_PC_WIDTH-1:0]),
+`endif
     .biu_pad_araddr(bringup_araddr),.biu_pad_arburst(bringup_arburst),
     .biu_pad_arcache(bringup_arcache),.biu_pad_arid(bringup_arid),
     .biu_pad_arlen(bringup_arlen),.biu_pad_arlock(bringup_arlock),
