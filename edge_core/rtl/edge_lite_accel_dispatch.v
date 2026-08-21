@@ -2,7 +2,7 @@ module edge_lite_accel_dispatch (
   input wire clk,input wire reset_n,
   input wire [39:0] mem_region_base,input wire [39:0] mem_region_mask,
   input wire mem_region_enable,input wire req_valid,output wire req_ready,
-  input wire [63:0] req_inst,input wire [63:0] req_capture_value,
+  input wire [31:0] req_inst,input wire [63:0] req_capture_value,
   output wire resp_valid,output wire resp_error,output wire [63:0] resp_value,
   input wire dma_start_ready,input wire dma_start_circular_ready,
   input wire dma_sync_done,
@@ -55,18 +55,20 @@ module edge_lite_accel_dispatch (
 );
   wire cmd_valid,cmd_ready,cmd_capture_valid,decode_illegal,result_valid;
   wire [63:0] cmd_inst,cmd_capture_value,result_value;
+  wire [63:0] req_inst64 = {32'b0, req_inst};
   edge_lite_accel_owner owner(
     .clk(clk),.reset_n(reset_n),.req_valid(req_valid),.req_ready(req_ready),
-    .req_inst(req_inst),.req_capture_value(req_capture_value),.cmd_valid(cmd_valid),
+    .req_inst(req_inst64),.req_capture_value(req_capture_value),.cmd_valid(cmd_valid),
     .cmd_ready(cmd_ready),.cmd_inst(cmd_inst),.cmd_capture_valid(cmd_capture_valid),
     .cmd_capture_value(cmd_capture_value),.cmd_decode_illegal(decode_illegal),
     .cmd_result_valid(result_valid),.cmd_result_value(result_value),
     .resp_valid(resp_valid),.resp_error(resp_error),.resp_value(resp_value));
   /* verilator lint_off PINMISSING */
-  edge_accel_pipe pipe(
+  edge_accel_pipe #(.COMPACT_CMD_INPUT(1)) pipe(
     .forever_cpuclk(clk),.cpurst_b(reset_n),.mem_region_base(mem_region_base),
     .mem_region_mask(mem_region_mask),.mem_region_enable(mem_region_enable),
-    .cmd_valid(cmd_valid),.cmd_opcode8(8'b0),.cmd_imm8(8'b0),.cmd_inst64(cmd_inst),
+    .cmd_valid(cmd_valid),.cmd_opcode8({1'b1,cmd_inst[31:25]}),
+    .cmd_imm8({cmd_inst[24:20],cmd_inst[14:12]}),.cmd_inst64(64'b0),
     .cmd_seq_id(8'b0),.cmd_epoch(4'b0),.cmd_capture_valid(cmd_capture_valid),
     .cmd_capture_value(cmd_capture_value),.dma_start_ready(dma_start_ready),
     .dma_start_circular_ready(dma_start_circular_ready),.dma_sync_done(dma_sync_done),

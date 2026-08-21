@@ -50,7 +50,8 @@ module edge_core_lite_top #(
   wire dtcm_wlast,dtcm_wvalid; wire [(DATA_WIDTH/8)-1:0] dtcm_wstrb;
   wire accel_req_valid,accel_req_ready,platform_req_ready,accel_resp_valid,accel_resp_error;
   wire asic_ready;
-  wire [63:0] accel_req_inst,accel_req_src0,accel_req_src1,accel_resp_value;
+  wire [31:0] accel_req_inst;
+  wire [63:0] accel_req_src0,accel_req_src1,accel_resp_value;
   wire dtcm_lsu_req,dtcm_lsu_ready,dtcm_lsu_we,dtcm_lsu_rvalid;
   wire [DTCM_ADDR_WIDTH-1:0] dtcm_lsu_addr;
   wire [63:0] dtcm_lsu_wdata,dtcm_lsu_rdata;
@@ -118,8 +119,7 @@ module edge_core_lite_top #(
     .actu_busy(actu_busy),.cmpu_busy(cmpu_busy),.dma_busy(accel_dma_busy),
     .asic_ready_o(asic_ready));
 
-  wire accel_req_is_power=accel_req_inst[39]&&
-      accel_req_inst[38:32]==7'h09;
+  wire accel_req_is_power=accel_req_inst[31:25]==7'h09;
   assign accel_req_ready=platform_req_ready&&(asic_ready||accel_req_is_power);
 
   edge_core_dma_axi_mux #(.ADDR_WIDTH(ADDR_WIDTH),.DATA_WIDTH(DATA_WIDTH),
