@@ -7,10 +7,10 @@ edge_core/edge_core_lite_top.v
 ../edge-32/rtl/edge_32_branch.v
 ../edge-32/rtl/edge_32_frontend.v
 ../edge-32/rtl/edge_32_instruction_assembler.v
-../edge-32/rtl/edge_rv_lite_pipeline.v
+../edge-32/rtl/edge_32_pipeline.v
 ../edge-32/rtl/edge_32_lsu.v
 ../edge-32/rtl/edge_32_fp_mem_format.v
-../edge-32/rtl/edge_rv_lite_core.v
+../edge-32/rtl/edge_32_core.v
 ../edge-32/rtl/edge_32_icache_adapter.v
 ../edge-32/rtl/edge_32_dcache_adapter.v
 ../edge-32/rtl/edge_32_dtcm_router.v
