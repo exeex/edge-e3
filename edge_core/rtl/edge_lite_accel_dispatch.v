@@ -56,7 +56,7 @@ module edge_lite_accel_dispatch (
   wire cmd_valid,cmd_ready,cmd_capture_valid,decode_illegal,result_valid;
   wire [63:0] cmd_inst,cmd_capture_value,result_value;
   wire [63:0] req_inst64 = {32'b0, req_inst};
-  edge_lite_accel_owner owner(
+  edge_asic_accel_owner owner(
     .clk(clk),.reset_n(reset_n),.req_valid(req_valid),.req_ready(req_ready),
     .req_inst(req_inst64),.req_capture_value(req_capture_value),.cmd_valid(cmd_valid),
     .cmd_ready(cmd_ready),.cmd_inst(cmd_inst),.cmd_capture_valid(cmd_capture_valid),
