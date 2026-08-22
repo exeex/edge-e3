@@ -29,6 +29,7 @@ module edge_lite_accel_platform #(
   output wire dma_axi_wlast,input wire dma_axi_wready,
   output wire [(AXI_DATA_WIDTH/8)-1:0] dma_axi_wstrb,output wire dma_axi_wvalid,
   output wire tensor_busy,output wire actu_busy,output wire cmpu_busy,output wire dma_busy,
+  output wire asic_power_enable_o,input wire asic_power_ready_i,
   output wire asic_ready_o
 );
   localparam [6:0] ASIC_POWER=7'h09;
@@ -37,33 +38,21 @@ module edge_lite_accel_platform #(
   wire req_power_on=req_inst[12];
   wire dispatch_req_ready,dispatch_resp_valid,dispatch_resp_error;
   wire [63:0] dispatch_resp_value;
-  reg asic_ready_q,power_resp_q,power_off_pending_q;
+  wire power_cmd_ready,power_resp,asic_ready;
   wire all_accel_idle=!tensor_busy&&!actu_busy&&!cmpu_busy&&!dma_busy;
-  assign asic_ready_o=asic_ready_q;
-  assign req_ready=req_is_power?!power_off_pending_q:
-                   (asic_ready_q&&dispatch_req_ready);
-  assign resp_valid=power_resp_q||dispatch_resp_valid;
-  assign resp_error=power_resp_q?1'b0:dispatch_resp_error;
-  assign resp_value=power_resp_q?64'b0:dispatch_resp_value;
+  assign asic_ready_o=asic_ready;
+  assign req_ready=req_is_power?power_cmd_ready:
+                   (asic_ready&&dispatch_req_ready);
+  assign resp_valid=power_resp||dispatch_resp_valid;
+  assign resp_error=power_resp?1'b0:dispatch_resp_error;
+  assign resp_value=power_resp?64'b0:dispatch_resp_value;
 
-  always @(posedge forever_cpuclk or negedge cpurst_b) begin
-    if(!cpurst_b) begin
-      asic_ready_q<=1'b0; power_resp_q<=1'b0; power_off_pending_q<=1'b0;
-    end else begin
-      power_resp_q<=1'b0;
-      if(req_valid&&req_ready&&req_is_power) begin
-        if(req_power_on) begin
-          asic_ready_q<=1'b1; power_resp_q<=1'b1;
-        end else if(!asic_ready_q) power_resp_q<=1'b1;
-        else if(all_accel_idle) begin
-          asic_ready_q<=1'b0; power_resp_q<=1'b1;
-        end else power_off_pending_q<=1'b1;
-      end
-      if(power_off_pending_q&&all_accel_idle) begin
-        asic_ready_q<=1'b0; power_off_pending_q<=1'b0; power_resp_q<=1'b1;
-      end
-    end
-  end
+  edge_asic_power_ctrl power_ctrl(
+    .clk(forever_cpuclk),.reset_n(cpurst_b),
+    .cmd_valid(req_valid&&req_is_power),.cmd_ready(power_cmd_ready),
+    .cmd_power_on(req_power_on),.all_accel_idle(all_accel_idle),
+    .cmd_resp_valid(power_resp),.asic_power_enable(asic_power_enable_o),
+    .asic_power_ready(asic_power_ready_i),.asic_ready(asic_ready));
   wire [3:0] tensor_cmd_setcsr_dtype,tensor_cmd_setcsr_wtype;
   wire tensor_cmd_setcsr_req,tensor_cmd_setin_req,tensor_cmd_setn_req;
   wire tensor_cmd_setout_req,tensor_cmd_setpsum_req,tensor_cmd_start_req;
@@ -137,7 +126,7 @@ module edge_lite_accel_platform #(
   edge_lite_accel_dispatch dispatch(
     .clk(forever_cpuclk),.reset_n(cpurst_b),.mem_region_base(mem_region_base),
     .mem_region_mask(mem_region_mask),.mem_region_enable(mem_region_enable),
-    .req_valid(req_valid&&!req_is_power&&asic_ready_q),
+    .req_valid(req_valid&&!req_is_power&&asic_ready),
     .req_ready(dispatch_req_ready),.req_inst(req_inst),
     .req_capture_value(req_capture_value),.resp_valid(dispatch_resp_valid),
     .resp_error(dispatch_resp_error),.resp_value(dispatch_resp_value),.dma_start_ready(dma_start_ready),
@@ -277,6 +266,7 @@ module edge_lite_accel_platform #(
     .dma_stream_cmd_valid(dma_stream_cmd_valid),
     .dma_stream_cmd_axi_addr(dma_stream_cmd_axi_addr),
     .dma_stream_cmd_dtcm_addr(
-      dma_stream_cmd_dtcm_addr[DTCM_ADDR_WIDTH-1:0]),.*);
+      dma_stream_cmd_dtcm_addr[DTCM_ADDR_WIDTH-1:0]),
+    .scalar_lsu_req(scalar_lsu_req&&asic_ready),.*);
   /* verilator lint_on PINMISSING */
 endmodule

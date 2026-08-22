@@ -28,6 +28,7 @@ module edge_core_edge32_top #(
   input wire dma_wready,output wire [(DATA_WIDTH/8)-1:0] dma_wstrb,output wire dma_wvalid,
   output wire halted,output wire illegal,output wire [63:0] debug_x31,
   output wire [63:0] cycle_count,output wire [63:0] instret_count,
+  output wire asic_power_enable,input wire asic_power_ready,output wire asic_ready,
   output wire tensor_busy,output wire actu_busy,output wire cmpu_busy,output wire accel_dma_busy
 );
   wire bringup_arready,bringup_rready,bringup_awready,bringup_bready,bringup_wready;
@@ -51,7 +52,6 @@ module edge_core_edge32_top #(
   wire [DATA_WIDTH-1:0] dtcm_rdata,dtcm_wdata; wire dtcm_awvalid,dtcm_bvalid;
   wire dtcm_wlast,dtcm_wvalid; wire [(DATA_WIDTH/8)-1:0] dtcm_wstrb;
   wire accel_req_valid,accel_req_ready,platform_req_ready,accel_resp_valid,accel_resp_error;
-  wire asic_ready;
   wire [31:0] accel_req_inst;
   wire [31:0] scalar_accel_req_inst;
   localparam SCALAR_PC_WIDTH=32;
@@ -126,10 +126,10 @@ module edge_core_edge32_top #(
     .dma_axi_wdata(dtcm_wdata),.dma_axi_wlast(dtcm_wlast),.dma_axi_wready(dtcm_wready),
     .dma_axi_wstrb(dtcm_wstrb),.dma_axi_wvalid(dtcm_wvalid),.tensor_busy(tensor_busy),
     .actu_busy(actu_busy),.cmpu_busy(cmpu_busy),.dma_busy(accel_dma_busy),
+    .asic_power_enable_o(asic_power_enable),.asic_power_ready_i(asic_power_ready),
     .asic_ready_o(asic_ready));
 
-  wire accel_req_is_power=accel_req_inst[31:25]==7'h09;
-  assign accel_req_ready=platform_req_ready&&(asic_ready||accel_req_is_power);
+  assign accel_req_ready=platform_req_ready;
 
   edge_core_dma_axi_mux #(.ADDR_WIDTH(ADDR_WIDTH),.DATA_WIDTH(DATA_WIDTH),
     .ID_WIDTH(ID_WIDTH),.LEN_WIDTH(LEN_WIDTH)) axi_mux(
