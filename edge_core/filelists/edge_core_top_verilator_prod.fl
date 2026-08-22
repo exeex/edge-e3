@@ -42,7 +42,7 @@ edge_core/rtl/edge_core_debug.v
 ../edge-rv/edge_predecoder/rtl/edge_predecode_issue_window.v
 ../edge-rv/edge_predecoder/rtl/edge_predecode_token_packer.v
 edge_accel_cmd_queue/edge_accel_cmd_queue.v
-../edge-rv/edge_accel_pipe/edge_accel_pipe.v
+../edge-32/rtl/edge_accel_pipe.v
 edge_tensor_unit/edge_tensor_unit.v
 edge_tensor_unit/rtl/edge_tensor_skew_buffer.v
 edge_tensor_unit/rtl/edge_tensor_input_window.v
