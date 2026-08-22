@@ -1,4 +1,8 @@
+`ifdef EDGE_SCALAR_CORE_EDGE32
+module edge_core_edge32_top #(
+`else
 module edge_core_lite_top #(
+`endif
   parameter ADDR_WIDTH=40,parameter DATA_WIDTH=128,
   parameter ID_WIDTH=8,parameter LEN_WIDTH=8,
   parameter ICACHE_BYTES=16384,parameter DCACHE_BYTES=16384,
