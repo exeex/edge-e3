@@ -1,0 +1,2 @@
+${ROOT_DIR}/src/edge-e3/edge_tensor_unit/rtl/compute/edge_dot8_kernel.v
+${ROOT_DIR}/src/edge-e3/edge_tensor_unit/rtl/compute/edge_dot8_unit.v
