@@ -5,8 +5,8 @@ edge_core/edge_core_lite_top.v
 ../edge-32/rtl/edge_32_alu.v
 ../edge-32/rtl/edge_32_muldiv.v
 ../edge-32/rtl/edge_32_branch.v
-../edge-32/rtl/edge_rv_lite_frontend.v
-../edge-32/rtl/edge_rv_lite_instruction_assembler.v
+../edge-32/rtl/edge_32_frontend.v
+../edge-32/rtl/edge_32_instruction_assembler.v
 ../edge-32/rtl/edge_rv_lite_pipeline.v
 ../edge-32/rtl/edge_32_lsu.v
 ../edge-32/rtl/edge_rv_lite_fp_mem_format.v
