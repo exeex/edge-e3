@@ -85,9 +85,37 @@ endgenerate
 assign global_max_exp_o = max_root[10] ? $signed(max_root[9:0]) : 10'sd0;
 endmodule
 
-// Local multiplier leaf.  Exponent arithmetic is intentionally absent; the
+// Canonical unsigned significand multiplier leaf shared by E3 dot8 and E4
+// dot16.  The FPGA variant changes only synthesis mapping; its Verilog
+// arithmetic and combinational timing boundary stay identical.
+module edge_bf16_sig_mul #(
+  parameter FPGA_DSP_MUL = 0
+)(
+  input  [7:0]  activation_sig_i,
+  input  [7:0]  weight_sig_i,
+  output [15:0] product_o
+);
+localparam USE_FPGA_DSP_MUL = FPGA_DSP_MUL
+`ifdef EDGE_FPGA_DSP_MUL
+  || 1
+`endif
+  ;
+generate
+  if (USE_FPGA_DSP_MUL) begin : gen_fpga_dsp_mul
+    (* use_dsp = "yes" *) wire [15:0] dsp_product =
+      activation_sig_i * weight_sig_i;
+    assign product_o = dsp_product;
+  end else begin : gen_logic_mul
+    assign product_o = activation_sig_i * weight_sig_i;
+  end
+endgenerate
+endmodule
+
+// Local multiplier lane.  Exponent arithmetic is intentionally absent; the
 // lane consumes only significands/signs and later receives a shift distance.
-module edge_dot_mul_lane(
+module edge_dot_mul_lane #(
+  parameter FPGA_DSP_MUL = 0
+)(
   input  [15:0] activation_i,
   input  [7:0]  int8_weight_i,
   input  [15:0] bf16_weight_i,
@@ -103,7 +131,11 @@ wire [7:0] weight_sig = (bf16_weight_i[14:7] == 0)
   ? {1'b0, bf16_weight_i[6:0]} : {1'b1, bf16_weight_i[6:0]};
 wire [7:0] selected_weight_sig = weight_bf16_mode_i
                                ? weight_sig : int8_magnitude;
-assign product_o = activation_sig * selected_weight_sig;
+edge_bf16_sig_mul #(.FPGA_DSP_MUL(FPGA_DSP_MUL)) x_sig_mul (
+  .activation_sig_i(activation_sig),
+  .weight_sig_i(selected_weight_sig),
+  .product_o(product_o)
+);
 assign sign_o = activation_i[15]
               ^ (weight_bf16_mode_i ? bf16_weight_i[15]
                                      : int8_weight_i[7]);
@@ -213,6 +245,7 @@ endmodule
 module edge_dot8_kernel #(
   parameter PARTIAL_ONLY = 0,
   parameter FPGA_DSP_ADD = 0,
+  parameter FPGA_DSP_MUL = 0,
   parameter LANES = 8,
   parameter SUM_WIDTH = (LANES == 16) ? 25 : 24,
   parameter ALIGN_GUARD_BITS = 0,
@@ -373,7 +406,7 @@ generate
       assign product_comb[lane_idx] = s0_external_product[lane_idx];
       assign sign_comb[lane_idx] = s0_external_product_sign[lane_idx];
     end else begin : gen_internal_product
-      edge_dot_mul_lane x_mul_lane (
+      edge_dot_mul_lane #(.FPGA_DSP_MUL(FPGA_DSP_MUL)) x_mul_lane (
         .activation_i(s0_bf16[lane_idx]),
         .int8_weight_i(s0_int8[lane_idx]),
         .bf16_weight_i(s0_weight_bf16[lane_idx]),
