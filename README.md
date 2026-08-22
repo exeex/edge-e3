@@ -1,7 +1,7 @@
 # edge-e3
 
 edge-e3 is the product-specific RTL package for the e3 configuration and is
-composed with the reusable sibling `../edge-rv` package. The suffix `3`
+composed with the Edge-32 scalar package and edge-asic leaves. The suffix `3`
 means `2^3 = 8`: this configuration contains an 8x8 tensor unit, one
 activation unit (ACTU), and one compare unit (CMPU).
 
@@ -27,26 +27,23 @@ throughput assumes three ACTU passes.
 
 ## Integration
 
-The production top module is `edge_core_top` in
-`edge_core/edge_core_top.v`. The debug wrapper is
-`edge_core/rtl/edge_core_debug.v`.
+The maintained production top module is `edge_core_edge32_top` in
+`edge_core/edge_core_scalar_product_top.v`.
 
 Run Verilator or another filelist-compatible RTL tool from the repository root:
 
 ```sh
-verilator --lint-only -Wno-fatal --top-module edge_core_top \
-  -f edge_core/filelists/edge_core_top_verilator_prod.fl
+verilator --lint-only -Wno-fatal --top-module edge_core_edge32_top \
+  -f edge_core/filelists/edge_core_edge32_top_verilator.fl
 ```
 
-Use `edge_core_top_verilator_debug.fl` instead when the debug wrapper is
-required. Paths in both filelists are relative to this package root, so shared
-CPU entries use `../edge-rv/...`. The package has no generated-source,
-test-harness, or third-party source dependency.
+The Edge-32 product filelist includes
+`edge_core_edge32_platform_verilator.fl`, which contains only the E3 platform
+and Edge-32-owned FPU/cache leaves. It has no `edge-rv` source dependency.
 
-E3 owns the composed core top, DTCM/DMA, tensor/ACTU/CMPU, accelerator I/O and
-command queues, retire synchronization, the DMA-aware BIU, and product memory
-adapters. Standard RV64 datapath/cache/FPU RTL plus the ASIC bring-up
-predecoder, accelerator pipe, and scalar snapshot live in `../edge-rv`.
+E3 owns the composed product top, DTCM/DMA, tensor/ACTU/CMPU, accelerator I/O,
+and product memory adapters. Edge-32 owns its scalar, FPU, cache, BIU, and ASIC
+instruction pipe.
 
 Unit tests and internal implementation contracts are maintained separately
 and are not included in this public package.

@@ -1,4 +1,4 @@
--f edge_core/filelists/edge_core_top_verilator_prod.fl
+-f edge_core/filelists/edge_core_edge32_platform_verilator.fl
 edge_core/edge_core_scalar_product_top.v
 ../edge-32/rtl/edge_32_decode.v
 ../edge-32/rtl/edge_32_alu.v
