@@ -14,6 +14,6 @@ edge_core/edge_core_lite_top.v
 ../edge-32/rtl/edge_32_icache_adapter.v
 ../edge-32/rtl/edge_32_dcache_adapter.v
 ../edge-32/rtl/edge_32_dtcm_router.v
-../edge-32/rtl/edge_rv_lite_cached_core.v
-../edge-32/rtl/edge_rv_lite_cache_biu.v
-../edge-32/rtl/edge_rv_lite_axi_core.v
+../edge-32/rtl/edge_32_cached_core.v
+../edge-32/rtl/edge_32_cache_biu.v
+../edge-32/rtl/edge_32_axi_core.v
