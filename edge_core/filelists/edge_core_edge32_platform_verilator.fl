@@ -91,6 +91,6 @@ edge_dtcm_subsys/rtl/edge_dtcm_other_bank16_adapter.v
 edge_dtcm_subsys/rtl/edge_actu_dtcm_bank16_adapter.v
 edge_dtcm_subsys/rtl/edge_dtcm_arb.v
 edge_dtcm_dma/edge_dtcm_dma.v
-edge_dtcm_dma/edge_dma_read_fifo.v
-edge_dtcm_dma/edge_dma_a2d_stream.v
+../edge-asic/rtl/dma/edge_dma_read_fifo.v
+../edge-asic/rtl/dma/edge_dma_a2d_stream.v
 edge_dtcm_subsys/rtl/edge_dtcm_subsys_core.v
