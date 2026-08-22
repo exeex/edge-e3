@@ -1,8 +1,4 @@
-`ifdef EDGE_SCALAR_CORE_EDGE32
 module edge_core_edge32_top #(
-`else
-module edge_core_lite_top #(
-`endif
   parameter ADDR_WIDTH=40,parameter DATA_WIDTH=128,
   parameter ID_WIDTH=8,parameter LEN_WIDTH=8,
   parameter ICACHE_BYTES=16384,parameter DCACHE_BYTES=16384,
@@ -57,33 +53,22 @@ module edge_core_lite_top #(
   wire accel_req_valid,accel_req_ready,platform_req_ready,accel_resp_valid,accel_resp_error;
   wire asic_ready;
   wire [31:0] accel_req_inst;
-`ifdef EDGE_SCALAR_CORE_EDGE32
   wire [31:0] scalar_accel_req_inst;
   localparam SCALAR_PC_WIDTH=32;
-`else
-  wire [63:0] scalar_accel_req_inst;
-  localparam SCALAR_PC_WIDTH=ADDR_WIDTH;
-`endif
   wire [63:0] accel_req_src0,accel_req_src1,accel_resp_value;
   wire dtcm_lsu_req,dtcm_lsu_ready,dtcm_lsu_we,dtcm_lsu_rvalid;
   wire [DTCM_ADDR_WIDTH-1:0] dtcm_lsu_addr;
   wire [63:0] dtcm_lsu_wdata,dtcm_lsu_rdata;
   wire [7:0] dtcm_lsu_wstrb;
 
-`ifdef EDGE_SCALAR_CORE_EDGE32
   edge32_axi_core #(.PC_WIDTH(SCALAR_PC_WIDTH),.AXI_ADDR_WIDTH(ADDR_WIDTH),
     .AXI_DATA_WIDTH(DATA_WIDTH),
-`else
-  edge_rv_lite_axi_core #(.PC_WIDTH(SCALAR_PC_WIDTH),.AXI_DATA_WIDTH(DATA_WIDTH),
-`endif
     .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH),.ICACHE_BYTES(ICACHE_BYTES),
     .DCACHE_BYTES(DCACHE_BYTES),.DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),
     .ENABLE_DTCM_PORT(1),.EDGE_ASIC_ID(EDGE_ASIC_ID)) core(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),
-`ifdef EDGE_SCALAR_CORE_EDGE32
     .core_start(core_start),.core_force_stop(core_force_stop),
     .boot_pc(boot_pc[SCALAR_PC_WIDTH-1:0]),
-`endif
     .biu_pad_araddr(bringup_araddr),.biu_pad_arburst(bringup_arburst),
     .biu_pad_arcache(bringup_arcache),.biu_pad_arid(bringup_arid),
     .biu_pad_arlen(bringup_arlen),.biu_pad_arlock(bringup_arlock),
@@ -114,16 +99,7 @@ module edge_core_lite_top #(
     .halted(halted),.illegal(illegal),.debug_x31(debug_x31),
     .cycle_count(cycle_count),.instret_count(instret_count));
 
-`ifdef EDGE_SCALAR_CORE_EDGE32
   assign accel_req_inst=scalar_accel_req_inst;
-`else
-  // Normalize the RV64 two-parcel command at the product boundary. Both
-  // scalar choices therefore present the same fixed ASIC32 packet downstream.
-  assign accel_req_inst={scalar_accel_req_inst[38:32],
-                         scalar_accel_req_inst[63:59],
-                         scalar_accel_req_inst[11:7],
-                         scalar_accel_req_inst[58:56],5'b0,7'h3f};
-`endif
 
   edge_lite_accel_platform #(.AXI_ADDR_WIDTH(ADDR_WIDTH),.AXI_DATA_WIDTH(DATA_WIDTH),
     .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH),
