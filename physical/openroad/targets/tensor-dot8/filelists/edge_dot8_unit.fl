@@ -1,3 +1,3 @@
 ${ROOT_DIR}/src/edge-asic/rtl/tensor/edge_bf16_sig_mul.v
-${ROOT_DIR}/src/edge-e3/edge_tensor_unit/rtl/compute/edge_dot8_kernel.v
+${ROOT_DIR}/src/edge-asic/rtl/tensor/edge_dot8_kernel.v
 ${ROOT_DIR}/src/edge-e3/edge_tensor_unit/rtl/compute/edge_dot8_unit.v
