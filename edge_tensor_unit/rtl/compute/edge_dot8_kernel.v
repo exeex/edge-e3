@@ -85,32 +85,6 @@ endgenerate
 assign global_max_exp_o = max_root[10] ? $signed(max_root[9:0]) : 10'sd0;
 endmodule
 
-// Canonical unsigned significand multiplier leaf shared by E3 dot8 and E4
-// dot16.  The FPGA variant changes only synthesis mapping; its Verilog
-// arithmetic and combinational timing boundary stay identical.
-module edge_bf16_sig_mul #(
-  parameter FPGA_DSP_MUL = 0
-)(
-  input  [7:0]  activation_sig_i,
-  input  [7:0]  weight_sig_i,
-  output [15:0] product_o
-);
-localparam USE_FPGA_DSP_MUL = FPGA_DSP_MUL
-`ifdef EDGE_FPGA_DSP_MUL
-  || 1
-`endif
-  ;
-generate
-  if (USE_FPGA_DSP_MUL) begin : gen_fpga_dsp_mul
-    (* use_dsp = "yes" *) wire [15:0] dsp_product =
-      activation_sig_i * weight_sig_i;
-    assign product_o = dsp_product;
-  end else begin : gen_logic_mul
-    assign product_o = activation_sig_i * weight_sig_i;
-  end
-endgenerate
-endmodule
-
 // Local multiplier lane.  Exponent arithmetic is intentionally absent; the
 // lane consumes only significands/signs and later receives a shift distance.
 module edge_dot_mul_lane #(
