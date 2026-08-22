@@ -1,12 +1,212 @@
+// First half of the central exponent-domain pipeline.  Product-exponent
+// addition is registered before the balanced max tree so dot16 does not put
+// an exponent add and four comparator levels in the same 1 GHz cycle.
+module edge_dot_product_exp #(
+  parameter LANES = 8
+)(
+  input  [LANES*8-1:0] activation_exp_i,
+  input  [LANES*8-1:0] weight_exp_i,
+  input  [LANES-1:0]   activation_nonzero_i,
+  input  [LANES-1:0]   weight_nonzero_i,
+  input                  weight_bf16_mode_i,
+  output [LANES*10-1:0] product_exp_o,
+  output [LANES-1:0] product_valid_o
+);
+genvar exp_lane;
+generate
+  for (exp_lane = 0; exp_lane < LANES; exp_lane = exp_lane + 1) begin
+    : EXP_LANE
+    wire [7:0] activation_exp = activation_exp_i[exp_lane*8 +: 8];
+    wire [7:0] weight_exp = weight_exp_i[exp_lane*8 +: 8];
+    wire signed [9:0] product_exp = weight_bf16_mode_i
+      ? ($signed({2'b0,(activation_exp==0)?8'd1:activation_exp})
+         + $signed({2'b0,(weight_exp==0)?8'd1:weight_exp}) - 10'sd134)
+      : $signed({2'b0,activation_exp});
+    assign product_exp_o[exp_lane*10 +: 10] = product_exp;
+    assign product_valid_o[exp_lane]
+      = activation_nonzero_i[exp_lane] && weight_nonzero_i[exp_lane];
+  end
+endgenerate
+endmodule
+
+// Second half of the central exponent-domain pipeline: a balanced max tree
+// over already-registered per-lane product exponents.
+module edge_dot_exp_max #(
+  parameter LANES = 8
+)(
+  input  [LANES*10-1:0] product_exp_i,
+  input  [LANES-1:0]    product_valid_i,
+  output signed [9:0]   global_max_exp_o
+);
+wire [10:0] candidate [0:LANES-1];
+wire [10:0] max_l1 [0:7];
+wire [10:0] max_l2 [0:3];
+wire [10:0] max_l3 [0:1];
+wire [10:0] max_root;
+
+function [10:0] max_candidate;
+  input [10:0] a;
+  input [10:0] b;
+  begin
+    if (!a[10]) max_candidate = b;
+    else if (!b[10]) max_candidate = a;
+    else if ($signed(a[9:0]) >= $signed(b[9:0])) max_candidate = a;
+    else max_candidate = b;
+  end
+endfunction
+
+genvar max_lane;
+generate
+  for (max_lane = 0; max_lane < LANES; max_lane = max_lane + 1) begin
+    : MAX_CANDIDATE
+    assign candidate[max_lane]
+      = {product_valid_i[max_lane],
+         product_exp_i[max_lane*10 +: 10]};
+  end
+  if (LANES == 16) begin : MAX16
+    for (max_lane = 0; max_lane < 8; max_lane = max_lane + 1)
+      assign max_l1[max_lane]
+        = max_candidate(candidate[max_lane*2],candidate[max_lane*2+1]);
+    for (max_lane = 0; max_lane < 4; max_lane = max_lane + 1)
+      assign max_l2[max_lane]
+        = max_candidate(max_l1[max_lane*2],max_l1[max_lane*2+1]);
+    assign max_l3[0] = max_candidate(max_l2[0],max_l2[1]);
+    assign max_l3[1] = max_candidate(max_l2[2],max_l2[3]);
+    assign max_root = max_candidate(max_l3[0],max_l3[1]);
+  end else begin : MAX8
+    for (max_lane = 0; max_lane < 4; max_lane = max_lane + 1)
+      assign max_l1[max_lane]
+        = max_candidate(candidate[max_lane*2],candidate[max_lane*2+1]);
+    assign max_l2[0] = max_candidate(max_l1[0],max_l1[1]);
+    assign max_l2[1] = max_candidate(max_l1[2],max_l1[3]);
+    assign max_root = max_candidate(max_l2[0],max_l2[1]);
+  end
+endgenerate
+assign global_max_exp_o = max_root[10] ? $signed(max_root[9:0]) : 10'sd0;
+endmodule
+
+// Local multiplier leaf.  Exponent arithmetic is intentionally absent; the
+// lane consumes only significands/signs and later receives a shift distance.
+module edge_dot_mul_lane(
+  input  [15:0] activation_i,
+  input  [7:0]  int8_weight_i,
+  input  [15:0] bf16_weight_i,
+  input         weight_bf16_mode_i,
+  output [15:0] product_o,
+  output        sign_o
+);
+wire [7:0] activation_sig = (activation_i[14:7] == 0)
+  ? {1'b0, activation_i[6:0]} : {1'b1, activation_i[6:0]};
+wire [7:0] int8_magnitude = int8_weight_i[7]
+  ? (~int8_weight_i + 8'b1) : int8_weight_i;
+wire [7:0] weight_sig = (bf16_weight_i[14:7] == 0)
+  ? {1'b0, bf16_weight_i[6:0]} : {1'b1, bf16_weight_i[6:0]};
+wire [7:0] selected_weight_sig = weight_bf16_mode_i
+                               ? weight_sig : int8_magnitude;
+assign product_o = activation_sig * selected_weight_sig;
+assign sign_o = activation_i[15]
+              ^ (weight_bf16_mode_i ? bf16_weight_i[15]
+                                     : int8_weight_i[7]);
+endmodule
+
+// First half of the local alignment shifter.  The central exp-max cluster has
+// already converted both exponents into shift_amount_i.
+module edge_dot_align_lane_coarse #(
+  parameter ALIGN_GUARD_BITS = 0
+)(
+  input  [15:0] product_i,
+  input  signed [10:0] shift_amount_i,
+  output reg [17:0] coarse_o,
+  output reg [2:0]  fine_o,
+  output reg        coarse_guard_o,
+  output reg        coarse_sticky_o,
+  output reg        force_zero_o
+);
+reg [17:0] expanded_product;
+always @* begin
+  expanded_product = {2'b0, product_i} << ALIGN_GUARD_BITS;
+  fine_o = shift_amount_i[2:0];
+  force_zero_o = (shift_amount_i >= (17 + ALIGN_GUARD_BITS));
+  case (shift_amount_i[4:3])
+    2'd0: begin
+      coarse_o = expanded_product;
+      coarse_guard_o = 1'b0;
+      coarse_sticky_o = 1'b0;
+    end
+    2'd1: begin
+      coarse_o = expanded_product >> 8;
+      coarse_guard_o = expanded_product[7];
+      coarse_sticky_o = |expanded_product[6:0];
+    end
+    2'd2: begin
+      coarse_o = expanded_product >> 16;
+      coarse_guard_o = expanded_product[15];
+      coarse_sticky_o = |expanded_product[14:0];
+    end
+    default: begin
+      coarse_o = 18'b0;
+      coarse_guard_o = 1'b0;
+      coarse_sticky_o = |expanded_product;
+    end
+  endcase
+end
+endmodule
+
+// Second half of the distributed alignment corridor.  This leaf consumes the
+// registered coarse result while it moves toward the signed adder tree.
+module edge_dot_align_lane_fine(
+  input  [17:0] coarse_i,
+  input  [2:0]  fine_i,
+  input         coarse_guard_i,
+  input         coarse_sticky_i,
+  input         force_zero_i,
+  input         sign_i,
+  output signed [20:0] aligned_o
+);
+reg [17:0] quotient;
+reg guard_bit;
+reg sticky_bit;
+reg [17:0] rounded;
+reg signed [20:0] signed_aligned;
+always @* begin
+  quotient = coarse_i;
+  guard_bit = coarse_guard_i;
+  sticky_bit = coarse_sticky_i;
+  case (fine_i)
+    3'd0: quotient = coarse_i;
+    3'd1: begin quotient=coarse_i>>1; guard_bit=coarse_i[0];
+      sticky_bit=coarse_guard_i|coarse_sticky_i; end
+    3'd2: begin quotient=coarse_i>>2; guard_bit=coarse_i[1];
+      sticky_bit=coarse_i[0]|coarse_guard_i|coarse_sticky_i; end
+    3'd3: begin quotient=coarse_i>>3; guard_bit=coarse_i[2];
+      sticky_bit=(|coarse_i[1:0])|coarse_guard_i|coarse_sticky_i; end
+    3'd4: begin quotient=coarse_i>>4; guard_bit=coarse_i[3];
+      sticky_bit=(|coarse_i[2:0])|coarse_guard_i|coarse_sticky_i; end
+    3'd5: begin quotient=coarse_i>>5; guard_bit=coarse_i[4];
+      sticky_bit=(|coarse_i[3:0])|coarse_guard_i|coarse_sticky_i; end
+    3'd6: begin quotient=coarse_i>>6; guard_bit=coarse_i[5];
+      sticky_bit=(|coarse_i[4:0])|coarse_guard_i|coarse_sticky_i; end
+    default: begin quotient=coarse_i>>7; guard_bit=coarse_i[6];
+      sticky_bit=(|coarse_i[5:0])|coarse_guard_i|coarse_sticky_i; end
+  endcase
+  rounded = force_zero_i ? 18'b0
+    : quotient + (guard_bit && (sticky_bit || quotient[0]));
+  signed_aligned = $signed({3'b0, rounded});
+  if (sign_i) signed_aligned = -signed_aligned;
+end
+assign aligned_o = signed_aligned;
+endmodule
+
 // One reusable dual-mode BF16 x {INT8, BF16} dot8 row.
 //
 // Pipeline:
 //   s0: sanitize BF16 lanes
-//   s1: 8x unsigned magnitude multiplies and find max exponent
-//   s2: coarse product alignment by 0/8/16/24 bits
-//   s3: fine product alignment by 0..7 bits, RNE, and sign
-//   s4: signed adder tree
-//   s5: normalize the row sum; either round directly to BF16 or accumulate
+//   s1: unsigned magnitude multiplies and product-exponent adds
+//   s2: balanced global exponent max; delay mantissa products beside it
+//   s3: coarse product alignment by 0/8/16/24 bits
+//   s4: fine product alignment by 0..7 bits, RNE, and sign
+//   s5: signed adder tree
+//   s6: normalize the row sum; either round directly to BF16 or accumulate
 //       successive row sums in the private BF22 RSUM accumulator
 //   r6: emit one BF16 result when the RSUM sequence marks its last row
 
@@ -16,7 +216,9 @@ module edge_dot8_kernel #(
   parameter LANES = 8,
   parameter SUM_WIDTH = (LANES == 16) ? 25 : 24,
   parameter ALIGN_GUARD_BITS = 0,
-  parameter INPUTS_SANITIZED = 0
+  parameter INPUTS_SANITIZED = 0,
+  parameter EXTERNAL_WEIGHT_EXP = 0,
+  parameter EXTERNAL_PRODUCTS = 0
 )(
   clk,
   rst_b,
@@ -25,6 +227,9 @@ module edge_dot8_kernel #(
   int8_vec_i,
   weight_bf16_mode_i,
   bf16_weight_vec_i,
+  weight_exp_vec_i,
+  external_product_vec_i,
+  external_product_sign_i,
   rsum_enable_i,
   rsum_first_i,
   rsum_last_i,
@@ -43,6 +248,9 @@ input  [LANES*16-1:0] bf16_vec_i;
 input  [LANES*8-1:0]  int8_vec_i;
 input          weight_bf16_mode_i;
 input  [LANES*16-1:0] bf16_weight_vec_i;
+input  [LANES*8-1:0]  weight_exp_vec_i;
+input  [LANES*16-1:0] external_product_vec_i;
+input  [LANES-1:0]    external_product_sign_i;
 input          rsum_enable_i;
 input          rsum_first_i;
 input          rsum_last_i;
@@ -59,121 +267,207 @@ reg         s2_valid;
 reg         s3_valid;
 reg         s4_valid;
 reg         s5_valid;
+reg         s6_valid;
 reg [15:0]  s0_bf16 [0:LANES-1];
 reg [7:0]   s0_int8 [0:LANES-1];
 reg [15:0]  s0_weight_bf16 [0:LANES-1];
+reg [7:0]   s0_weight_exp_external [0:LANES-1];
+reg [15:0]  s0_external_product [0:LANES-1];
+reg         s0_external_product_sign [0:LANES-1];
 reg         s0_weight_bf16_mode;
 reg [15:0]  s1_prod [0:LANES-1];
 reg         s1_sign [0:LANES-1];
 reg signed [9:0] s1_exp [0:LANES-1];
-reg signed [9:0] s1_max_exp;
-reg [17:0]  s2_coarse [0:LANES-1];
-reg [2:0]   s2_fine [0:LANES-1];
-reg         s2_coarse_guard [0:LANES-1];
-reg         s2_coarse_sticky [0:LANES-1];
-reg         s2_force_zero [0:LANES-1];
+reg         s1_exp_valid [0:LANES-1];
+reg [15:0]  s2_prod [0:LANES-1];
 reg         s2_sign [0:LANES-1];
+reg signed [9:0] s2_exp [0:LANES-1];
 reg signed [9:0] s2_max_exp;
-reg signed [20:0] s3_lane [0:LANES-1];
+reg [17:0]  s3_coarse [0:LANES-1];
+reg [2:0]   s3_fine [0:LANES-1];
+reg         s3_coarse_guard [0:LANES-1];
+reg         s3_coarse_sticky [0:LANES-1];
+reg         s3_force_zero [0:LANES-1];
+reg         s3_sign [0:LANES-1];
 reg signed [9:0] s3_max_exp;
-reg signed [SUM_WIDTH-1:0] s4_sum;
+reg signed [20:0] s4_lane [0:LANES-1];
 reg signed [9:0] s4_max_exp;
-reg [15:0]  s5_bf16;
-reg [31:0]  s5_bf22_bits;
+reg signed [SUM_WIDTH-1:0] s5_sum;
+reg signed [9:0] s5_max_exp;
+reg [15:0]  s6_bf16;
+reg [31:0]  s6_bf22_bits;
 reg         s0_rsum_enable;
 reg         s1_rsum_enable;
 reg         s2_rsum_enable;
 reg         s3_rsum_enable;
 reg         s4_rsum_enable;
 reg         s5_rsum_enable;
+reg         s6_rsum_enable;
 reg         s0_rsum_first;
 reg         s1_rsum_first;
 reg         s2_rsum_first;
 reg         s3_rsum_first;
 reg         s4_rsum_first;
 reg         s5_rsum_first;
+reg         s6_rsum_first;
 reg         s0_rsum_last;
 reg         s1_rsum_last;
 reg         s2_rsum_last;
 reg         s3_rsum_last;
 reg         s4_rsum_last;
 reg         s5_rsum_last;
+reg         s6_rsum_last;
 reg [31:0]  rsum_accum_q;
 reg         rsum_output_valid_q;
 reg [31:0]  rsum_output_bf22_q;
 reg [15:0]  rsum_output_bf16_q;
 
 integer i;
-reg [15:0] max_lane;
-reg [7:0]  max_lane_exp;
-reg [15:0] max_weight_lane;
-reg [7:0]  max_weight_exp;
-reg signed [9:0] lane_exp_comb;
-reg signed [9:0] max_exp_comb;
-reg         max_exp_valid_comb;
-reg [7:0]  sig_comb;
-reg [7:0]  weight_sig_comb;
-reg [7:0]  wmag_comb;
-integer shift_amount_comb;
-reg [17:0] expanded_prod_comb;
+wire signed [9:0] max_exp_comb;
+wire [LANES*10-1:0] product_exp_comb;
+wire [LANES-1:0] product_exp_valid_comb;
+wire [LANES*10-1:0] s1_product_exp_vec;
+wire [LANES-1:0] s1_product_valid_vec;
+wire [LANES*8-1:0] activation_exp_comb;
+wire [LANES*8-1:0] weight_exp_comb;
+wire [LANES-1:0] activation_nonzero_comb;
+wire [LANES-1:0] weight_nonzero_comb;
+wire [15:0] product_comb [0:LANES-1];
+wire sign_comb [0:LANES-1];
+wire signed [10:0] shift_amount_comb [0:LANES-1];
+wire [17:0] coarse_comb [0:LANES-1];
+wire [2:0] fine_comb [0:LANES-1];
+wire coarse_guard_comb [0:LANES-1];
+wire coarse_sticky_comb [0:LANES-1];
+wire force_zero_comb [0:LANES-1];
+wire signed [20:0] aligned_comb [0:LANES-1];
 
 wire [31:0] rsum_base_bits;
 wire [31:0] rsum_next_bits;
 wire [31:0] rsum_next_bf16_bits;
-wire signed [SUM_WIDTH-1:0] s4_sum_next;
-wire signed [SUM_WIDTH-1:0] s3_lane_ext [0:LANES-1];
+wire signed [SUM_WIDTH-1:0] s5_sum_next;
+wire signed [SUM_WIDTH-1:0] s4_lane_ext [0:LANES-1];
 
 genvar lane_idx;
 generate
   for (lane_idx = 0; lane_idx < LANES; lane_idx = lane_idx + 1) begin : gen_lane_ext
-    assign s3_lane_ext[lane_idx] =
-      {{(SUM_WIDTH-21){s3_lane[lane_idx][20]}}, s3_lane[lane_idx]};
+    assign s4_lane_ext[lane_idx] =
+      {{(SUM_WIDTH-21){s4_lane[lane_idx][20]}}, s4_lane[lane_idx]};
+
+    assign s1_product_exp_vec[lane_idx*10 +: 10] = s1_exp[lane_idx];
+    assign s1_product_valid_vec[lane_idx] = s1_exp_valid[lane_idx];
+
+    assign activation_exp_comb[lane_idx*8 +: 8]
+      = s0_bf16[lane_idx][14:7];
+    assign weight_exp_comb[lane_idx*8 +: 8]
+      = EXTERNAL_WEIGHT_EXP ? s0_weight_exp_external[lane_idx]
+                            : s0_weight_bf16[lane_idx][14:7];
+    assign activation_nonzero_comb[lane_idx]
+      = (s0_bf16[lane_idx][14:0] != 15'b0);
+    assign weight_nonzero_comb[lane_idx]
+      = s0_weight_bf16_mode
+        ? (s0_weight_bf16[lane_idx][14:0] != 15'b0)
+        : (s0_int8[lane_idx] != 8'b0);
+
+    if (EXTERNAL_PRODUCTS) begin : gen_external_product
+      assign product_comb[lane_idx] = s0_external_product[lane_idx];
+      assign sign_comb[lane_idx] = s0_external_product_sign[lane_idx];
+    end else begin : gen_internal_product
+      edge_dot_mul_lane x_mul_lane (
+        .activation_i(s0_bf16[lane_idx]),
+        .int8_weight_i(s0_int8[lane_idx]),
+        .bf16_weight_i(s0_weight_bf16[lane_idx]),
+        .weight_bf16_mode_i(s0_weight_bf16_mode),
+        .product_o(product_comb[lane_idx]),
+        .sign_o(sign_comb[lane_idx])
+      );
+    end
+
+    assign shift_amount_comb[lane_idx]
+      = $signed(s2_max_exp) - $signed(s2_exp[lane_idx]);
+    edge_dot_align_lane_coarse #(
+      .ALIGN_GUARD_BITS(ALIGN_GUARD_BITS)
+    ) x_align_lane (
+      .product_i(s2_prod[lane_idx]),
+      .shift_amount_i(shift_amount_comb[lane_idx]),
+      .coarse_o(coarse_comb[lane_idx]),
+      .fine_o(fine_comb[lane_idx]),
+      .coarse_guard_o(coarse_guard_comb[lane_idx]),
+      .coarse_sticky_o(coarse_sticky_comb[lane_idx]),
+      .force_zero_o(force_zero_comb[lane_idx])
+    );
+
+    edge_dot_align_lane_fine x_align_lane_fine (
+      .coarse_i(s3_coarse[lane_idx]),
+      .fine_i(s3_fine[lane_idx]),
+      .coarse_guard_i(s3_coarse_guard[lane_idx]),
+      .coarse_sticky_i(s3_coarse_sticky[lane_idx]),
+      .force_zero_i(s3_force_zero[lane_idx]),
+      .sign_i(s3_sign[lane_idx]),
+      .aligned_o(aligned_comb[lane_idx])
+    );
   end
 endgenerate
+
+edge_dot_product_exp #(.LANES(LANES)) x_product_exp (
+  .activation_exp_i(activation_exp_comb),
+  .weight_exp_i(weight_exp_comb),
+  .activation_nonzero_i(activation_nonzero_comb),
+  .weight_nonzero_i(weight_nonzero_comb),
+  .weight_bf16_mode_i(s0_weight_bf16_mode),
+  .product_exp_o(product_exp_comb),
+  .product_valid_o(product_exp_valid_comb)
+);
+
+edge_dot_exp_max #(.LANES(LANES)) x_exp_max (
+  .product_exp_i(s1_product_exp_vec),
+  .product_valid_i(s1_product_valid_vec),
+  .global_max_exp_o(max_exp_comb)
+);
 
 generate
   if (FPGA_DSP_ADD) begin : gen_fpga_dsp_add
     (* use_dsp = "simd" *) wire signed [23:0] sum01 =
-      s3_lane_ext[0] + s3_lane_ext[1];
+      s4_lane_ext[0] + s4_lane_ext[1];
     (* use_dsp = "simd" *) wire signed [23:0] sum23 =
-      s3_lane_ext[2] + s3_lane_ext[3];
+      s4_lane_ext[2] + s4_lane_ext[3];
     (* use_dsp = "simd" *) wire signed [23:0] sum45 =
-      s3_lane_ext[4] + s3_lane_ext[5];
+      s4_lane_ext[4] + s4_lane_ext[5];
     (* use_dsp = "simd" *) wire signed [23:0] sum67 =
-      s3_lane_ext[6] + s3_lane_ext[7];
+      s4_lane_ext[6] + s4_lane_ext[7];
     (* use_dsp = "simd" *) wire signed [23:0] sum0123 = sum01 + sum23;
     (* use_dsp = "simd" *) wire signed [23:0] sum4567 = sum45 + sum67;
     (* use_dsp = "simd" *) wire signed [23:0] sum_all = sum0123 + sum4567;
-    assign s4_sum_next = sum_all;
+    assign s5_sum_next = sum_all;
   end else if (LANES == 8) begin : gen_logic_add8
-    assign s4_sum_next = s3_lane_ext[0] + s3_lane_ext[1]
-                       + s3_lane_ext[2] + s3_lane_ext[3]
-                       + s3_lane_ext[4] + s3_lane_ext[5]
-                       + s3_lane_ext[6] + s3_lane_ext[7];
+    assign s5_sum_next = s4_lane_ext[0] + s4_lane_ext[1]
+                       + s4_lane_ext[2] + s4_lane_ext[3]
+                       + s4_lane_ext[4] + s4_lane_ext[5]
+                       + s4_lane_ext[6] + s4_lane_ext[7];
   end else begin : gen_logic_add16
-    assign s4_sum_next = s3_lane_ext[0] + s3_lane_ext[1]
-                       + s3_lane_ext[2] + s3_lane_ext[3]
-                       + s3_lane_ext[4] + s3_lane_ext[5]
-                       + s3_lane_ext[6] + s3_lane_ext[7]
-                       + s3_lane_ext[8] + s3_lane_ext[9]
-                       + s3_lane_ext[10] + s3_lane_ext[11]
-                       + s3_lane_ext[12] + s3_lane_ext[13]
-                       + s3_lane_ext[14] + s3_lane_ext[15];
+    assign s5_sum_next = s4_lane_ext[0] + s4_lane_ext[1]
+                       + s4_lane_ext[2] + s4_lane_ext[3]
+                       + s4_lane_ext[4] + s4_lane_ext[5]
+                       + s4_lane_ext[6] + s4_lane_ext[7]
+                       + s4_lane_ext[8] + s4_lane_ext[9]
+                       + s4_lane_ext[10] + s4_lane_ext[11]
+                       + s4_lane_ext[12] + s4_lane_ext[13]
+                       + s4_lane_ext[14] + s4_lane_ext[15];
   end
 endgenerate
 
 assign out_valid = PARTIAL_ONLY ? 1'b0
-  : (rsum_output_valid_q || (s5_valid && !s5_rsum_enable));
+  : (rsum_output_valid_q || (s6_valid && !s6_rsum_enable));
 assign bf22_o = PARTIAL_ONLY ? 32'b0
-  : (rsum_output_valid_q ? rsum_output_bf22_q : s5_bf22_bits);
+  : (rsum_output_valid_q ? rsum_output_bf22_q : s6_bf22_bits);
 assign bf16_o = PARTIAL_ONLY ? 16'b0
-  : (rsum_output_valid_q ? rsum_output_bf16_q : s5_bf16);
-assign partial_valid_o = s4_valid;
-assign partial_sum_o = s4_sum;
-assign partial_exp_o = s4_max_exp - ALIGN_GUARD_BITS;
-assign rsum_base_bits = s5_rsum_first ? 32'b0 : rsum_accum_q;
+  : (rsum_output_valid_q ? rsum_output_bf16_q : s6_bf16);
+assign partial_valid_o = s5_valid;
+assign partial_sum_o = s5_sum;
+assign partial_exp_o = s5_max_exp - ALIGN_GUARD_BITS;
+assign rsum_base_bits = s6_rsum_first ? 32'b0 : rsum_accum_q;
 assign rsum_next_bits = bf22_round_bits(
-    fp32_add_bits(rsum_base_bits, s5_bf22_bits));
+    fp32_add_bits(rsum_base_bits, s6_bf22_bits));
 assign rsum_next_bf16_bits = bf16_round_bits(rsum_next_bits);
 
 function [31:0] bf16_round_bits;
@@ -570,37 +864,6 @@ function [31:0] normalize_sum_to_fp32;
   end
 endfunction
 
-always @* begin
-  max_exp_comb = 10'sd0;
-  max_exp_valid_comb = 1'b0;
-  for (i = 0; i < LANES; i = i + 1) begin
-    max_lane = s0_bf16[i];
-    max_lane_exp = max_lane[14:7];
-    max_weight_lane = s0_weight_bf16[i];
-    max_weight_exp = max_weight_lane[14:7];
-    if (s0_weight_bf16_mode) begin
-      lane_exp_comb = $signed({2'b0, (max_lane_exp == 0)
-                                     ? 8'd1 : max_lane_exp})
-                    + $signed({2'b0, (max_weight_exp == 0)
-                                     ? 8'd1 : max_weight_exp})
-                    - 10'sd134;
-      if ((max_lane[14:0] != 15'b0)
-          && (max_weight_lane[14:0] != 15'b0)
-          && (!max_exp_valid_comb || lane_exp_comb > max_exp_comb)) begin
-        max_exp_comb = lane_exp_comb;
-        max_exp_valid_comb = 1'b1;
-      end
-    end else begin
-      lane_exp_comb = $signed({2'b0, max_lane_exp});
-      if ((max_lane[14:0] != 15'b0) && (s0_int8[i] != 8'b0)
-          && (!max_exp_valid_comb || lane_exp_comb > max_exp_comb)) begin
-        max_exp_comb = lane_exp_comb;
-        max_exp_valid_comb = 1'b1;
-      end
-    end
-  end
-end
-
 always @(posedge clk or negedge rst_b) begin
   if (!rst_b) begin
     s0_valid <= 1'b0;
@@ -609,26 +872,30 @@ always @(posedge clk or negedge rst_b) begin
     s3_valid <= 1'b0;
     s4_valid <= 1'b0;
     s5_valid <= 1'b0;
-    s5_bf16 <= 16'b0;
-    s5_bf22_bits <= 32'b0;
+    s6_valid <= 1'b0;
+    s6_bf16 <= 16'b0;
+    s6_bf22_bits <= 32'b0;
     s0_rsum_enable <= 1'b0;
     s1_rsum_enable <= 1'b0;
     s2_rsum_enable <= 1'b0;
     s3_rsum_enable <= 1'b0;
     s4_rsum_enable <= 1'b0;
     s5_rsum_enable <= 1'b0;
+    s6_rsum_enable <= 1'b0;
     s0_rsum_first <= 1'b0;
     s1_rsum_first <= 1'b0;
     s2_rsum_first <= 1'b0;
     s3_rsum_first <= 1'b0;
     s4_rsum_first <= 1'b0;
     s5_rsum_first <= 1'b0;
+    s6_rsum_first <= 1'b0;
     s0_rsum_last <= 1'b0;
     s1_rsum_last <= 1'b0;
     s2_rsum_last <= 1'b0;
     s3_rsum_last <= 1'b0;
     s4_rsum_last <= 1'b0;
     s5_rsum_last <= 1'b0;
+    s6_rsum_last <= 1'b0;
     rsum_accum_q <= 32'b0;
     rsum_output_valid_q <= 1'b0;
     rsum_output_bf22_q <= 32'b0;
@@ -640,29 +907,33 @@ always @(posedge clk or negedge rst_b) begin
     s3_valid <= s2_valid;
     s4_valid <= s3_valid;
     s5_valid <= s4_valid;
+    s6_valid <= s5_valid;
     s0_rsum_enable <= rsum_enable_i;
     s1_rsum_enable <= s0_rsum_enable;
     s2_rsum_enable <= s1_rsum_enable;
     s3_rsum_enable <= s2_rsum_enable;
     s4_rsum_enable <= s3_rsum_enable;
     s5_rsum_enable <= s4_rsum_enable;
+    s6_rsum_enable <= s5_rsum_enable;
     s0_rsum_first <= rsum_first_i;
     s1_rsum_first <= s0_rsum_first;
     s2_rsum_first <= s1_rsum_first;
     s3_rsum_first <= s2_rsum_first;
     s4_rsum_first <= s3_rsum_first;
     s5_rsum_first <= s4_rsum_first;
+    s6_rsum_first <= s5_rsum_first;
     s0_rsum_last <= rsum_last_i;
     s1_rsum_last <= s0_rsum_last;
     s2_rsum_last <= s1_rsum_last;
     s3_rsum_last <= s2_rsum_last;
     s4_rsum_last <= s3_rsum_last;
     s5_rsum_last <= s4_rsum_last;
+    s6_rsum_last <= s5_rsum_last;
 
     rsum_output_valid_q <= 1'b0;
-    if (s5_valid && s5_rsum_enable) begin
+    if (s6_valid && s6_rsum_enable) begin
       rsum_accum_q <= rsum_next_bits;
-      if (s5_rsum_last) begin
+      if (s6_rsum_last) begin
         rsum_output_bf22_q <= rsum_next_bits;
         rsum_output_bf16_q <= rsum_next_bf16_bits[31:16];
         rsum_output_valid_q <= 1'b1;
@@ -678,78 +949,47 @@ always @(posedge clk or negedge rst_b) begin
                            ? bf16_weight_vec_i[i*16 +: 16]
                            : sanitize_bf16(
                                bf16_weight_vec_i[i*16 +: 16]);
+      s0_weight_exp_external[i] <= weight_exp_vec_i[i*8 +: 8];
+      s0_external_product[i] <= external_product_vec_i[i*16 +: 16];
+      s0_external_product_sign[i] <= external_product_sign_i[i];
     end
     s0_weight_bf16_mode <= weight_bf16_mode_i;
 
-    s1_max_exp <= max_exp_comb;
     for (i = 0; i < LANES; i = i + 1) begin
-      sig_comb = (s0_bf16[i][14:7] == 8'b0)
-               ? {1'b0, s0_bf16[i][6:0]}
-               : {1'b1, s0_bf16[i][6:0]};
-      wmag_comb = s0_int8[i][7] ? (~s0_int8[i] + 8'b1) : s0_int8[i];
-      weight_sig_comb = (s0_weight_bf16[i][14:7] == 8'b0)
-                      ? {1'b0, s0_weight_bf16[i][6:0]}
-                      : {1'b1, s0_weight_bf16[i][6:0]};
-      s1_prod[i] <= sig_comb * (s0_weight_bf16_mode
-                                ? weight_sig_comb : wmag_comb);
-      s1_sign[i] <= s0_bf16[i][15]
-                  ^ (s0_weight_bf16_mode ? s0_weight_bf16[i][15]
-                                         : s0_int8[i][7]);
-      s1_exp[i] <= s0_weight_bf16_mode
-                 ? ($signed({2'b0, (s0_bf16[i][14:7] == 0)
-                                          ? 8'd1 : s0_bf16[i][14:7]})
-                    + $signed({2'b0, (s0_weight_bf16[i][14:7] == 0)
-                                          ? 8'd1 : s0_weight_bf16[i][14:7]})
-                    - 10'sd134)
-                 : $signed({2'b0, s0_bf16[i][14:7]});
+      s1_prod[i] <= product_comb[i];
+      s1_sign[i] <= sign_comb[i];
+      s1_exp[i] <= product_exp_comb[i*10 +: 10];
+      s1_exp_valid[i] <= product_exp_valid_comb[i];
     end
 
-    s2_max_exp <= s1_max_exp;
+    s2_max_exp <= max_exp_comb;
     for (i = 0; i < LANES; i = i + 1) begin
-      shift_amount_comb = s1_max_exp - s1_exp[i];
-      expanded_prod_comb = {2'b0, s1_prod[i]} << ALIGN_GUARD_BITS;
-      s2_fine[i] <= shift_amount_comb[2:0];
-      // Native dot16 retains fractional guard bits so all sixteen lanes
-      // add before the sole normalization/round. Legacy dot8 keeps zero.
-      s2_force_zero[i] <= (shift_amount_comb >= (17 + ALIGN_GUARD_BITS));
+      s2_prod[i] <= s1_prod[i];
       s2_sign[i] <= s1_sign[i];
-      case (shift_amount_comb[4:3])
-        2'd0: begin
-          s2_coarse[i] <= expanded_prod_comb;
-          s2_coarse_guard[i] <= 1'b0;
-          s2_coarse_sticky[i] <= 1'b0;
-        end
-        2'd1: begin
-          s2_coarse[i] <= expanded_prod_comb >> 8;
-          s2_coarse_guard[i] <= expanded_prod_comb[7];
-          s2_coarse_sticky[i] <= |expanded_prod_comb[6:0];
-        end
-        2'd2: begin
-          s2_coarse[i] <= expanded_prod_comb >> 16;
-          s2_coarse_guard[i] <= expanded_prod_comb[15];
-          s2_coarse_sticky[i] <= |expanded_prod_comb[14:0];
-        end
-        default: begin
-          s2_coarse[i] <= 18'b0;
-          s2_coarse_guard[i] <= 1'b0;
-          s2_coarse_sticky[i] <= |expanded_prod_comb;
-        end
-      endcase
+      s2_exp[i] <= s1_exp[i];
     end
 
     s3_max_exp <= s2_max_exp;
     for (i = 0; i < LANES; i = i + 1) begin
-      s3_lane[i] <= align_product_signed(
-          s2_coarse[i], s2_fine[i], s2_coarse_guard[i],
-          s2_coarse_sticky[i], s2_force_zero[i], s2_sign[i]);
+      s3_fine[i] <= fine_comb[i];
+      s3_force_zero[i] <= force_zero_comb[i];
+      s3_sign[i] <= s2_sign[i];
+      s3_coarse[i] <= coarse_comb[i];
+      s3_coarse_guard[i] <= coarse_guard_comb[i];
+      s3_coarse_sticky[i] <= coarse_sticky_comb[i];
     end
 
     s4_max_exp <= s3_max_exp;
-    s4_sum <= s4_sum_next;
+    for (i = 0; i < LANES; i = i + 1) begin
+      s4_lane[i] <= aligned_comb[i];
+    end
 
-    s5_bf16 <= normalize_sum_to_bf16(s4_sum, s4_max_exp);
-    s5_bf22_bits <= bf22_round_bits(
-        normalize_sum_to_fp32(s4_sum, s4_max_exp));
+    s5_max_exp <= s4_max_exp;
+    s5_sum <= s5_sum_next;
+
+    s6_bf16 <= normalize_sum_to_bf16(s5_sum, s5_max_exp);
+    s6_bf22_bits <= bf22_round_bits(
+        normalize_sum_to_fp32(s5_sum, s5_max_exp));
   end
 end
 

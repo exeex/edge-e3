@@ -1,5 +1,7 @@
 // Compatibility wrapper around the reusable BF22 dot8 kernel.
-module edge_dot8_unit(
+module edge_dot8_unit #(
+  parameter EXTERNAL_WEIGHT_EXP = 0
+)(
   clk,
   rst_b,
   in_valid,
@@ -7,6 +9,7 @@ module edge_dot8_unit(
   int8_vec_i,
   weight_bf16_mode_i,
   bf16_weight_vec_i,
+  weight_exp_vec_i,
   rsum_enable_i,
   rsum_first_i,
   rsum_last_i,
@@ -21,6 +24,7 @@ input  [127:0] bf16_vec_i;
 input  [63:0]  int8_vec_i;
 input          weight_bf16_mode_i;
 input  [127:0] bf16_weight_vec_i;
+input  [63:0]  weight_exp_vec_i;
 input          rsum_enable_i;
 input          rsum_first_i;
 input          rsum_last_i;
@@ -29,7 +33,7 @@ output [15:0]  bf16_o;
 
 wire [31:0] unused_bf22;
 
-edge_dot8_kernel x_kernel (
+edge_dot8_kernel #(.EXTERNAL_WEIGHT_EXP(EXTERNAL_WEIGHT_EXP)) x_kernel (
   .clk                 (clk),
   .rst_b               (rst_b),
   .in_valid            (in_valid),
@@ -37,6 +41,9 @@ edge_dot8_kernel x_kernel (
   .int8_vec_i          (int8_vec_i),
   .weight_bf16_mode_i  (weight_bf16_mode_i),
   .bf16_weight_vec_i   (bf16_weight_vec_i),
+  .weight_exp_vec_i    (weight_exp_vec_i),
+  .external_product_vec_i(128'b0),
+  .external_product_sign_i(8'b0),
   .rsum_enable_i       (rsum_enable_i),
   .rsum_first_i        (rsum_first_i),
   .rsum_last_i         (rsum_last_i),

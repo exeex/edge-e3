@@ -39,6 +39,8 @@ edge_dot8_kernel x_kernel (
   .clk(clk), .rst_b(rst_b), .in_valid(in_valid),
   .bf16_vec_i(input_bf16_i), .int8_vec_i(64'b0),
   .weight_bf16_mode_i(1'b1), .bf16_weight_vec_i(active_weight),
+  .weight_exp_vec_i(64'b0),
+  .external_product_vec_i(128'b0), .external_product_sign_i(8'b0),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
   .rsum_last_i(rsum_last_i),
   .out_valid(out_valid), .bf22_o(unused_bf22), .bf16_o(result_bf16_o)

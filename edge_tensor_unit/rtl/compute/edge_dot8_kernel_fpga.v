@@ -16,6 +16,8 @@ edge_dot8_kernel #(.PARTIAL_ONLY(PARTIAL_ONLY),.FPGA_DSP_ADD(1)) kernel(
   .bf16_vec_i(bf16_vec_i),.int8_vec_i(int8_vec_i),
   .weight_bf16_mode_i(weight_bf16_mode_i),
   .bf16_weight_vec_i(bf16_weight_vec_i),
+  .weight_exp_vec_i(64'b0),
+  .external_product_vec_i(128'b0),.external_product_sign_i(8'b0),
   .rsum_enable_i(rsum_enable_i),.rsum_first_i(rsum_first_i),
   .rsum_last_i(rsum_last_i),.out_valid(out_valid),.bf22_o(bf22_o),
   .bf16_o(bf16_o),.partial_valid_o(partial_valid_o),
