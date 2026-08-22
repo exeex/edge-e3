@@ -119,8 +119,8 @@ parameter [8:0] TENSOR_IO_PLAN_CYCLES = 9'd100;
 parameter [3:0] TENSOR_I_BASE_DELAY = 4'd1;
 parameter [3:0] TENSOR_PSUM_BASE_DELAY = 4'd6;
 parameter [3:0] TENSOR_O_BASE_DELAY = 4'd7;
-parameter STREAM_FIFO_DEPTH = 8;
-parameter STREAM_FIFO_INDEX_WIDTH = 3;
+parameter STREAM_FIFO_DEPTH = 16;
+parameter STREAM_FIFO_INDEX_WIDTH = 4;
 localparam RUN_COUNT_WIDTH = 16;
 
 input                         clk;
@@ -845,7 +845,8 @@ assign stream_i_base_req = stream_active
                             < data_run_remaining[RUN_COUNT_WIDTH-1:0])
                         && ((stream_i_count[STREAM_FIFO_INDEX_WIDTH:0]
                              + stream_i_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                            < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]);
+                            < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
+                            || stream_compute_fire);
 assign stream_i_current_req = stream_i_base_req
                            && tensor_stream_phase_match(
                                 phase[2:0],
@@ -860,7 +861,8 @@ assign stream_i_prefetch_base_req = stream_active
                                      < queued_run_count[RUN_COUNT_WIDTH-1:0])
                                  && ((stream_i_count[STREAM_FIFO_INDEX_WIDTH:0]
                                       + stream_i_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                                     < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]);
+                                     < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
+                                     || stream_compute_fire);
 assign stream_i_prefetch_req = !stream_i_current_req
                             && stream_i_prefetch_base_req
                             && tensor_stream_phase_match(
@@ -873,7 +875,8 @@ assign stream_psum_base_req = stream_active
                                < data_run_remaining[RUN_COUNT_WIDTH-1:0])
                            && ((stream_psum_count[STREAM_FIFO_INDEX_WIDTH:0]
                                 + stream_psum_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                               < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]);
+                               < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
+                               || stream_compute_fire);
 assign stream_psum_current_req = stream_psum_base_req
                               && tensor_stream_phase_match(
                                    phase[2:0],
@@ -888,7 +891,8 @@ assign stream_psum_prefetch_base_req = stream_active
                                         < queued_run_count[RUN_COUNT_WIDTH-1:0])
                                     && ((stream_psum_count[STREAM_FIFO_INDEX_WIDTH:0]
                                          + stream_psum_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                                        < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]);
+                                        < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
+                                        || stream_compute_fire);
 assign stream_psum_prefetch_req = !stream_psum_current_req
                                && stream_psum_prefetch_base_req
                                && tensor_stream_phase_match(
