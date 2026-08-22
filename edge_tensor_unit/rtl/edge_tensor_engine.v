@@ -156,7 +156,7 @@ reg [META_FIFO_INDEX_WIDTH-1:0] meta_tail_q;
 reg [META_FIFO_INDEX_WIDTH:0] meta_count_q;
 reg [META_FIFO_INDEX_WIDTH:0] scaled_inflight_count_q;
 reg [3:0] output_skew_inflight_q;
-reg [5:0] psum_stream_mode_pipe_q;
+reg [6:0] psum_stream_mode_pipe_q;
 reg host_rvalid_q;
 reg [BANK_INDEX_WIDTH-1:0] host_rsp_bank_q;
 reg scale_enable_q;
@@ -492,7 +492,7 @@ assign psum_target_count = psum_none_mode_q ? {VECTOR_COUNT_WIDTH{1'b0}}
                            ? {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1}
                            : target_count_q;
 assign psum_stream_mode = !psum_none_mode_q && !psum_once_mode_q;
-assign dot_needs_psum = psum_stream_mode_pipe_q[5];
+assign dot_needs_psum = psum_stream_mode_pipe_q[6];
 assign compute_psum_valid = psum_none_mode_q ? 1'b1
                           : psum_once_mode_q ? psum_once_valid_q
                           : aligned_psum_valid;
@@ -683,7 +683,7 @@ always @(posedge clk or negedge cpurst_b) begin
     meta_count_q <= 0;
     scaled_inflight_count_q <= 0;
     output_skew_inflight_q <= 0;
-    psum_stream_mode_pipe_q <= 6'b0;
+    psum_stream_mode_pipe_q <= 7'b0;
     host_rvalid_q <= 1'b0;
     host_rsp_bank_q <= 0;
     scale_enable_q <= 1'b0;
@@ -705,7 +705,7 @@ always @(posedge clk or negedge cpurst_b) begin
     end
   end else begin
     psum_stream_mode_pipe_q <=
-        {psum_stream_mode_pipe_q[4:0],
+        {psum_stream_mode_pipe_q[5:0],
          input_compute_fire && psum_stream_mode};
     done_q <= 1'b0;
     handoff_ready_q <= 1'b0;
