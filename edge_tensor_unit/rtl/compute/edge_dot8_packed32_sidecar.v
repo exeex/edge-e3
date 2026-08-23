@@ -35,7 +35,7 @@ edge_dot8_weight_bank_packed32 x_weight_bank (
   .active_weight_o(active_weight)
 );
 
-edge_dot8_kernel x_kernel (
+edge_dot_kernel x_kernel (
   .clk(clk), .rst_b(rst_b), .in_valid(in_valid),
   .bf16_vec_i(input_bf16_i), .int8_vec_i(64'b0),
   .weight_bf16_mode_i(1'b1), .bf16_weight_vec_i(active_weight),

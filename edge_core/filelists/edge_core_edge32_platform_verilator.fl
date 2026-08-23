@@ -32,7 +32,7 @@ edge_tensor_unit/rtl/edge_tensor_iopsum_remux.v
 edge_tensor_unit/rtl/ref/wld8x8/edge_tensor_wld_reg.v
 edge_tensor_unit/rtl/ref/wld8x8/edge_tensor_wld8x8_fill.v
 ../edge-asic/rtl/tensor/edge_bf16_sig_mul.v
-../edge-asic/rtl/tensor/edge_dot8_kernel.v
+../edge-asic/rtl/tensor/edge_dot_kernel.v
 edge_tensor_unit/rtl/compute/edge_dot8_unit.v
 ../edge-asic/rtl/tensor/edge_psum.v
 edge_tensor_unit/rtl/compute/edge_tile8x8_unit.v

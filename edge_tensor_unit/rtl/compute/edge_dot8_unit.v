@@ -33,7 +33,7 @@ output [15:0]  bf16_o;
 
 wire [31:0] unused_bf22;
 
-edge_dot8_kernel #(.EXTERNAL_WEIGHT_EXP(EXTERNAL_WEIGHT_EXP)) x_kernel (
+edge_dot_kernel #(.EXTERNAL_WEIGHT_EXP(EXTERNAL_WEIGHT_EXP)) x_kernel (
   .clk                 (clk),
   .rst_b               (rst_b),
   .in_valid            (in_valid),
