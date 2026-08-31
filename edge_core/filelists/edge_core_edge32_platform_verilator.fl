@@ -64,6 +64,9 @@ edge_tensor_unit/rtl/compute/edge_tensor_tile_backend.v
 ../edge-asic/rtl/actu/rtl/edge_actu_rcp_radix16_seed.v
 ../edge-asic/rtl/actu/rtl/edge_actu_rcp_rsqrt_seed_q16.v
 ../edge-asic/rtl/actu/rtl/edge_actu_rcp_rsqrt_pipe.v
+../edge-asic/rtl/actu/rtl/edge_actu_exp_frontend.v
+../edge-asic/rtl/actu/rtl/edge_actu_rcp_backend.v
+../edge-asic/rtl/actu/rtl/edge_actu_finalizer.v
 ../edge-32/rtl/cache/edge_dcache/edge_dcache.v
 ../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_mshr.v
 ../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_hit_queue.v
