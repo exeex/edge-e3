@@ -53,13 +53,8 @@ edge_tensor_unit/rtl/compute/edge_tensor_tile_backend.v
 ../edge-asic/rtl/cmpu/rtl/edge_cmpu_bf16_relation.v
 ../edge-asic/rtl/actu/rtl/edge_actu_bf16_stream.v
 ../edge-asic/rtl/actu/edge_actu.v
-../edge-asic/rtl/actu/rtl/edge_actu_exp_lut2base_split.v
-../edge-asic/rtl/actu/rtl/edge_actu_exp_range_q16.v
-../edge-asic/rtl/actu/rtl/edge_actu_exp2_split_core.v
 ../edge-asic/rtl/actu/rtl/edge_actu_exp2_split_mant_q14.v
-../edge-asic/rtl/actu/rtl/edge_actu_exp2_pack_q28_fp32.v
-../edge-asic/rtl/actu/rtl/edge_actu_exp2_pack_fp32.v
-../edge-asic/rtl/actu/rtl/edge_actu_rcp_lut_nr_fp32.v
+../edge-asic/rtl/actu/rtl/edge_actu_exp2_pack_q28_bf22.v
 ../edge-asic/rtl/actu/rtl/edge_actu_rcp_one_to_two_q16.v
 ../edge-asic/rtl/actu/rtl/edge_actu_rcp_radix16_seed.v
 ../edge-asic/rtl/actu/rtl/edge_actu_rcp_rsqrt_seed_q16.v
@@ -99,3 +94,6 @@ edge_dtcm_dma/edge_dtcm_dma.v
 ../edge-asic/rtl/dma/edge_dma_read_fifo.v
 ../edge-asic/rtl/dma/edge_dma_a2d_stream.v
 edge_dtcm_subsys/rtl/edge_dtcm_subsys_core.v
+../edge-asic/rtl/actu/rtl/edge_actu_exp_ingress.v
+../edge-asic/rtl/actu/rtl/edge_actu_exp_range_bf22.v
+../edge-asic/rtl/actu/rtl/edge_actu_softmax_sub_bf16.v
