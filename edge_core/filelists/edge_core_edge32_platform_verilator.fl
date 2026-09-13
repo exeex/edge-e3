@@ -13,6 +13,8 @@ edge_core/rtl/edge_accel_data_ctrl.v
 ../edge-32/rtl/fpu/edge_fpu_misc/edge_fpu_misc.v
 ../edge-32/rtl/fpu/edge_fpu_cvt/edge_fpu_cvt.v
 ../edge-32/rtl/fpu/edge_fpu_complete_queue/edge_fpu_complete_queue.v
+../edge-32/rtl/fpu/edge_fpu_slow/rtl/edge_fpu_div_iter.v
+../edge-32/rtl/fpu/edge_fpu_slow/rtl/edge_fpu_sqrt_iter.v
 ../edge-32/rtl/fpu/edge_fpu_slow/edge_fpu_slow.v
 ../edge-32/rtl/fpu/edge_fpu_fmac/rtl/edge_fpu_fmac_align_add.v
 ../edge-32/rtl/fpu/edge_fpu_fmac/rtl/edge_fpu_fmac_narrow_fmadd.v
