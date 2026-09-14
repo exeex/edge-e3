@@ -9,6 +9,7 @@ edge_core/edge_core_scalar_product_top.v
 ../edge-32/rtl/edge_32_pipeline.v
 ../edge-32/rtl/edge_32_lsu.v
 ../edge-32/rtl/edge_32_fp_mem_format.v
+../edge-32/rtl/fpu/edge_fpu_alu/edge_fpu_alu.v
 ../edge-32/rtl/edge_32_core.v
 ../edge-32/rtl/edge_32_icache_adapter.v
 ../edge-32/rtl/edge_32_dcache_adapter.v
