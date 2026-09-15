@@ -4,7 +4,7 @@
 ../edge-32/rtl/muldiv/edge_add16_carry_select8.v
 ../edge-32/rtl/muldiv/edge_add64_carry_select16.v
 ../edge-32/rtl/muldiv/edge_mul32_booth_lane.v
-../edge-32/rtl/edge_32_div_srt4_native.v
+../edge-32/rtl/edge_32_div_nonnegative.v
 ../edge-32/rtl/edge_32_muldiv_asap7.v
 -f edge_core/filelists/edge_core_edge32_platform_verilator.fl
 edge_core/edge_core_scalar_product_top.v
