@@ -18,6 +18,7 @@ edge_core/edge_core_scalar_product_top.v
 ../edge-32/rtl/fpu/edge_fpu_alu/edge_fpu_alu.v
 ../edge-32/rtl/edge_32_gpr.v
 ../edge-32/rtl/edge_32_counter64.v
+../edge-32/rtl/fpu/edge_32_fpu.v
 ../edge-32/rtl/edge_32_core.v
 ../edge-32/rtl/edge_32_icache_adapter.v
 ../edge-32/rtl/edge_32_dcache_adapter.v
