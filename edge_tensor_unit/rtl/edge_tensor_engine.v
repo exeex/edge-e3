@@ -165,6 +165,10 @@ reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_fifo_count_q;
 reg [6:0] psum_stream_mode_pipe_q;
 reg host_rvalid_q;
 reg [BANK_INDEX_WIDTH-1:0] host_rsp_bank_q;
+// Native E3 RSUM performs the numerical merge in the dot kernel. Keep the
+// E4-style post-input drain boundary before publishing that final value.
+reg rsum_drain_pending_q;
+reg [PAIR_WIDTH-1:0] rsum_drain_data_q;
 reg scale_enable_q;
 reg scale_stream_enable_q;
 reg [127:0] scale_bf16_q;
@@ -239,6 +243,8 @@ wire [VECTOR_COUNT_WIDTH-1:0] psum_target_count;
 wire psum_stream_mode;
 wire dot_ready;
 wire dot_needs_psum;
+wire tensor_core_output_valid;
+wire [PAIR_WIDTH-1:0] tensor_core_output_data;
 wire tensor_output_valid;
 wire [PAIR_WIDTH-1:0] tensor_output_data;
 wire start_accept;
@@ -546,6 +552,17 @@ assign drain_done_next = busy_q && !compute_busy_q && !output_pending
                       && (meta_count_q == 0) && (psum_count_q == 0)
                       && !output_skew_push && !start_accept;
 
+// E4 exposes one extra rsum_merge_pending cycle after the final tile. E3's
+// dot kernel already contains the accumulator, so this register is the
+// equivalent ordering fence: capture the final value, then publish it on the
+// following cycle while the output path drains the descriptor.
+assign tensor_output_valid = rsum_mode_q
+                           ? rsum_drain_pending_q
+                           : tensor_core_output_valid;
+assign tensor_output_data = rsum_mode_q
+                          ? rsum_drain_data_q
+                          : tensor_core_output_data;
+
 assign host_bank_req = !busy_q && host_req;
 assign host_bank_we = host_we;
 assign host_bank = host_addr[BANK_INDEX_WIDTH-1:0];
@@ -663,7 +680,8 @@ edge_tensor_tile_backend #(.PACKED_WEIGHT(PACKED_WEIGHT)) x_tile8x8 (
   .weight_active_valid_o(tensor_weight_active_valid),
   .weight_pending_valid_o(tensor_weight_pending_valid),
   .dot_ready_o(dot_ready),
-  .output_valid_o(tensor_output_valid), .output_bf16_o(tensor_output_data)
+  .output_valid_o(tensor_core_output_valid),
+  .output_bf16_o(tensor_core_output_data)
 );
 
 always @(posedge clk or negedge cpurst_b) begin
@@ -709,6 +727,8 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_stream_mode_pipe_q <= 7'b0;
     host_rvalid_q <= 1'b0;
     host_rsp_bank_q <= 0;
+    rsum_drain_pending_q <= 1'b0;
+    rsum_drain_data_q <= 0;
     scale_enable_q <= 1'b0;
     scale_stream_enable_q <= 1'b0;
     scale_bf16_q <= 0;
@@ -737,6 +757,14 @@ always @(posedge clk or negedge cpurst_b) begin
     host_rvalid_q <= !busy_q && host_req && !host_we;
     if (host_req && !busy_q && !host_we)
       host_rsp_bank_q <= host_addr[BANK_INDEX_WIDTH-1:0];
+
+    if (rsum_mode_q) begin
+      rsum_drain_pending_q <= tensor_core_output_valid;
+      if (tensor_core_output_valid)
+        rsum_drain_data_q <= tensor_core_output_data;
+    end else begin
+      rsum_drain_pending_q <= 1'b0;
+    end
 
     if (start_accept) begin
       busy_q <= 1'b1;
