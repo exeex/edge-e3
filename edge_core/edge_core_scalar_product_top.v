@@ -28,6 +28,7 @@ module edge_core_edge32_top #(
   input wire dma_wready,output wire [(DATA_WIDTH/8)-1:0] dma_wstrb,output wire dma_wvalid,
   output wire halted,output wire illegal,output wire [63:0] debug_x31,
   output wire [63:0] cycle_count,output wire [63:0] instret_count,
+  output wire putchar_valid,output wire [7:0] putchar_char,
   output wire asic_power_enable,input wire asic_power_ready,output wire asic_ready,
   output wire tensor_busy,output wire actu_busy,output wire cmpu_busy,output wire accel_dma_busy
 );
@@ -97,7 +98,8 @@ module edge_core_edge32_top #(
     .accel_req_src1(accel_req_src1),.accel_resp_valid(accel_resp_valid),
     .accel_resp_error(accel_resp_error),.accel_resp_value(accel_resp_value),
     .halted(halted),.illegal(illegal),.debug_x31(debug_x31),
-    .cycle_count(cycle_count),.instret_count(instret_count));
+    .cycle_count(cycle_count),.instret_count(instret_count),
+    .putchar_valid(putchar_valid),.putchar_char(putchar_char));
 
   assign accel_req_inst=scalar_accel_req_inst;
 
