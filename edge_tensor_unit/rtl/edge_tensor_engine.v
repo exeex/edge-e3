@@ -41,6 +41,8 @@ localparam INPUT_FIFO_DEPTH = 4;
 localparam INPUT_FIFO_INDEX_WIDTH = 2;
 localparam META_FIFO_DEPTH = 16;
 localparam META_FIFO_INDEX_WIDTH = 4;
+localparam OUTPUT_FIFO_DEPTH = 8;
+localparam OUTPUT_FIFO_INDEX_WIDTH = 3;
 
 input clk;
 input cpurst_b;
@@ -156,6 +158,10 @@ reg [META_FIFO_INDEX_WIDTH-1:0] meta_tail_q;
 reg [META_FIFO_INDEX_WIDTH:0] meta_count_q;
 reg [META_FIFO_INDEX_WIDTH:0] scaled_inflight_count_q;
 reg [3:0] output_skew_inflight_q;
+reg [143:0] output_fifo_q [0:OUTPUT_FIFO_DEPTH-1];
+reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_head_q;
+reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_tail_q;
+reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_fifo_count_q;
 reg [6:0] psum_stream_mode_pipe_q;
 reg host_rvalid_q;
 reg [BANK_INDEX_WIDTH-1:0] host_rsp_bank_q;
@@ -201,6 +207,10 @@ wire output_skew_mid_valid;
 wire [143:0] output_skew_mid_payload;
 wire output_skew_valid;
 wire [143:0] output_skew_payload;
+wire output_skew_pipe_valid;
+wire [143:0] output_skew_pipe_payload;
+wire output_skew_fifo_push;
+wire output_skew_fifo_pop;
 wire [ADDR_WIDTH-1:0] output_skew_addr;
 wire [PAIR_WIDTH-1:0] output_skew_data;
 wire psum_fifo_push;
@@ -246,6 +256,7 @@ wire [3:0] start_psum_offset;
 
 integer psum_fifo_i;
 integer meta_fifo_i;
+integer output_fifo_i;
 integer input_select_offset;
 integer next_input_select_offset;
 
@@ -425,6 +436,8 @@ assign i_req_mask = active_input_select ? input_select_mask
                                         : next_input_select_mask;
 assign psum_req_mask = pair_mask(psum_req_addr);
 assign output_pending = output_skew_inflight_q != 0;
+assign output_skew_valid = output_fifo_count_q != 0;
+assign output_skew_payload = output_fifo_q[output_fifo_head_q];
 assign output_skew_addr = output_skew_payload[143:128];
 assign output_skew_data = output_skew_payload[127:0];
 assign out_req_mask = output_skew_valid ? pair_mask(output_skew_addr)
@@ -454,6 +467,11 @@ assign read_fire = read_candidate
                      && i_psum_conflict);
 assign output_write_fire = output_candidate
                         && !(read_fire && i_output_conflict);
+assign output_skew_fifo_push = output_skew_pipe_valid
+                             && ((output_fifo_count_q < OUTPUT_FIFO_DEPTH)
+                                 || output_skew_fifo_pop);
+assign output_skew_fifo_pop = output_write_fire;
+assign output_skew_pop = output_skew_fifo_pop;
 assign psum_read_fire = psum_candidate
                      && !(read_fire && i_psum_conflict)
                      && !(output_write_fire && psum_output_conflict);
@@ -501,7 +519,6 @@ assign compute_psum_data = psum_none_mode_q ? {PAIR_WIDTH{1'b0}}
                          : aligned_psum_data;
 
 assign output_skew_push = tensor_output_valid;
-assign output_skew_pop = output_skew_valid;
 assign output_skew_cfg_valid = tensor_output_valid
                             && meta_first_fifo[meta_head_q];
 // Two registered stations preserve the current pair parity. Select the
@@ -579,8 +596,8 @@ edge_tensor_skew_buffer #(
   .cfg_extra_o(output_skew_cfg_out_extra),
   .in_valid(output_skew_mid_valid),
   .in_data(output_skew_mid_payload),
-  .out_valid(output_skew_valid),
-  .out_data(output_skew_payload)
+  .out_valid(output_skew_pipe_valid),
+  .out_data(output_skew_pipe_payload)
 );
 
 edge_tensor_input_window #(
@@ -683,6 +700,12 @@ always @(posedge clk or negedge cpurst_b) begin
     meta_count_q <= 0;
     scaled_inflight_count_q <= 0;
     output_skew_inflight_q <= 0;
+    output_fifo_head_q <= 0;
+    output_fifo_tail_q <= 0;
+    output_fifo_count_q <= 0;
+    for (output_fifo_i = 0; output_fifo_i < OUTPUT_FIFO_DEPTH;
+         output_fifo_i = output_fifo_i + 1)
+      output_fifo_q[output_fifo_i] <= 0;
     psum_stream_mode_pipe_q <= 7'b0;
     host_rvalid_q <= 1'b0;
     host_rsp_bank_q <= 0;
@@ -812,6 +835,18 @@ always @(posedge clk or negedge cpurst_b) begin
       default: begin end
     endcase
 
+    if (output_skew_fifo_push) begin
+      output_fifo_q[output_fifo_tail_q] <= output_skew_pipe_payload;
+      output_fifo_tail_q <= output_fifo_tail_q + 1'b1;
+    end
+    if (output_skew_fifo_pop)
+      output_fifo_head_q <= output_fifo_head_q + 1'b1;
+    case ({output_skew_fifo_push, output_skew_fifo_pop})
+      2'b10: output_fifo_count_q <= output_fifo_count_q + 1'b1;
+      2'b01: output_fifo_count_q <= output_fifo_count_q - 1'b1;
+      default: begin end
+    endcase
+
     case ({output_skew_push, output_skew_pop})
       2'b10: output_skew_inflight_q <= output_skew_inflight_q + 1'b1;
       2'b01: output_skew_inflight_q <= output_skew_inflight_q - 1'b1;
@@ -819,10 +854,10 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
-    if (output_skew_valid && !output_write_fire) begin
-      $display("tensor output skew write miss addr=%h phase=%h owned=%b read_conflict=%b",
-               output_skew_addr, fabric_phase, out_req_owned,
-               read_fire && i_output_conflict);
+    if (output_skew_pipe_valid && !output_skew_fifo_push) begin
+      $display("tensor output skew FIFO overflow addr=%h phase=%h count=%0d",
+               output_skew_pipe_payload[143:128], fabric_phase,
+               output_fifo_count_q);
       $finish;
     end
     if (output_skew_cfg_valid && (output_skew_inflight_q != 0)) begin
