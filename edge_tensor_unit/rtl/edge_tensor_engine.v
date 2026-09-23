@@ -215,6 +215,8 @@ wire output_skew_pipe_valid;
 wire [143:0] output_skew_pipe_payload;
 wire output_skew_fifo_push;
 wire output_skew_fifo_pop;
+wire output_queue_push_valid;
+wire [143:0] output_queue_push_payload;
 wire [ADDR_WIDTH-1:0] output_skew_addr;
 wire [PAIR_WIDTH-1:0] output_skew_data;
 wire psum_fifo_push;
@@ -473,7 +475,14 @@ assign read_fire = read_candidate
                      && i_psum_conflict);
 assign output_write_fire = output_candidate
                         && !(read_fire && i_output_conflict);
-assign output_skew_fifo_push = output_skew_pipe_valid
+// Keep the address/data pair in the engine FIFO until the DTCM fabric owns
+// the destination bank.  The skew blocks above are retained for the legacy
+// timing path, but their global tap cannot safely be reconfigured while an
+// older descriptor is still in flight.
+assign output_queue_push_valid = tensor_output_valid;
+assign output_queue_push_payload = {meta_addr_fifo[meta_head_q],
+                                    tensor_output_data};
+assign output_skew_fifo_push = output_queue_push_valid
                              && ((output_fifo_count_q < OUTPUT_FIFO_DEPTH)
                                  || output_skew_fifo_pop);
 assign output_skew_fifo_pop = output_write_fire;
@@ -525,8 +534,7 @@ assign compute_psum_data = psum_none_mode_q ? {PAIR_WIDTH{1'b0}}
                          : aligned_psum_data;
 
 assign output_skew_push = tensor_output_valid;
-assign output_skew_cfg_valid = tensor_output_valid
-                            && meta_first_fifo[meta_head_q];
+assign output_skew_cfg_valid = 1'b0;
 // Two registered stations preserve the current pair parity. Select the
 // optional third cycle when the first output pair is on the opposite parity.
 assign output_skew_cfg_extra =
@@ -869,7 +877,7 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
     if (output_skew_fifo_push) begin
-      output_fifo_q[output_fifo_tail_q] <= output_skew_pipe_payload;
+      output_fifo_q[output_fifo_tail_q] <= output_queue_push_payload;
       output_fifo_tail_q <= output_fifo_tail_q + 1'b1;
     end
     if (output_skew_fifo_pop)
@@ -887,9 +895,9 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
-    if (output_skew_pipe_valid && !output_skew_fifo_push) begin
-      $display("tensor output skew FIFO overflow addr=%h phase=%h count=%0d",
-               output_skew_pipe_payload[143:128], fabric_phase,
+    if (output_queue_push_valid && !output_skew_fifo_push) begin
+      $display("tensor output FIFO overflow addr=%h phase=%h count=%0d",
+               output_queue_push_payload[143:128], fabric_phase,
                output_fifo_count_q);
       $finish;
     end
