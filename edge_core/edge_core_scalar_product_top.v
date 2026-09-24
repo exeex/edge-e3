@@ -66,7 +66,7 @@ module edge_core_edge32_top #(
     .AXI_DATA_WIDTH(DATA_WIDTH),
     .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH),.ICACHE_BYTES(ICACHE_BYTES),
     .DCACHE_BYTES(DCACHE_BYTES),.DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),
-    .ENABLE_DTCM_PORT(1),.EDGE_ASIC_ID(EDGE_ASIC_ID)) core(
+    .ENABLE_DTCM_PORT(1),.ENABLE_FPU(1),.EDGE_ASIC_ID(EDGE_ASIC_ID)) core(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),
     .core_start(core_start),.core_force_stop(core_force_stop),
     .boot_pc(boot_pc[SCALAR_PC_WIDTH-1:0]),

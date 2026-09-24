@@ -555,11 +555,9 @@ assign handoff_ready_next = compute_busy_q
                          && !iop_rsp_valid_q
                          && !psum_rsp_valid_q
                          && (input_slot_valid_q == {INPUT_FIFO_DEPTH{1'b0}})
-                         // The output skew pipeline owns the alignment tap
-                         // until its last write reaches the DTCM fabric.
-                         // Do not hand off a younger descriptor while an old
-                         // output can still reconfigure that tap.
-                         && !output_pending
+                         // Output addresses and data remain in the FIFO, so
+                         // a younger descriptor can start while older writes
+                         // drain through the bank conflict arbiter.
                          && (!rsum_mode_q || tensor_output_valid);
 assign drain_done_next = busy_q && !compute_busy_q && !output_pending
                       && (meta_count_q == 0) && (psum_count_q == 0)
