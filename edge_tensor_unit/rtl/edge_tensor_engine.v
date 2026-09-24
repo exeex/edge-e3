@@ -225,6 +225,7 @@ wire [ADDR_WIDTH-1:0] output_skew_addr;
 wire [PAIR_WIDTH-1:0] output_skew_data;
 wire psum_fifo_push;
 wire psum_fifo_pop;
+wire psum_fifo_credit;
 wire meta_fifo_push;
 wire meta_fifo_pop;
 wire compute_valid_q;
@@ -493,12 +494,17 @@ assign psum_start_prefetch = start_accept
                           && !start_mode[1] && !start_mode[2]
                           && !start_mode[4]
                           && !psum_start_addr_pending;
+// Reserve space for the response already in flight.  The P request stream
+// can outrun the late dot join when an I or O bank pauses; permit a new
+// request at full occupancy only if the dot consumes a P beat this cycle.
+assign psum_fifo_credit = ({1'b0, psum_count_q} + psum_rsp_valid_q
+                           < PSUM_FIFO_DEPTH) || psum_fifo_pop;
 assign psum_candidate = ((compute_busy_q && stream_started_q
                        && (psum_stream_started_q
                            || (stream_cycle_q >= {1'b0, psum_offset_q}))
                        && (psum_issue_count_q < psum_target_count))
                        || psum_start_prefetch)
-                     && psum_req_owned;
+                     && psum_req_owned && psum_fifo_credit;
 assign output_candidate = busy_q && output_skew_valid && out_req_owned;
 assign read_fire = read_candidate
                 && !(output_candidate && i_output_conflict)
@@ -925,6 +931,11 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
+    if (psum_fifo_push && (psum_count_q == PSUM_FIFO_DEPTH)
+        && !psum_fifo_pop) begin
+      $display("tensor P FIFO overflow");
+      $finish;
+    end
     if (output_queue_push_valid && !output_skew_fifo_push) begin
       $display("tensor output FIFO overflow addr=%h phase=%h count=%0d",
                output_queue_push_payload[143:128], fabric_phase,
