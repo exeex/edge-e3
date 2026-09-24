@@ -12,6 +12,7 @@ module edge_tensor_engine(
   packed_weight_load_valid, packed_weight_load_ready,
   packed_weight_load_idx, packed_weight_load_data,
   next_input_prefetch_valid, next_input_prefetch_base_addr,
+  next_input_prefetch_psum_base_addr, next_input_prefetch_mode,
   next_input_prefetch_vector_count,
   handoff_ready, busy, done, host_req, host_we, host_addr, host_wdata,
   host_wstrb, host_ready, host_rdata, host_rvalid, fabric_phase,
@@ -32,28 +33,19 @@ parameter BANK_NUM = 16;
 parameter BANK_INDEX_WIDTH = 4;
 parameter VECTOR_COUNT_WIDTH = 16;
 parameter PACKED_WEIGHT = 0;
-// Number of 128-bit entries per active/prefetch input window (power of two).
-parameter INPUT_FIFO_DEPTH = 4;
 
 localparam BYTE_WIDTH = DATA_WIDTH / 8;
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
 localparam PSUM_FIFO_DEPTH = 8;
 localparam PSUM_FIFO_INDEX_WIDTH = 3;
-localparam INPUT_FIFO_INDEX_WIDTH = INPUT_FIFO_DEPTH <= 2
-                                  ? 1 : $clog2(INPUT_FIFO_DEPTH);
+localparam INPUT_FIFO_DEPTH = 4;
+localparam INPUT_FIFO_INDEX_WIDTH = 2;
 localparam META_FIFO_DEPTH = 16;
 localparam META_FIFO_INDEX_WIDTH = 4;
 localparam OUTPUT_FIFO_DEPTH = 8;
 localparam OUTPUT_FIFO_INDEX_WIDTH = 3;
 localparam [VECTOR_COUNT_WIDTH:0] INPUT_PSUM_LEAD = 6;
 localparam [VECTOR_COUNT_WIDTH:0] PSUM_URGENT_BACKLOG = 2;
-
-generate
-  if (INPUT_FIFO_DEPTH < 2
-      || (INPUT_FIFO_DEPTH & (INPUT_FIFO_DEPTH - 1)) != 0) begin
-    initial $fatal(1, "Input window depth must be a power of two >= 2");
-  end
-endgenerate
 
 input clk;
 input cpurst_b;
@@ -90,6 +82,8 @@ input [2:0] packed_weight_load_idx;
 input [PAIR_WIDTH-1:0] packed_weight_load_data;
 input next_input_prefetch_valid;
 input [ADDR_WIDTH-1:0] next_input_prefetch_base_addr;
+input [ADDR_WIDTH-1:0] next_input_prefetch_psum_base_addr;
+input [7:0] next_input_prefetch_mode;
 input [VECTOR_COUNT_WIDTH-1:0] next_input_prefetch_vector_count;
 output handoff_ready;
 output busy;
@@ -290,6 +284,9 @@ integer meta_fifo_i;
 integer output_fifo_i;
 integer input_select_offset;
 integer next_input_select_offset;
+reg [2:0] input_keep_q;
+wire [2:0] start_input_keep;
+wire [2:0] next_input_keep;
 
 reg input_select_valid;
 reg [VECTOR_COUNT_WIDTH-1:0] input_select_index;
@@ -356,9 +353,33 @@ begin
 end
 endfunction
 
+// Payload storage remains four entries per window. At descriptor start, cap
+// I lookahead at three on selected short-stream I/P pair layouts; other runs
+// retain all four entries to sustain the MAC through bank conflicts.
+function [2:0] choose_input_keep;
+  input [ADDR_WIDTH-1:0] i_addr;
+  input [ADDR_WIDTH-1:0] p_addr;
+  input [7:0] mode;
+  input [VECTOR_COUNT_WIDTH-1:0] count;
+begin
+  if (count <= 16'd8 && !mode[1] && !mode[2] && !mode[4]
+      && i_addr[3:1] != p_addr[3:1]
+      && (i_addr[1] == p_addr[1]
+          || p_addr[3:1] == i_addr[3:1] + 3'd1))
+    choose_input_keep = 3'd3;
+  else
+    choose_input_keep = 3'd4;
+end
+endfunction
+
 assign start_i_pair = in_base_addr[3:1];
 assign start_psum_pair = psum_base_addr[3:1];
 assign start_psum_offset = choose_psum_offset(start_i_pair, start_psum_pair);
+assign start_input_keep = choose_input_keep(in_base_addr, psum_base_addr,
+                                           start_mode, vector_count);
+assign next_input_keep = choose_input_keep(
+    next_input_prefetch_base_addr, next_input_prefetch_psum_base_addr,
+    next_input_prefetch_mode, next_input_prefetch_vector_count);
 
 assign busy = busy_q;
 assign done = done_q;
@@ -406,6 +427,7 @@ always @* begin
                           + {input_select_index_try[ADDR_WIDTH-2:0], 1'b0};
     input_select_mask_try = pair_mask(input_select_addr_try);
     if (!input_select_valid
+        && (input_select_offset < input_keep_q)
         && (input_select_index_try < target_count_q)
         && !input_slot_issued_q[input_select_slot_try]
         && ((input_select_mask_try & ~lower_owned_mask) == 0)) begin
@@ -440,6 +462,7 @@ always @* begin
     next_input_select_mask_try = pair_mask(next_input_select_addr_try);
     if (!next_input_select_valid
         && next_input_prefetch_valid
+        && (next_input_select_offset < next_input_keep)
         && (next_input_select_index_try < next_input_prefetch_vector_count)
         && !next_input_slot_issued_q[next_input_select_slot_try]
         && ((next_input_select_mask_try & ~lower_owned_mask) == 0)) begin
@@ -797,6 +820,7 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_stream_started_q <= 1'b0;
     stream_cycle_q <= 5'b0;
     psum_offset_q <= 4'b0;
+    input_keep_q <= 3'd4;
     target_count_q <= 0;
     read_issue_count_q <= 0;
     input_consume_count_q <= 0;
@@ -886,6 +910,7 @@ always @(posedge clk or negedge cpurst_b) begin
       psum_stream_started_q <= 1'b0;
       stream_cycle_q <= 0;
       psum_offset_q <= start_psum_offset;
+      input_keep_q <= start_input_keep;
       target_count_q <= vector_count;
       read_issue_count_q <= next_input_prefetch_valid
                           ? next_input_issue_count_q : 0;
