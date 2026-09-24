@@ -194,6 +194,10 @@ wire read_conflicts_output;
 wire psum_read_conflicts_output;
 wire read_candidate;
 wire psum_candidate;
+wire psum_start_prefetch;
+reg psum_start_addr_pending;
+integer psum_meta_scan_i;
+integer psum_output_scan_i;
 wire output_candidate;
 wire read_fire;
 wire psum_read_fire;
@@ -438,8 +442,9 @@ assign next_input_select = !active_input_select
                         && !handoff_ready_next;
 assign i_req_addr = active_input_select ? input_select_addr
                                         : next_input_select_addr;
-assign psum_req_addr = psum_base_q
-                     + {psum_issue_count_q[ADDR_WIDTH-2:0], 1'b0};
+assign psum_req_addr = start_accept ? psum_base_addr
+                     : psum_base_q
+                       + {psum_issue_count_q[ADDR_WIDTH-2:0], 1'b0};
 assign i_req_mask = active_input_select ? input_select_mask
                                         : next_input_select_mask;
 assign psum_req_mask = pair_mask(psum_req_addr);
@@ -463,10 +468,36 @@ assign psum_read_conflicts_output = psum_output_conflict;
 assign read_candidate = compute_busy_q
                      && (active_input_select || next_input_select)
                      && i_req_owned;
-assign psum_candidate = compute_busy_q && stream_started_q
-                     && (psum_stream_started_q
-                         || (stream_cycle_q >= {1'b0, psum_offset_q}))
-                     && (psum_issue_count_q < psum_target_count)
+// An earlier descriptor may still have results in the dot or writeback FIFO.
+// Do not read a dependent PSUM address before that older result reaches SRAM.
+always @* begin
+  psum_start_addr_pending = 1'b0;
+  for (psum_meta_scan_i = 0; psum_meta_scan_i < META_FIFO_DEPTH;
+       psum_meta_scan_i = psum_meta_scan_i + 1)
+    if (psum_meta_scan_i < meta_count_q
+        && meta_addr_fifo[(meta_head_q + psum_meta_scan_i)
+                          & (META_FIFO_DEPTH-1)] == psum_base_addr)
+      psum_start_addr_pending = 1'b1;
+  for (psum_output_scan_i = 0; psum_output_scan_i < OUTPUT_FIFO_DEPTH;
+       psum_output_scan_i = psum_output_scan_i + 1)
+    if (psum_output_scan_i < output_fifo_count_q
+        && output_fifo_q[(output_fifo_head_q + psum_output_scan_i)
+                         & (OUTPUT_FIFO_DEPTH-1)][143:128] == psum_base_addr)
+      psum_start_addr_pending = 1'b1;
+end
+
+// Issue the first stream PSUM read on the descriptor start edge when the bank
+// and its source data are available, before input consumes the window.
+assign psum_start_prefetch = start_accept
+                          && (vector_count != 0)
+                          && !start_mode[1] && !start_mode[2]
+                          && !start_mode[4]
+                          && !psum_start_addr_pending;
+assign psum_candidate = ((compute_busy_q && stream_started_q
+                       && (psum_stream_started_q
+                           || (stream_cycle_q >= {1'b0, psum_offset_q}))
+                       && (psum_issue_count_q < psum_target_count))
+                       || psum_start_prefetch)
                      && psum_req_owned;
 assign output_candidate = busy_q && output_skew_valid && out_req_owned;
 assign read_fire = read_candidate
@@ -789,12 +820,12 @@ always @(posedge clk or negedge cpurst_b) begin
       read_issue_count_q <= next_input_prefetch_valid
                           ? next_input_issue_count_q : 0;
       input_consume_count_q <= 0;
-      psum_issue_count_q <= 0;
+      psum_issue_count_q <= psum_read_fire
+                         ? {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1} : 0;
       in_base_q <= in_base_addr;
       psum_base_q <= psum_base_addr;
       out_base_q <= out_base_addr;
       iop_rsp_valid_q <= 1'b0;
-      psum_rsp_valid_q <= 1'b0;
       next_input_issue_count_q <= 0;
       scale_enable_q <= start_mode[0] && !start_mode[4];
       scale_stream_enable_q <= start_mode[3] && !start_mode[4];
@@ -833,7 +864,8 @@ always @(posedge clk or negedge cpurst_b) begin
       psum_stream_started_q <= 1'b1;
       psum_rsp_bank0_q <= psum_req_addr[BANK_INDEX_WIDTH-1:0];
       psum_rsp_bank1_q <= next_bank(psum_req_addr);
-      psum_issue_count_q <= psum_issue_count_q + 1'b1;
+      if (!start_accept)
+        psum_issue_count_q <= psum_issue_count_q + 1'b1;
     end
 
     if (psum_rsp_valid_q && psum_once_mode_q) begin
