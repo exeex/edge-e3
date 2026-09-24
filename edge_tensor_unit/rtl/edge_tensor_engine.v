@@ -32,17 +32,28 @@ parameter BANK_NUM = 16;
 parameter BANK_INDEX_WIDTH = 4;
 parameter VECTOR_COUNT_WIDTH = 16;
 parameter PACKED_WEIGHT = 0;
+// Number of 128-bit entries per active/prefetch input window (power of two).
+parameter INPUT_FIFO_DEPTH = 4;
 
 localparam BYTE_WIDTH = DATA_WIDTH / 8;
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
 localparam PSUM_FIFO_DEPTH = 8;
 localparam PSUM_FIFO_INDEX_WIDTH = 3;
-localparam INPUT_FIFO_DEPTH = 4;
-localparam INPUT_FIFO_INDEX_WIDTH = 2;
+localparam INPUT_FIFO_INDEX_WIDTH = INPUT_FIFO_DEPTH <= 2
+                                  ? 1 : $clog2(INPUT_FIFO_DEPTH);
 localparam META_FIFO_DEPTH = 16;
 localparam META_FIFO_INDEX_WIDTH = 4;
 localparam OUTPUT_FIFO_DEPTH = 8;
 localparam OUTPUT_FIFO_INDEX_WIDTH = 3;
+localparam [VECTOR_COUNT_WIDTH:0] INPUT_PSUM_LEAD = 6;
+localparam [VECTOR_COUNT_WIDTH:0] PSUM_URGENT_BACKLOG = 2;
+
+generate
+  if (INPUT_FIFO_DEPTH < 2
+      || (INPUT_FIFO_DEPTH & (INPUT_FIFO_DEPTH - 1)) != 0) begin
+    initial $fatal(1, "Input window depth must be a power of two >= 2");
+  end
+endgenerate
 
 input clk;
 input cpurst_b;
@@ -151,6 +162,7 @@ reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_head_q;
 reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_tail_q;
 reg [PSUM_FIFO_INDEX_WIDTH:0] psum_count_q;
 reg [ADDR_WIDTH-1:0] meta_addr_fifo [0:META_FIFO_DEPTH-1];
+reg meta_old_fifo [0:META_FIFO_DEPTH-1];
 reg meta_scale_fifo [0:META_FIFO_DEPTH-1];
 reg meta_first_fifo [0:META_FIFO_DEPTH-1];
 reg [META_FIFO_INDEX_WIDTH-1:0] meta_head_q;
@@ -159,6 +171,7 @@ reg [META_FIFO_INDEX_WIDTH:0] meta_count_q;
 reg [META_FIFO_INDEX_WIDTH:0] scaled_inflight_count_q;
 reg [3:0] output_skew_inflight_q;
 reg [143:0] output_fifo_q [0:OUTPUT_FIFO_DEPTH-1];
+reg output_old_fifo [0:OUTPUT_FIFO_DEPTH-1];
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_head_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_tail_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_fifo_count_q;
@@ -195,9 +208,13 @@ wire psum_read_conflicts_output;
 wire read_candidate;
 wire psum_candidate;
 wire psum_start_prefetch;
-reg psum_start_addr_pending;
+reg psum_req_addr_pending;
+reg input_psum_addr_pending;
+wire [ADDR_WIDTH-1:0] input_psum_addr;
 integer psum_meta_scan_i;
 integer psum_output_scan_i;
+reg [META_FIFO_INDEX_WIDTH-1:0] psum_meta_scan_slot;
+reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] psum_output_scan_slot;
 wire output_candidate;
 wire read_fire;
 wire psum_read_fire;
@@ -226,6 +243,7 @@ wire [PAIR_WIDTH-1:0] output_skew_data;
 wire psum_fifo_push;
 wire psum_fifo_pop;
 wire psum_fifo_credit;
+wire psum_urgent;
 wire meta_fifo_push;
 wire meta_fifo_pop;
 wire compute_valid_q;
@@ -362,7 +380,7 @@ assign weight_active_valid = tensor_weight_active_valid;
 assign weight_idle = !compute_busy_q
                   || handoff_ready_next;
 
-// The four-entry input window may fetch around a temporarily unavailable
+// The input window may fetch around a temporarily unavailable
 // oldest bank pair.  Slots are tagged by the low bits of the absolute vector
 // index and are consumed strictly in order, so DTCM phase selection is
 // decoupled from dot8 ordering without adding a general response reorderer.
@@ -446,6 +464,8 @@ assign i_req_addr = active_input_select ? input_select_addr
 assign psum_req_addr = start_accept ? psum_base_addr
                      : psum_base_q
                        + {psum_issue_count_q[ADDR_WIDTH-2:0], 1'b0};
+assign input_psum_addr = psum_base_q
+                       + {input_consume_count_q[ADDR_WIDTH-2:0], 1'b0};
 assign i_req_mask = active_input_select ? input_select_mask
                                         : next_input_select_mask;
 assign psum_req_mask = pair_mask(psum_req_addr);
@@ -469,22 +489,39 @@ assign psum_read_conflicts_output = psum_output_conflict;
 assign read_candidate = compute_busy_q
                      && (active_input_select || next_input_select)
                      && i_req_owned;
-// An earlier descriptor may still have results in the dot or writeback FIFO.
-// Do not read a dependent PSUM address before that older result reaches SRAM.
+// At each start, pending outputs become older than the new descriptor. Hold
+// dependent P reads until those older results reach SRAM. Current descriptor
+// outputs may alias future P addresses and must not create a false dependency.
 always @* begin
-  psum_start_addr_pending = 1'b0;
+  psum_req_addr_pending = 1'b0;
+  input_psum_addr_pending = 1'b0;
   for (psum_meta_scan_i = 0; psum_meta_scan_i < META_FIFO_DEPTH;
-       psum_meta_scan_i = psum_meta_scan_i + 1)
-    if (psum_meta_scan_i < meta_count_q
-        && meta_addr_fifo[(meta_head_q + psum_meta_scan_i)
-                          & (META_FIFO_DEPTH-1)] == psum_base_addr)
-      psum_start_addr_pending = 1'b1;
+       psum_meta_scan_i = psum_meta_scan_i + 1) begin
+    psum_meta_scan_slot = meta_head_q
+                        + psum_meta_scan_i[META_FIFO_INDEX_WIDTH-1:0];
+    if (psum_meta_scan_i < meta_count_q) begin
+      if ((start_accept || meta_old_fifo[psum_meta_scan_slot])
+          && meta_addr_fifo[psum_meta_scan_slot] == psum_req_addr)
+        psum_req_addr_pending = 1'b1;
+      if (meta_old_fifo[psum_meta_scan_slot]
+          && meta_addr_fifo[psum_meta_scan_slot] == input_psum_addr)
+        input_psum_addr_pending = 1'b1;
+    end
+  end
   for (psum_output_scan_i = 0; psum_output_scan_i < OUTPUT_FIFO_DEPTH;
-       psum_output_scan_i = psum_output_scan_i + 1)
-    if (psum_output_scan_i < output_fifo_count_q
-        && output_fifo_q[(output_fifo_head_q + psum_output_scan_i)
-                         & (OUTPUT_FIFO_DEPTH-1)][143:128] == psum_base_addr)
-      psum_start_addr_pending = 1'b1;
+       psum_output_scan_i = psum_output_scan_i + 1) begin
+    psum_output_scan_slot = output_fifo_head_q
+                           + psum_output_scan_i[OUTPUT_FIFO_INDEX_WIDTH-1:0];
+    if (psum_output_scan_i < output_fifo_count_q) begin
+      if ((start_accept || output_old_fifo[psum_output_scan_slot])
+          && output_fifo_q[psum_output_scan_slot][143:128] == psum_req_addr)
+        psum_req_addr_pending = 1'b1;
+      if (output_old_fifo[psum_output_scan_slot]
+          && output_fifo_q[psum_output_scan_slot][143:128]
+                 == input_psum_addr)
+        input_psum_addr_pending = 1'b1;
+    end
+  end
 end
 
 // Issue the first stream PSUM read on the descriptor start edge when the bank
@@ -492,8 +529,7 @@ end
 assign psum_start_prefetch = start_accept
                           && (vector_count != 0)
                           && !start_mode[1] && !start_mode[2]
-                          && !start_mode[4]
-                          && !psum_start_addr_pending;
+                          && !start_mode[4];
 // Reserve space for the response already in flight.  The P request stream
 // can outrun the late dot join when an I or O bank pauses; permit a new
 // request at full occupancy only if the dot consumes a P beat this cycle.
@@ -504,14 +540,22 @@ assign psum_candidate = ((compute_busy_q && stream_started_q
                            || (stream_cycle_q >= {1'b0, psum_offset_q}))
                        && (psum_issue_count_q < psum_target_count))
                        || psum_start_prefetch)
-                     && psum_req_owned && psum_fifo_credit;
+                     && psum_req_owned && psum_fifo_credit
+                     && !psum_req_addr_pending;
+assign psum_urgent = psum_stream_mode && compute_busy_q
+                  && ({1'b0, input_consume_count_q}
+                      >= {1'b0, psum_issue_count_q}
+                         + PSUM_URGENT_BACKLOG);
 assign output_candidate = busy_q && output_skew_valid && out_req_owned;
 assign read_fire = read_candidate
                 && !(output_candidate && i_output_conflict)
                 && !(next_input_select && psum_candidate
-                     && i_psum_conflict);
+                     && i_psum_conflict)
+                && !(psum_urgent && psum_candidate && i_psum_conflict);
 assign output_write_fire = output_candidate
-                        && !(read_fire && i_output_conflict);
+                        && !(read_fire && i_output_conflict)
+                        && !(psum_urgent && psum_candidate
+                             && psum_output_conflict);
 // Keep the address/data pair in the engine FIFO until the DTCM fabric owns
 // the destination bank.  The skew blocks above are retained for the legacy
 // timing path, but their global tap cannot safely be reconfigured while an
@@ -540,6 +584,17 @@ assign input_compute_fire = compute_busy_q
                          && input_head_valid
                          && (!scale_stream_enable_q || scale_stream_valid)
                          && (psum_stream_mode || compute_psum_valid)
+                         // Keep at most five unissued P beats ahead of the
+                         // seven-cycle dot join. If P falls behind, its bank
+                         // request takes priority until it catches up.
+                         && (!psum_stream_mode
+                             || ({1'b0, psum_issue_count_q} + INPUT_PSUM_LEAD
+                                 > {1'b0, input_consume_count_q})
+                             || psum_read_fire)
+                         && (!psum_stream_mode
+                             || (psum_issue_count_q > input_consume_count_q)
+                             || (!input_psum_addr_pending
+                                 && !psum_req_addr_pending))
                          && !((input_consume_count_q == 0)
                               && !scale_enable_q
                               && (scaled_inflight_count_q != 0));
@@ -770,8 +825,10 @@ always @(posedge clk or negedge cpurst_b) begin
     output_fifo_tail_q <= 0;
     output_fifo_count_q <= 0;
     for (output_fifo_i = 0; output_fifo_i < OUTPUT_FIFO_DEPTH;
-         output_fifo_i = output_fifo_i + 1)
+         output_fifo_i = output_fifo_i + 1) begin
       output_fifo_q[output_fifo_i] <= 0;
+      output_old_fifo[output_fifo_i] <= 1'b0;
+    end
     psum_stream_mode_pipe_q <= 7'b0;
     host_rvalid_q <= 1'b0;
     host_rsp_bank_q <= 0;
@@ -791,6 +848,7 @@ always @(posedge clk or negedge cpurst_b) begin
     for (meta_fifo_i = 0; meta_fifo_i < META_FIFO_DEPTH;
          meta_fifo_i = meta_fifo_i + 1) begin
       meta_addr_fifo[meta_fifo_i] <= 0;
+      meta_old_fifo[meta_fifo_i] <= 1'b0;
       meta_scale_fifo[meta_fifo_i] <= 1'b0;
       meta_first_fifo[meta_fifo_i] <= 1'b0;
     end
@@ -815,6 +873,12 @@ always @(posedge clk or negedge cpurst_b) begin
     end
 
     if (start_accept) begin
+      for (meta_fifo_i = 0; meta_fifo_i < META_FIFO_DEPTH;
+           meta_fifo_i = meta_fifo_i + 1)
+        meta_old_fifo[meta_fifo_i] <= 1'b1;
+      for (output_fifo_i = 0; output_fifo_i < OUTPUT_FIFO_DEPTH;
+           output_fifo_i = output_fifo_i + 1)
+        output_old_fifo[output_fifo_i] <= 1'b1;
       busy_q <= 1'b1;
       compute_busy_q <= 1'b1;
       stream_started_q <= next_input_prefetch_valid
@@ -881,6 +945,7 @@ always @(posedge clk or negedge cpurst_b) begin
 
     if (meta_fifo_push) begin
       meta_addr_fifo[meta_tail_q] <= input_compute_out_addr;
+      meta_old_fifo[meta_tail_q] <= 1'b0;
       meta_scale_fifo[meta_tail_q] <= scale_enable_q;
       meta_first_fifo[meta_tail_q] <=
           input_consume_count_q == {VECTOR_COUNT_WIDTH{1'b0}};
@@ -914,6 +979,8 @@ always @(posedge clk or negedge cpurst_b) begin
 
     if (output_skew_fifo_push) begin
       output_fifo_q[output_fifo_tail_q] <= output_queue_push_payload;
+      output_old_fifo[output_fifo_tail_q] <=
+          meta_old_fifo[meta_head_q] || start_accept;
       output_fifo_tail_q <= output_fifo_tail_q + 1'b1;
     end
     if (output_skew_fifo_pop)

@@ -7,7 +7,8 @@ module edge_tensor_unit_bank16 #(
   parameter VECTOR_COUNT_WIDTH = 16,
   parameter SEQ_ID_WIDTH = 8,
   parameter EPOCH_WIDTH = 4,
-  parameter PACKED_WEIGHT = 0
+  parameter PACKED_WEIGHT = 0,
+  parameter INPUT_FIFO_DEPTH = 4
 ) (
   input  wire                         clk,
   input  wire                         cpurst_b,
@@ -589,7 +590,8 @@ edge_tensor_engine #(
   .BANK_NUM(BANK_NUM),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .VECTOR_COUNT_WIDTH(VECTOR_COUNT_WIDTH),
-  .PACKED_WEIGHT(PACKED_WEIGHT)
+  .PACKED_WEIGHT(PACKED_WEIGHT),
+  .INPUT_FIFO_DEPTH(INPUT_FIFO_DEPTH)
 ) x_tensor_engine (
   .clk(clk),
   .cpurst_b(cpurst_b),
