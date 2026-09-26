@@ -1,13 +1,12 @@
 module edge_actu_dtcm_bank16_adapter(
-  clk, cpurst_b, phase, lower_owned_mask,
+  clk, cpurst_b, phase,
   rd_req, rd_ready, rd_addr, rd_rvalid, rd_rdata,
   wr_req, wr_ready, wr_addr, wr_wdata, wr_wstrb,
   bank_req, bank_we, bank_addr, bank_wdata, bank_wstrb,
-  bank_rdata, active_mask
+  bank_rdata
 );
 
 parameter READ_LATENCY = 1;
-parameter LOWER_SIX = 0;
 parameter UPPER_SHARED = 0;
 parameter ADDR_WIDTH       = 14;
 parameter DATA_WIDTH       = 64;
@@ -32,7 +31,6 @@ localparam REQUEST_PAYLOAD_WIDTH =
 input                         clk;
 input                         cpurst_b;
 input  [BANK_INDEX_WIDTH-1:0] phase;
-input  [BANK_NUM-1:0]         lower_owned_mask;
 input                         rd_req;
 input  [ADDR_WIDTH-1:0]       rd_addr;
 input                         wr_req;
@@ -49,7 +47,6 @@ output [BANK_NUM-1:0]         bank_we;
 output [BANK_NUM*SRAM_ADDR_WIDTH-1:0] bank_addr;
 output [BANK_NUM*DATA_WIDTH-1:0] bank_wdata;
 output [BANK_NUM*BYTE_WIDTH-1:0] bank_wstrb;
-output [BANK_NUM-1:0]         active_mask;
 
 wire [ADDR_WIDTH-1:0]         req_addr;
 wire                          req_valid;
@@ -64,7 +61,7 @@ wire [2:0]                    pair_phase;
 wire [2:0]                    target_pair;
 wire [2:0]                    pair_delta;
 wire [1:0]                    logical_group;
-wire                          lower_parity_match;
+wire                          channel_match;
 wire                          fire;
 wire [SRAM_ADDR_WIDTH-1:0]    sram_addr;
 wire [REQUEST_PAYLOAD_WIDTH-1:0] request_payload;
@@ -73,10 +70,7 @@ wire [PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0] physical_request_payload;
 wire [4*PAIR_DATA_WIDTH-1:0] logical_response_payload;
 wire rd_rvalid_q;
 reg [READ_LATENCY-1:0] valid_pipe;
-reg [1:0] group_pipe [0:READ_LATENCY-1];
 integer stage;
-wire [1:0] rd_group_q;
-wire                          unused_compat;
 
 genvar group_i;
 genvar pair_i;
@@ -86,11 +80,9 @@ assign rd_target_pair = rd_addr[BANK_INDEX_WIDTH-1:1];
 assign wr_target_pair = wr_addr[BANK_INDEX_WIDTH-1:1];
 assign rd_phase_match = UPPER_SHARED ?
     (rd_target_pair == 3'(pair_phase + 3'd6)) :
-    LOWER_SIX ? lower_owned_mask[2*rd_target_pair] :
     rd_target_pair[0] == pair_phase[0];
 assign wr_phase_match = UPPER_SHARED ?
     (wr_target_pair == 3'(pair_phase + 3'd6)) :
-    LOWER_SIX ? lower_owned_mask[2*wr_target_pair] :
     wr_target_pair[0] == pair_phase[0];
 assign select_read = rd_req && rd_phase_match;
 assign select_write = wr_req && wr_phase_match && !select_read;
@@ -100,11 +92,10 @@ assign req_addr = select_write ? wr_addr : rd_addr;
 assign target_pair = req_addr[BANK_INDEX_WIDTH-1:1];
 assign pair_delta = target_pair - pair_phase;
 assign logical_group = pair_delta[2:1];
-assign lower_parity_match = UPPER_SHARED ?
+assign channel_match = UPPER_SHARED ?
     (target_pair == 3'(pair_phase + 3'd6)) :
-    LOWER_SIX ? lower_owned_mask[2*target_pair] :
     target_pair[0] == pair_phase[0];
-assign fire = req_valid && lower_parity_match;
+assign fire = req_valid && channel_match;
 assign rd_ready = select_read;
 assign wr_ready = select_write;
 assign sram_addr =
@@ -123,7 +114,7 @@ generate
   end
 endgenerate
 
-generate if (LOWER_SIX || UPPER_SHARED) begin: DIRECT_CHANNEL
+generate if (UPPER_SHARED) begin: DIRECT_CHANNEL
   reg [2:0] response_pair_pipe [0:READ_LATENCY-1];
   integer st;
   always @(posedge clk or negedge cpurst_b)
@@ -138,11 +129,20 @@ generate if (LOWER_SIX || UPPER_SHARED) begin: DIRECT_CHANNEL
     assign physical_request_payload[p*REQUEST_PAYLOAD_WIDTH +: REQUEST_PAYLOAD_WIDTH] =
         target_pair == 3'(p) ? request_payload : {REQUEST_PAYLOAD_WIDTH{1'b0}};
   end
-  for (genvar g=0; g<4; g=g+1) begin: RESPONSE
-    assign logical_response_payload[g*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH] =
-        bank_rdata[response_pair_pipe[READ_LATENCY-1]*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH];
-  end
+  assign rd_rdata = bank_rdata[
+      response_pair_pipe[READ_LATENCY-1]*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH];
 end else begin: LEGACY_CHANNELS
+reg [1:0] group_pipe [0:READ_LATENCY-1];
+integer group_stage;
+always @(posedge clk or negedge cpurst_b)
+  if (!cpurst_b) begin
+    for (group_stage=0; group_stage<READ_LATENCY; group_stage=group_stage+1)
+      group_pipe[group_stage] <= 0;
+  end else begin
+    group_pipe[0] <= logical_group;
+    for (group_stage=1; group_stage<READ_LATENCY; group_stage=group_stage+1)
+      group_pipe[group_stage] <= group_pipe[group_stage-1];
+  end
 edge_dtcm_upper_pair_router #(
   .READ_LATENCY(READ_LATENCY),
   .REQUEST_WIDTH(REQUEST_PAYLOAD_WIDTH),
@@ -154,6 +154,8 @@ edge_dtcm_upper_pair_router #(
   .physical_response_payload(bank_rdata),
   .logical_response_payload(logical_response_payload)
 );
+assign rd_rdata = logical_response_payload[
+    group_pipe[READ_LATENCY-1]*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH];
 end endgenerate
 
 generate
@@ -177,23 +179,15 @@ endgenerate
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
     valid_pipe <= 0;
-    for (stage=0; stage<READ_LATENCY; stage=stage+1) group_pipe[stage] <= 0;
   end else begin
     valid_pipe[0] <= fire && !req_we;
-    group_pipe[0] <= logical_group;
     for (stage=1; stage<READ_LATENCY; stage=stage+1) begin
       valid_pipe[stage] <= valid_pipe[stage-1];
-      group_pipe[stage] <= group_pipe[stage-1];
     end
   end
 end
 assign rd_rvalid_q = valid_pipe[READ_LATENCY-1];
-assign rd_group_q = group_pipe[READ_LATENCY-1];
 
 assign rd_rvalid = rd_rvalid_q;
-assign rd_rdata = logical_response_payload[
-    rd_group_q*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH];
-assign active_mask = bank_req;
-assign unused_compat = |lower_owned_mask;
 
 endmodule

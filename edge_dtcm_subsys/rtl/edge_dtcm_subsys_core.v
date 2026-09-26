@@ -353,7 +353,6 @@ wire [BANK_NUM*DATA_WIDTH-1:0] tensor_native_bank_wdata;
 wire [BANK_NUM-1:0]           tensor_native_bank_we;
 wire [BANK_NUM*BYTE_WIDTH-1:0] tensor_native_bank_wstrb;
 wire [BANK_INDEX_WIDTH-1:0]   tensor_native_phase;
-wire [BANK_NUM-1:0]           dtcm_lower_owned_mask;
 wire                          actu_done_valid;
 wire                          actu_dtcm_rd_req;
 wire                          actu_dtcm_rd_ready;
@@ -386,7 +385,6 @@ always @(posedge clk or negedge cpurst_b) begin
       upper6_last_accel_q <= 1'b0;
   end
 end
-wire [BANK_NUM-1:0]           actu_active_mask;
 wire [BANK_NUM*SRAM_ADDR_WIDTH-1:0] actu_bank_addr;
 wire [BANK_NUM-1:0]           actu_bank_req;
 wire [BANK_NUM*DATA_WIDTH-1:0] actu_bank_rdata;
@@ -428,10 +426,6 @@ assign dma_start_dtcm_offset[39:0] =
        dma_start_dtcm_pa[39:0] - cp0_lsu_dtcm_base[39:0];
 assign dma_start_dtcm_addr[ADDR_WIDTH-1:0] =
        dma_start_dtcm_offset[ADDR_WIDTH+2:3];
-assign dtcm_lower_owned_mask[BANK_NUM-1:0] =
-       SRAM_H4 ? ((16'h03ff << tensor_native_phase) |
-                   (16'h03ff >> (16-tensor_native_phase))) :
-       (tensor_native_phase[1] ? 16'hcccc : 16'h3333);
 assign stream_select = dma_stream_busy_raw || dma_stream_cmd_valid;
 assign dma_axi_araddr = stream_select ? stream_dma_axi_araddr :
                                           legacy_dma_axi_araddr;
@@ -645,7 +639,6 @@ edge_accel_unit #(
 );
 
 edge_actu_dtcm_bank16_adapter #(
-  .LOWER_SIX(SRAM_H4),
   .UPPER_SHARED(SRAM_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
@@ -657,7 +650,6 @@ edge_actu_dtcm_bank16_adapter #(
   .clk(clk),
   .cpurst_b(cpurst_b),
   .phase(tensor_native_phase[BANK_INDEX_WIDTH-1:0]),
-  .lower_owned_mask(dtcm_lower_owned_mask[BANK_NUM-1:0]),
   .rd_req(actu_dtcm_rd_req && memory_ready && accel6_select),
   .rd_ready(actu_dtcm_rd_ready),
   .rd_addr(actu_dtcm_rd_addr[ADDR_WIDTH-1:0]),
@@ -673,8 +665,7 @@ edge_actu_dtcm_bank16_adapter #(
   .bank_addr(actu_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
   .bank_wdata(actu_bank_wdata[BANK_NUM*DATA_WIDTH-1:0]),
   .bank_wstrb(actu_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]),
-  .bank_rdata(actu_bank_rdata[BANK_NUM*DATA_WIDTH-1:0]),
-  .active_mask(actu_active_mask[BANK_NUM-1:0])
+  .bank_rdata(actu_bank_rdata[BANK_NUM*DATA_WIDTH-1:0])
 );
 
 edge_dtcm_arb #(
@@ -734,7 +725,6 @@ edge_dtcm_arb #(
   .tensor_native_bank_we(tensor_native_bank_we[BANK_NUM-1:0]),
   .tensor_native_bank_wstrb(tensor_native_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]),
   .tensor_native_phase(tensor_native_phase[BANK_INDEX_WIDTH-1:0]),
-  .actu_active_mask(actu_active_mask[BANK_NUM-1:0]),
   .actu_bank_addr(actu_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
   .actu_bank_req(actu_bank_req[BANK_NUM-1:0]),
   .actu_bank_rdata(actu_bank_rdata[BANK_NUM*DATA_WIDTH-1:0]),

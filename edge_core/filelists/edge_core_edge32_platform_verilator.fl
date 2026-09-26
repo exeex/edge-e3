@@ -78,9 +78,6 @@ edge_tensor_unit/rtl/compute/edge_tensor_tile_backend.v
 ../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_dirty_array.v
 edge_dtcm_subsys/edge_dtcm_subsys.v
 ../edge-asic/rtl/sram/edge_dtcm_spsram_1024x64.v
-edge_dtcm_subsys/rtl/edge_dtcm_bank_arb.v
-edge_dtcm_subsys/rtl/edge_dtcm_bank_pair_local_arb.v
-edge_dtcm_subsys/rtl/edge_dtcm_bank_pair_slice.v
 edge_dtcm_subsys/rtl/edge_dtcm_bank16_raw_fabric.v
 edge_dtcm_subsys/rtl/edge_dtcm_h4_wrapper.v
 ../edge-asic/rtl/sram/edge_sram_h1_tile4k.v

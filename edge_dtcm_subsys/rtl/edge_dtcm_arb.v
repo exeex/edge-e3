@@ -41,7 +41,6 @@ module edge_dtcm_arb(
   tensor_native_bank_wstrb,
   tensor_native_phase,
   memory_ready,
-  actu_active_mask,
   actu_bank_addr,
   actu_bank_req,
   actu_bank_rdata,
@@ -125,7 +124,6 @@ input  [BANK_NUM*DATA_WIDTH-1:0] tensor_native_bank_wdata;
 input  [BANK_NUM-1:0]    tensor_native_bank_we;
 input  [BANK_NUM*BYTE_WIDTH-1:0] tensor_native_bank_wstrb;
 output [BANK_INDEX_WIDTH-1:0] tensor_native_phase;
-input  [BANK_NUM-1:0]    actu_active_mask;
 input  [BANK_NUM*SRAM_ADDR_WIDTH-1:0] actu_bank_addr;
 input  [BANK_NUM-1:0]    actu_bank_req;
 output [BANK_NUM*DATA_WIDTH-1:0] actu_bank_rdata;
@@ -190,8 +188,7 @@ assign unused_lease_inputs = dma_lease_valid || (|dma_lease_channel[2:0])
                           || (TENSOR_IO_LOOKAHEAD[0])
                           || (TENSOR_WLD_LOOKAHEAD[0])
                           || (DMA_LOOKAHEAD[0])
-                          || (|tensor_native_active_mask[BANK_NUM-1:0])
-                          || (|actu_active_mask[BANK_NUM-1:0]);
+                          || (|tensor_native_active_mask[BANK_NUM-1:0]);
 
 wire [15:0] six_lower_mask = (16'h0fff << bank16_phase_unused)
                               | (16'h0fff >> (16-bank16_phase_unused));
