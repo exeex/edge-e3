@@ -575,7 +575,7 @@ assign input_psum_addr = psum_base_q + (psum_fp32_q
     : {input_consume_count_q[ADDR_WIDTH-2:0], 1'b0});
 assign i_req_mask = active_input_select ? input_select_mask
                                         : next_input_select_mask;
-assign psum_req_mask = (start_accept ? (start_dtype != 4'd0) : psum_fp32_q)
+assign psum_req_mask = (start_accept ? (start_mode[7] || start_dtype != 4'd0) : psum_fp32_q)
     ? quad_mask(psum_req_addr) : pair_mask(psum_req_addr);
 assign output_pending = output_skew_inflight_q != 0;
 assign output_skew_valid = output_fifo_count_q != 0;
@@ -589,7 +589,7 @@ assign out_req_mask = output_skew_valid ?
 assign lower_owned_mask = fabric_phase[1] ? 16'hcccc : 16'h3333;
 assign input_owned_mask = LOWER_SIX ? (16'h0003 << fabric_phase) : lower_owned_mask;
 assign psum_owned_mask = LOWER_SIX ?
-    ((start_accept ? (start_dtype != 4'd0) : psum_fp32_q)
+    ((start_accept ? (start_mode[7] || start_dtype != 4'd0) : psum_fp32_q)
        ? ((16'h000f << psum_channel_bank) | (16'h000f >> (16-psum_channel_bank)))
        : (16'h0003 << psum_channel_bank)) : lower_owned_mask;
 assign output_owned_mask = LOWER_SIX ?
@@ -821,7 +821,7 @@ assign i_pair_rsp_bank0 = i_rsp_bank0_q;
 assign i_pair_rsp_bank1 = i_rsp_bank1_q;
 assign psum_pair_req = psum_read_fire;
 assign psum_pair_req_fp32 = psum_read_fire &&
-    (start_accept ? (start_dtype != 4'd0) : psum_fp32_q);
+    (start_accept ? (start_mode[7] || start_dtype != 4'd0) : psum_fp32_q);
 assign psum_pair_bank0 = psum_req_addr[BANK_INDEX_WIDTH-1:0];
 assign psum_pair_bank1 = next_bank(psum_req_addr);
 assign psum_pair_bank2 = psum_req_addr[BANK_INDEX_WIDTH-1:0] + 4'd2;
@@ -1041,8 +1041,8 @@ always @(posedge clk or negedge cpurst_b) begin
                        && !start_mode[4];
       psum_none_mode_q <= start_mode[2] || start_mode[4];
       rsum_mode_q <= start_mode[4];
-      output_fp32_q <= (start_dtype == 4'd2);
-      psum_fp32_q <= (start_dtype != 4'd0);
+      output_fp32_q <= start_mode[7] ? start_mode[6] : (start_dtype == 4'd2);
+      psum_fp32_q <= start_mode[7] || (start_dtype != 4'd0);
       psum_once_valid_q <= 1'b0;
     end else if (stream_started_q) begin
       stream_cycle_q <= stream_cycle_q + 5'd1;
@@ -1132,9 +1132,10 @@ always @(posedge clk or negedge cpurst_b) begin
 
 `ifndef SYNTHESIS
     if (LOWER_SIX && start_accept &&
-        ((start_dtype != 4'd0 && !start_mode[2] && !start_mode[4]
+        (((start_mode[7] || start_dtype != 4'd0) && !start_mode[2] && !start_mode[4]
           && psum_base_addr[0]) ||
-         (start_dtype == 4'd2 && out_base_addr[0])))
+         ((start_mode[7] ? start_mode[6] : start_dtype == 4'd2)
+          && out_base_addr[0])))
       $fatal(1, "32-bit tensor P/O vectors require 16-byte alignment");
     if (dot_ready && dot_needs_psum && !aligned_psum_valid)
       $fatal(1, "tensor P response missed dot join");

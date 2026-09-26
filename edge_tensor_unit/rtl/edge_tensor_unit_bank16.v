@@ -611,7 +611,6 @@ assign engine_psum_pair_extra_rdata =
 assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
                       || (|cmd_setcsr_wtype[3:0])
                       || cmd_wld_trans_req
-                      || (|cmd_start_mode[7:5])
                       || engine_done;
 
 edge_tensor_engine #(
