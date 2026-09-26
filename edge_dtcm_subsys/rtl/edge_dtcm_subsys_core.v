@@ -365,6 +365,27 @@ wire                          actu_dtcm_wr_ready;
 wire [15:0]                   actu_dtcm_wr_addr;
 wire [127:0]                  actu_dtcm_wr_wdata;
 wire [15:0]                   actu_dtcm_wr_wstrb;
+// ACTU/CMPU and scalar LSU share H4 channel 6. Both clients retain their
+// request until ready; arbitrate only requests that match this cycle's pair.
+wire [2:0] upper6_pair = 3'(tensor_native_phase[3:1] + 3'd6);
+wire accel6_candidate = actu_dtcm_rd_req &&
+    actu_dtcm_rd_addr[3:1] == upper6_pair || actu_dtcm_wr_req &&
+    actu_dtcm_wr_addr[3:1] == upper6_pair;
+wire lsu6_candidate = lsu_req && lsu_addr[3:1] == upper6_pair;
+reg upper6_last_accel_q;
+wire accel6_select = !SRAM_H4 ||
+    (accel6_candidate && (!lsu6_candidate || !upper6_last_accel_q));
+wire lsu6_select = !SRAM_H4 ||
+    (lsu6_candidate && (!accel6_candidate || upper6_last_accel_q));
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b) upper6_last_accel_q <= 1'b0;
+  else if (SRAM_H4 && memory_ready) begin
+    if (accel6_select && (actu_dtcm_rd_ready || actu_dtcm_wr_ready))
+      upper6_last_accel_q <= 1'b1;
+    else if (lsu6_select && lsu_ready)
+      upper6_last_accel_q <= 1'b0;
+  end
+end
 wire [BANK_NUM-1:0]           actu_active_mask;
 wire [BANK_NUM*SRAM_ADDR_WIDTH-1:0] actu_bank_addr;
 wire [BANK_NUM-1:0]           actu_bank_req;
@@ -625,6 +646,7 @@ edge_accel_unit #(
 
 edge_actu_dtcm_bank16_adapter #(
   .LOWER_SIX(SRAM_H4),
+  .UPPER_SHARED(SRAM_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
@@ -636,12 +658,12 @@ edge_actu_dtcm_bank16_adapter #(
   .cpurst_b(cpurst_b),
   .phase(tensor_native_phase[BANK_INDEX_WIDTH-1:0]),
   .lower_owned_mask(dtcm_lower_owned_mask[BANK_NUM-1:0]),
-  .rd_req(actu_dtcm_rd_req && memory_ready),
+  .rd_req(actu_dtcm_rd_req && memory_ready && accel6_select),
   .rd_ready(actu_dtcm_rd_ready),
   .rd_addr(actu_dtcm_rd_addr[ADDR_WIDTH-1:0]),
   .rd_rvalid(actu_dtcm_rd_rvalid),
   .rd_rdata(actu_dtcm_rd_rdata[127:0]),
-  .wr_req(actu_dtcm_wr_req && memory_ready),
+  .wr_req(actu_dtcm_wr_req && memory_ready && accel6_select),
   .wr_ready(actu_dtcm_wr_ready),
   .wr_addr(actu_dtcm_wr_addr[ADDR_WIDTH-1:0]),
   .wr_wdata(actu_dtcm_wr_wdata[127:0]),
@@ -688,7 +710,7 @@ edge_dtcm_arb #(
   .lsu_addr      (lsu_addr[ADDR_WIDTH-1:0]),
   .lsu_rdata     (lsu_rdata[DATA_WIDTH-1:0]),
   .lsu_ready     (lsu_ready),
-  .lsu_req       (lsu_req),
+  .lsu_req       (lsu_req && lsu6_select),
   .lsu_store_block(lsu_store_block),
   .lsu_rvalid    (lsu_rvalid),
   .lsu_we        (lsu_we),

@@ -8,6 +8,7 @@ module edge_actu_dtcm_bank16_adapter(
 
 parameter READ_LATENCY = 1;
 parameter LOWER_SIX = 0;
+parameter UPPER_SHARED = 0;
 parameter ADDR_WIDTH       = 14;
 parameter DATA_WIDTH       = 64;
 parameter BYTE_WIDTH       = DATA_WIDTH / 8;
@@ -83,9 +84,13 @@ genvar pair_i;
 assign pair_phase = phase[BANK_INDEX_WIDTH-1:1];
 assign rd_target_pair = rd_addr[BANK_INDEX_WIDTH-1:1];
 assign wr_target_pair = wr_addr[BANK_INDEX_WIDTH-1:1];
-assign rd_phase_match = LOWER_SIX ? lower_owned_mask[2*rd_target_pair] :
+assign rd_phase_match = UPPER_SHARED ?
+    (rd_target_pair == 3'(pair_phase + 3'd6)) :
+    LOWER_SIX ? lower_owned_mask[2*rd_target_pair] :
     rd_target_pair[0] == pair_phase[0];
-assign wr_phase_match = LOWER_SIX ? lower_owned_mask[2*wr_target_pair] :
+assign wr_phase_match = UPPER_SHARED ?
+    (wr_target_pair == 3'(pair_phase + 3'd6)) :
+    LOWER_SIX ? lower_owned_mask[2*wr_target_pair] :
     wr_target_pair[0] == pair_phase[0];
 assign select_read = rd_req && rd_phase_match;
 assign select_write = wr_req && wr_phase_match && !select_read;
@@ -95,7 +100,9 @@ assign req_addr = select_write ? wr_addr : rd_addr;
 assign target_pair = req_addr[BANK_INDEX_WIDTH-1:1];
 assign pair_delta = target_pair - pair_phase;
 assign logical_group = pair_delta[2:1];
-assign lower_parity_match = LOWER_SIX ? lower_owned_mask[2*target_pair] :
+assign lower_parity_match = UPPER_SHARED ?
+    (target_pair == 3'(pair_phase + 3'd6)) :
+    LOWER_SIX ? lower_owned_mask[2*target_pair] :
     target_pair[0] == pair_phase[0];
 assign fire = req_valid && lower_parity_match;
 assign rd_ready = select_read;
@@ -116,7 +123,7 @@ generate
   end
 endgenerate
 
-generate if (LOWER_SIX) begin: SIX_CHANNELS
+generate if (LOWER_SIX || UPPER_SHARED) begin: DIRECT_CHANNEL
   reg [2:0] response_pair_pipe [0:READ_LATENCY-1];
   integer st;
   always @(posedge clk or negedge cpurst_b)

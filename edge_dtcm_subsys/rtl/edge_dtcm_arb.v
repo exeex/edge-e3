@@ -208,30 +208,26 @@ assign tensor_native_phase[BANK_INDEX_WIDTH-1:0] =
 generate if (SRAM_H4) begin: SIX_LOWER
   for (genvar b=0; b<BANK_NUM; b=b+1) begin: BANK
     wire shared_load = shared_load_mask[b];
-    wire use_actu = actu_bank_req[b];
     assign lower_bank_req[b] = !lsu_store_block &&
-        (shared_load ? other_bank_req[b] : tensor_native_bank_req[b] | actu_bank_req[b]);
-    assign lower_bank_we[b] = !shared_load &&
-        (tensor_native_bank_we[b] | actu_bank_we[b]);
+        (shared_load ? other_bank_req[b] : tensor_native_bank_req[b]);
+    assign lower_bank_we[b] = !shared_load && tensor_native_bank_we[b];
     assign lower_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
         shared_load ? other_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] :
-        use_actu ? actu_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] :
                    tensor_native_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH];
     assign lower_bank_wdata[b*DATA_WIDTH +: DATA_WIDTH] =
-        use_actu ? actu_bank_wdata[b*DATA_WIDTH +: DATA_WIDTH] :
-                   tensor_native_bank_wdata[b*DATA_WIDTH +: DATA_WIDTH];
+        tensor_native_bank_wdata[b*DATA_WIDTH +: DATA_WIDTH];
     assign lower_bank_wstrb[b*BYTE_WIDTH +: BYTE_WIDTH] =
         shared_load ? {BYTE_WIDTH{1'b0}} :
-        use_actu ? actu_bank_wstrb[b*BYTE_WIDTH +: BYTE_WIDTH] :
                    tensor_native_bank_wstrb[b*BYTE_WIDTH +: BYTE_WIDTH];
   end
 `ifndef SYNTHESIS
   always @(posedge clk) if (cpurst_b && memory_ready) begin
-    if (|(tensor_native_bank_req & actu_bank_req))
-      $fatal(1, "tensor/ACTU bank collision");
-    if (|((tensor_native_bank_req | actu_bank_req) &
-          (~six_lower_mask | shared_load_mask)))
+    if (|(other_bank_req & actu_bank_req))
+      $fatal(1, "LSU/ACTU upper channel collision");
+    if (|(tensor_native_bank_req & (~six_lower_mask | shared_load_mask)))
       $fatal(1, "compute request outside reserved lower channels");
+    if (|(actu_bank_req & six_lower_mask))
+      $fatal(1, "ACTU request outside upper channels");
   end
 `endif
 end else begin: LEGACY_LOWER
@@ -252,6 +248,25 @@ assign lower_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0] =
     (|actu_bank_req[BANK_NUM-1:0])
     ? actu_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]
     : tensor_native_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0];
+end endgenerate
+
+wire [BANK_NUM-1:0] routed_upper_bank_req = SRAM_H4 ?
+    (other_bank_req | actu_bank_req) : other_bank_req;
+wire [BANK_NUM-1:0] routed_upper_bank_we = SRAM_H4 ?
+    (other_bank_we | actu_bank_we) : other_bank_we;
+wire [BANK_NUM*SRAM_ADDR_WIDTH-1:0] routed_upper_bank_addr;
+wire [BANK_NUM*DATA_WIDTH-1:0] routed_upper_bank_wdata;
+wire [BANK_NUM*BYTE_WIDTH-1:0] routed_upper_bank_wstrb;
+generate for (genvar u=0; u<BANK_NUM; u=u+1) begin: UPPER_ACCEL_MUX
+  assign routed_upper_bank_addr[u*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
+      SRAM_H4 && actu_bank_req[u] ? actu_bank_addr[u*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] :
+                                      other_bank_addr[u*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH];
+  assign routed_upper_bank_wdata[u*DATA_WIDTH +: DATA_WIDTH] =
+      SRAM_H4 && actu_bank_req[u] ? actu_bank_wdata[u*DATA_WIDTH +: DATA_WIDTH] :
+                                      other_bank_wdata[u*DATA_WIDTH +: DATA_WIDTH];
+  assign routed_upper_bank_wstrb[u*BYTE_WIDTH +: BYTE_WIDTH] =
+      SRAM_H4 && actu_bank_req[u] ? actu_bank_wstrb[u*BYTE_WIDTH +: BYTE_WIDTH] :
+                                      other_bank_wstrb[u*BYTE_WIDTH +: BYTE_WIDTH];
 end endgenerate
 
 edge_dtcm_other_bank16_adapter #(
@@ -321,11 +336,11 @@ edge_dtcm_bank16_raw_fabric #(
   .bank_wstrb({BANK_NUM*BYTE_WIDTH{1'b0}}),
   .split_enable(1'b1),
   .lower_owned_mask(tensor_lower_owned_mask[BANK_NUM-1:0]),
-  .upper_bank_req(other_bank_req[BANK_NUM-1:0]),
-  .upper_bank_we(other_bank_we[BANK_NUM-1:0]),
-  .upper_bank_addr(other_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
-  .upper_bank_wdata(other_bank_wdata[BANK_NUM*DATA_WIDTH-1:0]),
-  .upper_bank_wstrb(other_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]),
+  .upper_bank_req(routed_upper_bank_req[BANK_NUM-1:0]),
+  .upper_bank_we(routed_upper_bank_we[BANK_NUM-1:0]),
+  .upper_bank_addr(routed_upper_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
+  .upper_bank_wdata(routed_upper_bank_wdata[BANK_NUM*DATA_WIDTH-1:0]),
+  .upper_bank_wstrb(routed_upper_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]),
   .lower_bank_req(lower_bank_req[BANK_NUM-1:0]),
   .lower_bank_we(lower_bank_we[BANK_NUM-1:0]),
   .lower_bank_addr(lower_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
