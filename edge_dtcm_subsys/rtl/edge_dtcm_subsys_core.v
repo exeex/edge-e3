@@ -408,7 +408,9 @@ assign dma_start_dtcm_offset[39:0] =
 assign dma_start_dtcm_addr[ADDR_WIDTH-1:0] =
        dma_start_dtcm_offset[ADDR_WIDTH+2:3];
 assign dtcm_lower_owned_mask[BANK_NUM-1:0] =
-       tensor_native_phase[1] ? 16'hcccc : 16'h3333;
+       SRAM_H4 ? ((16'h03ff << tensor_native_phase) |
+                   (16'h03ff >> (16-tensor_native_phase))) :
+       (tensor_native_phase[1] ? 16'hcccc : 16'h3333);
 assign stream_select = dma_stream_busy_raw || dma_stream_cmd_valid;
 assign dma_axi_araddr = stream_select ? stream_dma_axi_araddr :
                                           legacy_dma_axi_araddr;
@@ -475,6 +477,7 @@ assign cmpu_start_ready = cmpu_start_ready_raw && memory_ready && !accel_write_p
 assign dma_stream_busy = dma_stream_busy_raw || (SRAM_H4 && (|stream_write_pipe));
 
 edge_tensor_unit_bank16 #(
+  .LOWER_SIX(SRAM_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(16),
   .BANK_NUM(BANK_NUM),
@@ -621,6 +624,7 @@ edge_accel_unit #(
 );
 
 edge_actu_dtcm_bank16_adapter #(
+  .LOWER_SIX(SRAM_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),

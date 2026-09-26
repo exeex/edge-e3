@@ -26,6 +26,7 @@ module edge_tensor_engine(
   stream_psum_prefetch_accept
 );
 
+parameter LOWER_SIX = 0;
 parameter ADDR_WIDTH = 16;
 parameter SRAM_ADDR_WIDTH = 10;
 parameter DATA_WIDTH = 64;
@@ -193,6 +194,7 @@ wire [BANK_NUM-1:0] i_req_mask;
 wire [BANK_NUM-1:0] psum_req_mask;
 wire [BANK_NUM-1:0] out_req_mask;
 wire [BANK_NUM-1:0] lower_owned_mask;
+wire [BANK_NUM-1:0] input_owned_mask, psum_owned_mask, output_owned_mask;
 wire i_req_owned;
 wire psum_req_owned;
 wire out_req_owned;
@@ -484,7 +486,7 @@ always @* begin
         && (input_select_offset < input_keep_q)
         && (input_select_index_try < target_count_q)
         && !input_slot_issued_q[input_select_slot_try]
-        && ((input_select_mask_try & ~lower_owned_mask) == 0)) begin
+        && ((input_select_mask_try & ~input_owned_mask) == 0)) begin
       input_select_valid = 1'b1;
       input_select_index = input_select_index_try;
       input_select_slot = input_select_slot_try;
@@ -519,7 +521,7 @@ always @* begin
         && (next_input_select_offset < next_input_keep)
         && (next_input_select_index_try < next_input_prefetch_vector_count)
         && !next_input_slot_issued_q[next_input_select_slot_try]
-        && ((next_input_select_mask_try & ~lower_owned_mask) == 0)) begin
+        && ((next_input_select_mask_try & ~input_owned_mask) == 0)) begin
       next_input_select_valid = 1'b1;
       next_input_select_index = next_input_select_index_try;
       next_input_select_slot = next_input_select_slot_try;
@@ -553,9 +555,14 @@ assign output_skew_data = output_skew_payload[127:0];
 assign out_req_mask = output_skew_valid ? pair_mask(output_skew_addr)
                                      : {BANK_NUM{1'b0}};
 assign lower_owned_mask = fabric_phase[1] ? 16'hcccc : 16'h3333;
-assign i_req_owned = (i_req_mask & ~lower_owned_mask) == 0;
-assign psum_req_owned = (psum_req_mask & ~lower_owned_mask) == 0;
-assign out_req_owned = (out_req_mask & ~lower_owned_mask) == 0;
+assign input_owned_mask = LOWER_SIX ? (16'h0003 << fabric_phase) : lower_owned_mask;
+assign psum_owned_mask = LOWER_SIX ?
+    (16'h0003 << (2 * 3'(fabric_phase[3:1] + 3'd1))) : lower_owned_mask;
+assign output_owned_mask = LOWER_SIX ?
+    (16'h0003 << (2 * 3'(fabric_phase[3:1] + 3'd3))) : lower_owned_mask;
+assign i_req_owned = (i_req_mask & ~input_owned_mask) == 0;
+assign psum_req_owned = (psum_req_mask & ~psum_owned_mask) == 0;
+assign out_req_owned = (out_req_mask & ~output_owned_mask) == 0;
 assign i_psum_conflict = (i_req_mask & psum_req_mask) != 0;
 assign i_output_conflict = output_pending && ((i_req_mask & out_req_mask) != 0);
 assign psum_output_conflict = output_pending
@@ -724,6 +731,12 @@ assign handoff_ready_next = compute_busy_q
                          && (psum_issue_count_q == psum_target_count)
                          && !(|i_valid_pipe)
                          && !(|p_valid_pipe)
+                         // Fixed I windows can finish a run while the dot
+                         // pipeline still uses the active weights. Do not
+                         // preactivate the next tile until the last result
+                         // has captured those weights; SRAM writes may drain.
+                         && (!LOWER_SIX || meta_count_q == 0
+                             || (meta_count_q == 1 && tensor_output_valid))
                          && (input_slot_valid_q == {INPUT_FIFO_DEPTH{1'b0}})
                          // Output addresses and data remain in the FIFO, so
                          // a younger descriptor can start while older writes

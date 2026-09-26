@@ -7,6 +7,7 @@ module edge_actu_dtcm_bank16_adapter(
 );
 
 parameter READ_LATENCY = 1;
+parameter LOWER_SIX = 0;
 parameter ADDR_WIDTH       = 14;
 parameter DATA_WIDTH       = 64;
 parameter BYTE_WIDTH       = DATA_WIDTH / 8;
@@ -82,8 +83,10 @@ genvar pair_i;
 assign pair_phase = phase[BANK_INDEX_WIDTH-1:1];
 assign rd_target_pair = rd_addr[BANK_INDEX_WIDTH-1:1];
 assign wr_target_pair = wr_addr[BANK_INDEX_WIDTH-1:1];
-assign rd_phase_match = rd_target_pair[0] == pair_phase[0];
-assign wr_phase_match = wr_target_pair[0] == pair_phase[0];
+assign rd_phase_match = LOWER_SIX ? lower_owned_mask[2*rd_target_pair] :
+    rd_target_pair[0] == pair_phase[0];
+assign wr_phase_match = LOWER_SIX ? lower_owned_mask[2*wr_target_pair] :
+    wr_target_pair[0] == pair_phase[0];
 assign select_read = rd_req && rd_phase_match;
 assign select_write = wr_req && wr_phase_match && !select_read;
 assign req_valid = select_read || select_write;
@@ -92,7 +95,8 @@ assign req_addr = select_write ? wr_addr : rd_addr;
 assign target_pair = req_addr[BANK_INDEX_WIDTH-1:1];
 assign pair_delta = target_pair - pair_phase;
 assign logical_group = pair_delta[2:1];
-assign lower_parity_match = target_pair[0] == pair_phase[0];
+assign lower_parity_match = LOWER_SIX ? lower_owned_mask[2*target_pair] :
+    target_pair[0] == pair_phase[0];
 assign fire = req_valid && lower_parity_match;
 assign rd_ready = select_read;
 assign wr_ready = select_write;
@@ -112,6 +116,26 @@ generate
   end
 endgenerate
 
+generate if (LOWER_SIX) begin: SIX_CHANNELS
+  reg [2:0] response_pair_pipe [0:READ_LATENCY-1];
+  integer st;
+  always @(posedge clk or negedge cpurst_b)
+    if (!cpurst_b) begin
+      for (st=0; st<READ_LATENCY; st=st+1) response_pair_pipe[st] <= 0;
+    end else begin
+      response_pair_pipe[0] <= target_pair;
+      for (st=1; st<READ_LATENCY; st=st+1)
+        response_pair_pipe[st] <= response_pair_pipe[st-1];
+    end
+  for (genvar p=0; p<8; p=p+1) begin: PAIR
+    assign physical_request_payload[p*REQUEST_PAYLOAD_WIDTH +: REQUEST_PAYLOAD_WIDTH] =
+        target_pair == 3'(p) ? request_payload : {REQUEST_PAYLOAD_WIDTH{1'b0}};
+  end
+  for (genvar g=0; g<4; g=g+1) begin: RESPONSE
+    assign logical_response_payload[g*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH] =
+        bank_rdata[response_pair_pipe[READ_LATENCY-1]*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH];
+  end
+end else begin: LEGACY_CHANNELS
 edge_dtcm_upper_pair_router #(
   .READ_LATENCY(READ_LATENCY),
   .REQUEST_WIDTH(REQUEST_PAYLOAD_WIDTH),
@@ -123,6 +147,7 @@ edge_dtcm_upper_pair_router #(
   .physical_response_payload(bank_rdata),
   .logical_response_payload(logical_response_payload)
 );
+end endgenerate
 
 generate
   for (pair_i = 0; pair_i < PAIR_NUM; pair_i = pair_i + 1) begin: PHYSICAL_PAIR

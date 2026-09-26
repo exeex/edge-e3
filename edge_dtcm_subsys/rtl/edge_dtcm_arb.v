@@ -193,14 +193,48 @@ assign unused_lease_inputs = dma_lease_valid || (|dma_lease_channel[2:0])
                           || (|tensor_native_active_mask[BANK_NUM-1:0])
                           || (|actu_active_mask[BANK_NUM-1:0]);
 
-assign tensor_lower_owned_mask[BANK_NUM-1:0] =
-    bank16_phase_unused[1] ? 16'hcccc : 16'h3333;
+wire [15:0] six_lower_mask = (16'h0fff << bank16_phase_unused)
+                              | (16'h0fff >> (16-bank16_phase_unused));
+wire [15:0] shared_load_mask = 16'h0003 <<
+    (2 * 3'(bank16_phase_unused[3:1] + 3'd5));
+assign tensor_lower_owned_mask = SRAM_H4 ? six_lower_mask :
+    (bank16_phase_unused[1] ? 16'hcccc : 16'h3333);
 assign tensor_native_bank_rdata[BANK_NUM*DATA_WIDTH-1:0] =
     bank_rdata[BANK_NUM*DATA_WIDTH-1:0];
 assign actu_bank_rdata[BANK_NUM*DATA_WIDTH-1:0] =
     bank_rdata[BANK_NUM*DATA_WIDTH-1:0];
 assign tensor_native_phase[BANK_INDEX_WIDTH-1:0] =
     bank16_phase_unused[BANK_INDEX_WIDTH-1:0];
+generate if (SRAM_H4) begin: SIX_LOWER
+  for (genvar b=0; b<BANK_NUM; b=b+1) begin: BANK
+    wire shared_load = shared_load_mask[b];
+    wire use_actu = actu_bank_req[b];
+    assign lower_bank_req[b] = !lsu_store_block &&
+        (shared_load ? other_bank_req[b] : tensor_native_bank_req[b] | actu_bank_req[b]);
+    assign lower_bank_we[b] = !shared_load &&
+        (tensor_native_bank_we[b] | actu_bank_we[b]);
+    assign lower_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
+        shared_load ? other_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] :
+        use_actu ? actu_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] :
+                   tensor_native_bank_addr[b*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH];
+    assign lower_bank_wdata[b*DATA_WIDTH +: DATA_WIDTH] =
+        use_actu ? actu_bank_wdata[b*DATA_WIDTH +: DATA_WIDTH] :
+                   tensor_native_bank_wdata[b*DATA_WIDTH +: DATA_WIDTH];
+    assign lower_bank_wstrb[b*BYTE_WIDTH +: BYTE_WIDTH] =
+        shared_load ? {BYTE_WIDTH{1'b0}} :
+        use_actu ? actu_bank_wstrb[b*BYTE_WIDTH +: BYTE_WIDTH] :
+                   tensor_native_bank_wstrb[b*BYTE_WIDTH +: BYTE_WIDTH];
+  end
+`ifndef SYNTHESIS
+  always @(posedge clk) if (cpurst_b && memory_ready) begin
+    if (|(tensor_native_bank_req & actu_bank_req))
+      $fatal(1, "tensor/ACTU bank collision");
+    if (|((tensor_native_bank_req | actu_bank_req) &
+          (~six_lower_mask | shared_load_mask)))
+      $fatal(1, "compute request outside reserved lower channels");
+  end
+`endif
+end else begin: LEGACY_LOWER
 assign lower_bank_req[BANK_NUM-1:0] =
     (tensor_native_bank_req[BANK_NUM-1:0] | actu_bank_req[BANK_NUM-1:0]) &
     {BANK_NUM{!lsu_store_block}};
@@ -218,8 +252,10 @@ assign lower_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0] =
     (|actu_bank_req[BANK_NUM-1:0])
     ? actu_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0]
     : tensor_native_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0];
+end endgenerate
 
 edge_dtcm_other_bank16_adapter #(
+  .LOWER_SIX(SRAM_H4),
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
