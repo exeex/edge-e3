@@ -107,6 +107,7 @@ reg                           weight_reuse_token_q;
 reg                           queued_start_valid_q;
 reg                           queued_start_preactivated_q;
 reg  [7:0]                    queued_start_mode_q;
+reg  [3:0]                    queued_start_dtype_q;
 reg                           queued_start_reuse_weight_q;
 reg                           queued_start_scale_sel_q;
 reg  [SEQ_ID_WIDTH-1:0]       queued_start_seq_id_q;
@@ -122,6 +123,7 @@ reg  [ADDR_WIDTH-1:0]         start_pending_out_q;
 reg  [ADDR_WIDTH-1:0]         start_pending_psum_q;
 reg                           start_pending_wld_pending_q;
 reg  [7:0]                    start_pending_mode_q;
+reg  [3:0]                    start_pending_dtype_q;
 reg                           start_pending_reuse_weight_q;
 reg                           start_pending_scale_sel_q;
 reg  [SEQ_ID_WIDTH-1:0]       start_pending_seq_id_q;
@@ -202,6 +204,7 @@ wire [ADDR_WIDTH-1:0]         engine_start_psum;
 wire [VECTOR_COUNT_WIDTH-1:0] engine_start_count;
 wire                          start_data_scale_sel;
 wire [7:0]                    engine_start_mode;
+wire [3:0]                    engine_start_dtype;
 wire                          engine_start_scale_sel;
 wire [127:0]                  engine_start_scale;
 wire                          wld_cmd_accept;
@@ -268,7 +271,12 @@ wire                          engine_o_pair_req;
 wire [BANK_INDEX_WIDTH-1:0]   engine_o_pair_bank0;
 wire [BANK_INDEX_WIDTH-1:0]   engine_o_pair_bank1;
 wire [SRAM_ADDR_WIDTH-1:0]    engine_o_pair_addr;
-wire [PAIR_WIDTH-1:0]         engine_o_pair_wdata;
+wire [2*PAIR_WIDTH-1:0]       engine_o_pair_wdata;
+wire engine_psum_pair_req_fp32, engine_o_pair_fp32;
+wire [BANK_INDEX_WIDTH-1:0] engine_psum_pair_bank2, engine_psum_pair_bank3;
+wire [BANK_INDEX_WIDTH-1:0] engine_psum_pair_rsp_bank2, engine_psum_pair_rsp_bank3;
+wire [BANK_INDEX_WIDTH-1:0] engine_o_pair_bank2, engine_o_pair_bank3;
+wire [PAIR_WIDTH-1:0] engine_psum_pair_extra_rdata;
 wire                          stream_out_push;
 wire                          stream_i_prefetch_accept;
 wire                          stream_psum_prefetch_accept;
@@ -531,6 +539,9 @@ assign engine_start_count[VECTOR_COUNT_WIDTH-1:0] =
     start_queue_launch ? queued_count_q[VECTOR_COUNT_WIDTH-1:0]
   : start_pending_direct_launch ? start_pending_count_q[VECTOR_COUNT_WIDTH-1:0]
                        : start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
+assign engine_start_dtype = start_queue_launch ? queued_start_dtype_q
+    : start_pending_direct_launch ? start_pending_dtype_q
+                                  : cfg_dtype_q[cfg_write_sel_q];
 assign engine_start_mode[7:0] =
     start_queue_launch ? queued_start_mode_q[7:0]
   : start_pending_direct_launch ? start_pending_mode_q[7:0]
@@ -594,6 +605,9 @@ assign engine_i_pair_rdata[PAIR_WIDTH-1:0] =
 assign engine_psum_pair_rdata[PAIR_WIDTH-1:0] =
     {bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_psum_pair_rsp_bank1),
      bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_psum_pair_rsp_bank0)};
+assign engine_psum_pair_extra_rdata =
+    {bank_data(tensor_bank_rdata, engine_psum_pair_rsp_bank3),
+     bank_data(tensor_bank_rdata, engine_psum_pair_rsp_bank2)};
 assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
                       || (|cmd_setcsr_wtype[3:0])
                       || cmd_wld_trans_req
@@ -619,6 +633,7 @@ edge_tensor_engine #(
   .out_base_addr(engine_start_out[ADDR_WIDTH-1:0]),
   .vector_count(engine_start_count[VECTOR_COUNT_WIDTH-1:0]),
   .start_mode(engine_start_mode[7:0]),
+  .start_dtype(engine_start_dtype),
   .scale_bf16(engine_start_scale[127:0]),
   .scale_stream_valid(scale_stream_count_q != 0),
   .scale_stream_data(scale_stream_fifo_q[scale_stream_head_q]),
@@ -686,11 +701,20 @@ edge_tensor_engine #(
   .psum_pair_rsp_bank0(engine_psum_pair_rsp_bank0[BANK_INDEX_WIDTH-1:0]),
   .psum_pair_rsp_bank1(engine_psum_pair_rsp_bank1[BANK_INDEX_WIDTH-1:0]),
   .psum_pair_rdata(engine_psum_pair_rdata[PAIR_WIDTH-1:0]),
+  .psum_pair_extra_rdata(engine_psum_pair_extra_rdata),
+  .psum_pair_req_fp32(engine_psum_pair_req_fp32),
+  .psum_pair_bank2(engine_psum_pair_bank2),
+  .psum_pair_bank3(engine_psum_pair_bank3),
+  .psum_pair_rsp_bank2(engine_psum_pair_rsp_bank2),
+  .psum_pair_rsp_bank3(engine_psum_pair_rsp_bank3),
   .o_pair_req(engine_o_pair_req),
   .o_pair_bank0(engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0]),
   .o_pair_bank1(engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0]),
   .o_pair_addr(engine_o_pair_addr[SRAM_ADDR_WIDTH-1:0]),
-  .o_pair_wdata(engine_o_pair_wdata[PAIR_WIDTH-1:0]),
+  .o_pair_wdata(engine_o_pair_wdata),
+  .o_pair_fp32(engine_o_pair_fp32),
+  .o_pair_bank2(engine_o_pair_bank2),
+  .o_pair_bank3(engine_o_pair_bank3),
   .stream_out_push(stream_out_push),
   .stream_i_prefetch_accept(stream_i_prefetch_accept),
   .stream_psum_prefetch_accept(stream_psum_prefetch_accept)
@@ -734,6 +758,18 @@ wire unused_packed_weight_status = packed_weight_busy
 
 generate
   for (bank_gen_i = 0; bank_gen_i < BANK_NUM; bank_gen_i = bank_gen_i + 1) begin: MERGE_BANK
+    wire output_match = engine_o_pair_req &&
+        (engine_o_pair_bank0 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         engine_o_pair_bank1 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         (engine_o_pair_fp32 &&
+          (engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+           engine_o_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0])));
+    wire psum_match = engine_psum_pair_req &&
+        (engine_psum_pair_bank0 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         engine_psum_pair_bank1 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         (engine_psum_pair_req_fp32 &&
+          (engine_psum_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+           engine_psum_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0])));
     assign engine_bank_req[bank_gen_i] =
         engine_host_bank_req
         && (engine_host_bank[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
@@ -743,45 +779,40 @@ generate
       || engine_psum_pair_req
         && ((engine_psum_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
             || (engine_psum_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+      || engine_psum_pair_req_fp32
+        && ((engine_psum_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+            || (engine_psum_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
       || engine_o_pair_req
         && ((engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
-            || (engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]));
+            || (engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+      || engine_o_pair_req && engine_o_pair_fp32
+        && ((engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+            || (engine_o_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]));
     assign engine_bank_we[bank_gen_i] =
-        (engine_host_bank_req
-         && (engine_host_bank[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
-        ? engine_host_bank_we
-      : (engine_o_pair_req
-         && ((engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
-             || (engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])));
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_we : output_match;
+    // A vector may wrap bank 15 -> 0. Wrapped banks belong to the next
+    // SRAM row even though the bank number itself has returned to zero.
     assign engine_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
-        (engine_host_bank_req
-         && (engine_host_bank[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
-        ? engine_host_bank_addr[SRAM_ADDR_WIDTH-1:0]
-      : (engine_o_pair_req
-         && ((engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
-             || (engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])))
-        ? engine_o_pair_addr[SRAM_ADDR_WIDTH-1:0]
-      : engine_psum_pair_req
-        && ((engine_psum_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
-            || (engine_psum_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
-        ? engine_psum_pair_addr[SRAM_ADDR_WIDTH-1:0]
-      : engine_i_pair_addr[SRAM_ADDR_WIDTH-1:0];
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_addr : output_match
+          ? engine_o_pair_addr +
+              (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_o_pair_bank0)
+          : psum_match
+          ? engine_psum_pair_addr +
+              (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_psum_pair_bank0)
+          : engine_i_pair_addr +
+              (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_i_pair_bank0);
     assign engine_bank_wdata[bank_gen_i*DATA_WIDTH +: DATA_WIDTH] =
-        (engine_host_bank_req
-         && (engine_host_bank[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
-        ? engine_host_bank_wdata[DATA_WIDTH-1:0]
-      : (engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
-        ? engine_o_pair_wdata[DATA_WIDTH-1:0]
-      : engine_o_pair_wdata[PAIR_WIDTH-1:DATA_WIDTH];
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_wdata :
+        engine_o_pair_bank0 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ? engine_o_pair_wdata[0*DATA_WIDTH +: DATA_WIDTH] :
+        engine_o_pair_bank1 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ? engine_o_pair_wdata[1*DATA_WIDTH +: DATA_WIDTH] :
+        engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ? engine_o_pair_wdata[2*DATA_WIDTH +: DATA_WIDTH] :
+                                                                      engine_o_pair_wdata[3*DATA_WIDTH +: DATA_WIDTH];
     assign engine_bank_wstrb[bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH] =
-        (engine_host_bank_req
-         && (engine_host_bank[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
-        ? engine_host_bank_wstrb[BYTE_WIDTH-1:0]
-      : (engine_o_pair_req
-         && ((engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
-             || (engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])))
-        ? {BYTE_WIDTH{1'b1}}
-      : {BYTE_WIDTH{1'b0}};
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_wstrb : {BYTE_WIDTH{output_match}};
 
     assign tensor_bank_req[bank_gen_i] = engine_bank_req[bank_gen_i];
     assign tensor_bank_we[bank_gen_i] = engine_bank_we[bank_gen_i];
@@ -814,6 +845,7 @@ always @(posedge clk or negedge cpurst_b) begin
     queued_start_valid_q <= 1'b0;
     queued_start_preactivated_q <= 1'b0;
     queued_start_mode_q <= 8'b0;
+    queued_start_dtype_q <= 4'b0;
     queued_start_reuse_weight_q <= 1'b0;
     queued_start_scale_sel_q <= 1'b0;
     queued_start_seq_id_q <= {SEQ_ID_WIDTH{1'b0}};
@@ -829,6 +861,7 @@ always @(posedge clk or negedge cpurst_b) begin
     start_pending_psum_q <= {ADDR_WIDTH{1'b0}};
     start_pending_wld_pending_q <= 1'b0;
     start_pending_mode_q <= 8'b0;
+    start_pending_dtype_q <= 4'b0;
     start_pending_reuse_weight_q <= 1'b0;
     start_pending_scale_sel_q <= 1'b0;
     start_pending_seq_id_q <= {SEQ_ID_WIDTH{1'b0}};
@@ -1047,6 +1080,8 @@ always @(posedge clk or negedge cpurst_b) begin
       queued_count_q <= start_pending_queue_launch
                       ? start_pending_count_q[VECTOR_COUNT_WIDTH-1:0]
                       : start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
+      queued_start_dtype_q <= start_pending_queue_launch
+                           ? start_pending_dtype_q : cfg_dtype_q[cfg_write_sel_q];
       queued_start_mode_q <= start_pending_queue_launch
                            ? start_pending_mode_q[7:0]
                            : cmd_start_mode[7:0];
@@ -1072,6 +1107,7 @@ always @(posedge clk or negedge cpurst_b) begin
                                   && !wld_active_q
                                   && !weight_loaded_q;
       start_pending_mode_q <= cmd_start_mode[7:0];
+      start_pending_dtype_q <= cfg_dtype_q[cfg_write_sel_q];
       start_pending_reuse_weight_q <= weight_reuse_token_q;
       start_pending_scale_sel_q <= start_data_scale_sel;
       start_pending_seq_id_q <= cmd_start_seq_id;

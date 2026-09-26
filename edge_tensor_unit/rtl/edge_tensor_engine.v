@@ -1,6 +1,6 @@
 module edge_tensor_engine(
   clk, cpurst_b, start, in_base_addr, psum_base_addr, out_base_addr,
-  vector_count, start_mode, scale_bf16,
+  vector_count, start_mode, start_dtype, scale_bf16,
   scale_stream_valid, scale_stream_data, scale_stream_ready,
   weight_fill_bf16_mode, weight_fill_start, weight_fill_start_ready,
   weight_fill_valid, weight_fill_ready, weight_fill_pair_idx,
@@ -21,8 +21,10 @@ module edge_tensor_engine(
   i_pair_bank1, i_pair_addr, i_pair_rsp_bank0, i_pair_rsp_bank1,
   i_pair_rdata, psum_pair_req, psum_pair_bank0, psum_pair_bank1,
   psum_pair_addr, psum_pair_rsp_bank0, psum_pair_rsp_bank1,
-  psum_pair_rdata, o_pair_req, o_pair_bank0, o_pair_bank1, o_pair_addr,
-  o_pair_wdata, stream_out_push, stream_i_prefetch_accept,
+  psum_pair_rdata, psum_pair_extra_rdata, psum_pair_req_fp32,
+  psum_pair_bank2, psum_pair_bank3, psum_pair_rsp_bank2, psum_pair_rsp_bank3,
+  o_pair_req, o_pair_bank0, o_pair_bank1, o_pair_bank2, o_pair_bank3,
+  o_pair_fp32, o_pair_addr, o_pair_wdata, stream_out_push, stream_i_prefetch_accept,
   stream_psum_prefetch_accept
 );
 
@@ -57,6 +59,7 @@ input [ADDR_WIDTH-1:0] psum_base_addr;
 input [ADDR_WIDTH-1:0] out_base_addr;
 input [VECTOR_COUNT_WIDTH-1:0] vector_count;
 input [7:0] start_mode;
+input [3:0] start_dtype;
 input [127:0] scale_bf16;
 input scale_stream_valid;
 input [127:0] scale_stream_data;
@@ -121,11 +124,17 @@ output [SRAM_ADDR_WIDTH-1:0] psum_pair_addr;
 output [BANK_INDEX_WIDTH-1:0] psum_pair_rsp_bank0;
 output [BANK_INDEX_WIDTH-1:0] psum_pair_rsp_bank1;
 input [PAIR_WIDTH-1:0] psum_pair_rdata;
+input [PAIR_WIDTH-1:0] psum_pair_extra_rdata;
+output psum_pair_req_fp32;
+output [BANK_INDEX_WIDTH-1:0] psum_pair_bank2, psum_pair_bank3;
+output [BANK_INDEX_WIDTH-1:0] psum_pair_rsp_bank2, psum_pair_rsp_bank3;
 output o_pair_req;
 output [BANK_INDEX_WIDTH-1:0] o_pair_bank0;
 output [BANK_INDEX_WIDTH-1:0] o_pair_bank1;
+output [BANK_INDEX_WIDTH-1:0] o_pair_bank2, o_pair_bank3;
+output o_pair_fp32;
 output [SRAM_ADDR_WIDTH-1:0] o_pair_addr;
-output [PAIR_WIDTH-1:0] o_pair_wdata;
+output [2*PAIR_WIDTH-1:0] o_pair_wdata;
 output stream_out_push;
 output stream_i_prefetch_accept;
 output stream_psum_prefetch_accept;
@@ -162,12 +171,13 @@ reg [ADDR_WIDTH-1:0] meta_addr_fifo [0:META_FIFO_DEPTH-1];
 reg meta_old_fifo [0:META_FIFO_DEPTH-1];
 reg meta_scale_fifo [0:META_FIFO_DEPTH-1];
 reg meta_first_fifo [0:META_FIFO_DEPTH-1];
+reg meta_fp32_fifo [0:META_FIFO_DEPTH-1];
 reg [META_FIFO_INDEX_WIDTH-1:0] meta_head_q;
 reg [META_FIFO_INDEX_WIDTH-1:0] meta_tail_q;
 reg [META_FIFO_INDEX_WIDTH:0] meta_count_q;
 reg [META_FIFO_INDEX_WIDTH:0] scaled_inflight_count_q;
 reg [3:0] output_skew_inflight_q;
-reg [143:0] output_fifo_q [0:OUTPUT_FIFO_DEPTH-1];
+reg [272:0] output_fifo_q [0:OUTPUT_FIFO_DEPTH-1];
 reg output_old_fifo [0:OUTPUT_FIFO_DEPTH-1];
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_head_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_tail_q;
@@ -185,6 +195,8 @@ reg [127:0] scale_bf16_q;
 reg psum_once_mode_q;
 reg psum_none_mode_q;
 reg rsum_mode_q;
+reg output_fp32_q;
+reg psum_fp32_q;
 reg psum_once_valid_q;
 reg [PAIR_WIDTH-1:0] psum_once_data_q;
 
@@ -195,6 +207,8 @@ wire [BANK_NUM-1:0] psum_req_mask;
 wire [BANK_NUM-1:0] out_req_mask;
 wire [BANK_NUM-1:0] lower_owned_mask;
 wire [BANK_NUM-1:0] input_owned_mask, psum_owned_mask, output_owned_mask;
+wire [3:0] psum_channel_bank = 2 * 3'(fabric_phase[3:1] + 3'd1);
+wire [3:0] output_channel_bank = 2 * 3'(fabric_phase[3:1] + 3'd3);
 wire i_req_owned;
 wire psum_req_owned;
 wire out_req_owned;
@@ -229,15 +243,18 @@ wire [1:0] output_skew_cfg_out_extra;
 wire output_skew_mid_valid;
 wire [143:0] output_skew_mid_payload;
 wire output_skew_valid;
-wire [143:0] output_skew_payload;
+wire [272:0] output_skew_payload;
 wire output_skew_pipe_valid;
 wire [143:0] output_skew_pipe_payload;
 wire output_skew_fifo_push;
 wire output_skew_fifo_pop;
 wire output_queue_push_valid;
-wire [143:0] output_queue_push_payload;
+wire [272:0] output_queue_push_payload;
 wire [ADDR_WIDTH-1:0] output_skew_addr;
-wire [PAIR_WIDTH-1:0] output_skew_data;
+wire [2*PAIR_WIDTH-1:0] output_skew_data;
+wire output_skew_fp32;
+wire [2*PAIR_WIDTH-1:0] fp32_output_data;
+wire [PAIR_WIDTH-1:0] converted_psum_data;
 wire psum_fifo_push;
 wire psum_fifo_pop;
 wire psum_fifo_credit;
@@ -326,6 +343,16 @@ begin
     if (addr_next[BANK_INDEX_WIDTH-1:0] == i[BANK_INDEX_WIDTH-1:0])
       pair_mask[i] = 1'b1;
   end
+end
+endfunction
+
+function [BANK_NUM-1:0] quad_mask;
+  input [ADDR_WIDTH-1:0] addr;
+  integer j;
+begin
+  quad_mask = 0;
+  for (j=0; j<4; j=j+1)
+    quad_mask[(addr[BANK_INDEX_WIDTH-1:0] + j) % BANK_NUM] = 1'b1;
 end
 endfunction
 
@@ -540,26 +567,35 @@ assign next_input_select = !active_input_select
 assign i_req_addr = active_input_select ? input_select_addr
                                         : next_input_select_addr;
 assign psum_req_addr = start_accept ? psum_base_addr
-                     : psum_base_q
-                       + {psum_issue_count_q[ADDR_WIDTH-2:0], 1'b0};
-assign input_psum_addr = psum_base_q
-                       + {input_consume_count_q[ADDR_WIDTH-2:0], 1'b0};
+                     : psum_base_q + (psum_fp32_q
+                         ? {psum_issue_count_q[ADDR_WIDTH-3:0], 2'b00}
+                         : {psum_issue_count_q[ADDR_WIDTH-2:0], 1'b0});
+assign input_psum_addr = psum_base_q + (psum_fp32_q
+    ? {input_consume_count_q[ADDR_WIDTH-3:0], 2'b00}
+    : {input_consume_count_q[ADDR_WIDTH-2:0], 1'b0});
 assign i_req_mask = active_input_select ? input_select_mask
                                         : next_input_select_mask;
-assign psum_req_mask = pair_mask(psum_req_addr);
+assign psum_req_mask = (start_accept ? (start_dtype != 4'd0) : psum_fp32_q)
+    ? quad_mask(psum_req_addr) : pair_mask(psum_req_addr);
 assign output_pending = output_skew_inflight_q != 0;
 assign output_skew_valid = output_fifo_count_q != 0;
 assign output_skew_payload = output_fifo_q[output_fifo_head_q];
-assign output_skew_addr = output_skew_payload[143:128];
-assign output_skew_data = output_skew_payload[127:0];
-assign out_req_mask = output_skew_valid ? pair_mask(output_skew_addr)
+assign output_skew_addr = output_skew_payload[272:257];
+assign output_skew_fp32 = output_skew_payload[256];
+assign output_skew_data = output_skew_payload[255:0];
+assign out_req_mask = output_skew_valid ?
+    (output_skew_fp32 ? quad_mask(output_skew_addr) : pair_mask(output_skew_addr))
                                      : {BANK_NUM{1'b0}};
 assign lower_owned_mask = fabric_phase[1] ? 16'hcccc : 16'h3333;
 assign input_owned_mask = LOWER_SIX ? (16'h0003 << fabric_phase) : lower_owned_mask;
 assign psum_owned_mask = LOWER_SIX ?
-    (16'h0003 << (2 * 3'(fabric_phase[3:1] + 3'd1))) : lower_owned_mask;
+    ((start_accept ? (start_dtype != 4'd0) : psum_fp32_q)
+       ? ((16'h000f << psum_channel_bank) | (16'h000f >> (16-psum_channel_bank)))
+       : (16'h0003 << psum_channel_bank)) : lower_owned_mask;
 assign output_owned_mask = LOWER_SIX ?
-    (16'h0003 << (2 * 3'(fabric_phase[3:1] + 3'd3))) : lower_owned_mask;
+    (output_skew_fp32
+       ? ((16'h000f << output_channel_bank) | (16'h000f >> (16-output_channel_bank)))
+       : (16'h0003 << output_channel_bank)) : lower_owned_mask;
 assign i_req_owned = (i_req_mask & ~input_owned_mask) == 0;
 assign psum_req_owned = (psum_req_mask & ~psum_owned_mask) == 0;
 assign out_req_owned = (out_req_mask & ~output_owned_mask) == 0;
@@ -597,10 +633,10 @@ always @* begin
                            + psum_output_scan_i[OUTPUT_FIFO_INDEX_WIDTH-1:0];
     if (psum_output_scan_i < output_fifo_count_q) begin
       if ((start_accept || output_old_fifo[psum_output_scan_slot])
-          && output_fifo_q[psum_output_scan_slot][143:128] == psum_req_addr)
+          && output_fifo_q[psum_output_scan_slot][272:257] == psum_req_addr)
         psum_req_addr_pending = 1'b1;
       if (output_old_fifo[psum_output_scan_slot]
-          && output_fifo_q[psum_output_scan_slot][143:128]
+          && output_fifo_q[psum_output_scan_slot][272:257]
                  == input_psum_addr)
         input_psum_addr_pending = 1'b1;
     end
@@ -644,8 +680,14 @@ assign output_write_fire = output_candidate
 // timing path, but their global tap cannot safely be reconfigured while an
 // older descriptor is still in flight.
 assign output_queue_push_valid = tensor_output_valid;
+for (genvar lane=0; lane<8; lane=lane+1) begin: FP32_OUTPUT_PACK
+  assign fp32_output_data[lane*32 +: 32] =
+      {tensor_output_data[lane*16 +: 16], 16'b0};
+end
 assign output_queue_push_payload = {meta_addr_fifo[meta_head_q],
-                                    tensor_output_data};
+    meta_fp32_fifo[meta_head_q],
+    meta_fp32_fifo[meta_head_q] ? fp32_output_data :
+                                  {{PAIR_WIDTH{1'b0}}, tensor_output_data}};
 assign output_skew_fifo_push = output_queue_push_valid
                              && ((output_fifo_count_q < OUTPUT_FIFO_DEPTH)
                                  || output_skew_fifo_pop);
@@ -687,7 +729,8 @@ assign input_compute_data = input_slot_valid_q[input_head_slot]
                           ? input_window_read_data
                           : i_pair_rdata;
 assign input_compute_out_addr = out_base_q
-                              + {input_consume_count_q[ADDR_WIDTH-2:0], 1'b0};
+    + (output_fp32_q ? {input_consume_count_q[ADDR_WIDTH-3:0], 2'b00}
+                     : {input_consume_count_q[ADDR_WIDTH-2:0], 1'b0});
 assign input_fifo_rsp_store = iop_rsp_valid_q
                            && !i_rsp_next_input_q
                            && !(input_head_from_rsp && input_compute_fire);
@@ -695,8 +738,13 @@ assign next_input_fifo_rsp_store = iop_rsp_valid_q && i_rsp_next_input_q;
 assign compute_valid_q = input_compute_fire;
 assign scale_stream_ready = input_compute_fire && scale_stream_enable_q;
 assign aligned_psum_valid = (psum_count_q != 0) || psum_rsp_valid_q;
+for (genvar lane=0; lane<8; lane=lane+1) begin: FP32_PSUM_UNPACK
+  wire [255:0] raw_data = {psum_pair_extra_rdata, psum_pair_rdata};
+  assign converted_psum_data[lane*16 +: 16] = psum_fp32_q
+      ? raw_data[lane*32+16 +: 16] : psum_pair_rdata[lane*16 +: 16];
+end
 assign aligned_psum_data = (psum_count_q != 0)
-                         ? psum_data_fifo[psum_head_q] : psum_pair_rdata;
+                         ? psum_data_fifo[psum_head_q] : converted_psum_data;
 assign psum_target_count = psum_none_mode_q ? {VECTOR_COUNT_WIDTH{1'b0}}
                          : psum_once_mode_q
                            ? {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1}
@@ -772,14 +820,23 @@ assign i_pair_addr = i_req_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WI
 assign i_pair_rsp_bank0 = i_rsp_bank0_q;
 assign i_pair_rsp_bank1 = i_rsp_bank1_q;
 assign psum_pair_req = psum_read_fire;
+assign psum_pair_req_fp32 = psum_read_fire &&
+    (start_accept ? (start_dtype != 4'd0) : psum_fp32_q);
 assign psum_pair_bank0 = psum_req_addr[BANK_INDEX_WIDTH-1:0];
 assign psum_pair_bank1 = next_bank(psum_req_addr);
+assign psum_pair_bank2 = psum_req_addr[BANK_INDEX_WIDTH-1:0] + 4'd2;
+assign psum_pair_bank3 = psum_req_addr[BANK_INDEX_WIDTH-1:0] + 4'd3;
 assign psum_pair_addr = psum_req_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
 assign psum_pair_rsp_bank0 = psum_rsp_bank0_q;
 assign psum_pair_rsp_bank1 = psum_rsp_bank1_q;
+assign psum_pair_rsp_bank2 = psum_rsp_bank0_q + 4'd2;
+assign psum_pair_rsp_bank3 = psum_rsp_bank0_q + 4'd3;
 assign o_pair_req = output_write_fire;
 assign o_pair_bank0 = output_skew_addr[BANK_INDEX_WIDTH-1:0];
 assign o_pair_bank1 = next_bank(output_skew_addr);
+assign o_pair_bank2 = output_skew_addr[BANK_INDEX_WIDTH-1:0] + 4'd2;
+assign o_pair_bank3 = output_skew_addr[BANK_INDEX_WIDTH-1:0] + 4'd3;
+assign o_pair_fp32 = output_skew_fp32;
 assign o_pair_addr = output_skew_addr
                    [SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
 assign o_pair_wdata = output_skew_data;
@@ -923,6 +980,8 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_once_mode_q <= 1'b0;
     psum_none_mode_q <= 1'b0;
     rsum_mode_q <= 1'b0;
+    output_fp32_q <= 1'b0;
+    psum_fp32_q <= 1'b0;
     psum_once_valid_q <= 1'b0;
     psum_once_data_q <= 0;
     for (psum_fifo_i = 0; psum_fifo_i < PSUM_FIFO_DEPTH;
@@ -982,6 +1041,8 @@ always @(posedge clk or negedge cpurst_b) begin
                        && !start_mode[4];
       psum_none_mode_q <= start_mode[2] || start_mode[4];
       rsum_mode_q <= start_mode[4];
+      output_fp32_q <= (start_dtype == 4'd2);
+      psum_fp32_q <= (start_dtype != 4'd0);
       psum_once_valid_q <= 1'b0;
     end else if (stream_started_q) begin
       stream_cycle_q <= stream_cycle_q + 5'd1;
@@ -1010,7 +1071,7 @@ always @(posedge clk or negedge cpurst_b) begin
     end
 
     if (psum_rsp_valid_q && psum_once_mode_q) begin
-      psum_once_data_q <= psum_pair_rdata;
+      psum_once_data_q <= converted_psum_data;
       psum_once_valid_q <= 1'b1;
     end
 
@@ -1018,6 +1079,7 @@ always @(posedge clk or negedge cpurst_b) begin
       meta_addr_fifo[meta_tail_q] <= input_compute_out_addr;
       meta_old_fifo[meta_tail_q] <= 1'b0;
       meta_scale_fifo[meta_tail_q] <= scale_enable_q;
+      meta_fp32_fifo[meta_tail_q] <= output_fp32_q;
       meta_first_fifo[meta_tail_q] <=
           input_consume_count_q == {VECTOR_COUNT_WIDTH{1'b0}};
       meta_tail_q <= meta_tail_q + 1'b1;
@@ -1037,7 +1099,7 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
     if (psum_fifo_push) begin
-      psum_data_fifo[psum_tail_q] <= psum_pair_rdata;
+      psum_data_fifo[psum_tail_q] <= converted_psum_data;
       psum_tail_q <= psum_tail_q + 1'b1;
     end
     if (psum_fifo_pop)
@@ -1069,6 +1131,11 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
+    if (LOWER_SIX && start_accept &&
+        ((start_dtype != 4'd0 && !start_mode[2] && !start_mode[4]
+          && psum_base_addr[0]) ||
+         (start_dtype == 4'd2 && out_base_addr[0])))
+      $fatal(1, "32-bit tensor P/O vectors require 16-byte alignment");
     if (dot_ready && dot_needs_psum && !aligned_psum_valid)
       $fatal(1, "tensor P response missed dot join");
     if (psum_fifo_push && (psum_count_q == PSUM_FIFO_DEPTH)
@@ -1078,7 +1145,7 @@ always @(posedge clk or negedge cpurst_b) begin
     end
     if (output_queue_push_valid && !output_skew_fifo_push) begin
       $display("tensor output FIFO overflow addr=%h phase=%h count=%0d",
-               output_queue_push_payload[143:128], fabric_phase,
+               output_queue_push_payload[272:257], fabric_phase,
                output_fifo_count_q);
       $finish;
     end
