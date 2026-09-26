@@ -36,6 +36,7 @@ module edge_dtcm_other_bank16_adapter(
   upper_bank_wstrb
 );
 
+parameter READ_LATENCY = 1;
 parameter ADDR_WIDTH       = 14;
 parameter DATA_WIDTH       = 64;
 parameter BYTE_WIDTH       = DATA_WIDTH / 8;
@@ -129,7 +130,9 @@ wire [ADDR_WIDTH-1:0]         shared_ld_addr;
 wire                          shared_ld_ready;
 wire                          shared_ld_rvalid;
 wire [DMA_DATA_WIDTH-1:0]     shared_ld_rdata;
-reg                           shared_ld_rsp_owner_wld_q;
+wire shared_ld_rsp_owner_wld_q;
+reg [READ_LATENCY-1:0] owner_pipe;
+integer stage;
 
 wire [1:0]                    lsu_lane_req;
 wire [1:0]                    lsu_lane_we;
@@ -185,6 +188,7 @@ assign logical_request_payload[4*REQUEST_PAYLOAD_WIDTH-1:0] =
 
 edge_dtcm_upper_pair_router #(
   .REQUEST_WIDTH(REQUEST_PAYLOAD_WIDTH),
+  .READ_LATENCY(READ_LATENCY),
   .RESPONSE_WIDTH(PAIR_DATA_WIDTH)
 ) x_upper_pair_router (
   .clk(clk),
@@ -222,6 +226,7 @@ generate
 endgenerate
 
 edge_dtcm_upper_io #(
+  .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(1),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(3'd1), .ALLOW_WRITE(1)
@@ -244,6 +249,7 @@ edge_dtcm_upper_io #(
 );
 
 edge_dtcm_upper_io #(
+  .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(2),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(3'd3), .ALLOW_WRITE(1)
@@ -265,7 +271,7 @@ edge_dtcm_upper_io #(
 
 // WLD wins a simultaneous request and SLD keeps its request asserted until
 // WLD releases the shared port. Only the selected requester observes ready.
-// Capture the accepted owner so the one-cycle SRAM response cannot be routed
+// Capture the accepted owner so the SRAM response cannot be routed
 // to a requester that arrived later.
 assign shared_ld_select_wld = wld_req;
 assign shared_ld_req = wld_req || sld_req;
@@ -280,13 +286,17 @@ assign wld_rdata[DMA_DATA_WIDTH-1:0] = shared_ld_rdata[DMA_DATA_WIDTH-1:0];
 assign sld_rdata[DMA_DATA_WIDTH-1:0] = shared_ld_rdata[DMA_DATA_WIDTH-1:0];
 
 always @(posedge clk or negedge cpurst_b) begin
-  if (!cpurst_b)
-    shared_ld_rsp_owner_wld_q <= 1'b0;
-  else if (shared_ld_ready)
-    shared_ld_rsp_owner_wld_q <= shared_ld_select_wld;
+  if (!cpurst_b) owner_pipe <= 0;
+  else begin
+    owner_pipe[0] <= shared_ld_select_wld;
+    for (stage=1; stage<READ_LATENCY; stage=stage+1)
+      owner_pipe[stage] <= owner_pipe[stage-1];
+  end
 end
+assign shared_ld_rsp_owner_wld_q = owner_pipe[READ_LATENCY-1];
 
 edge_dtcm_upper_io #(
+  .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(2),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(3'd5), .ALLOW_WRITE(0)

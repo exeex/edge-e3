@@ -13,6 +13,7 @@ parameter RESPONSE_WIDTH = 1;
 // Odd channels (1/3/5/7) are the maintained upper plane.  Even channels
 // (0/2/4/6) use the same four-group route with the carry/parity reversed.
 parameter CHANNEL_PARITY = 1;
+parameter READ_LATENCY = 1;
 
 input                         clk;
 input                         cpurst_b;
@@ -28,7 +29,9 @@ wire [1:0]                    inverse_response_phase;
 wire [4*REQUEST_WIDTH-1:0]    request_shift1_payload;
 wire [4*REQUEST_WIDTH-1:0]    grouped_request_payload;
 wire [4*RESPONSE_WIDTH-1:0]   grouped_response_payload;
-reg  [2:0]                    response_pair_phase_q;
+wire [2:0] response_pair_phase_q;
+reg [2:0] phase_pipe [0:READ_LATENCY-1];
+integer stage;
 
 genvar group_i;
 
@@ -83,11 +86,15 @@ generate
 endgenerate
 
 always @(posedge clk or negedge cpurst_b) begin
-  if (!cpurst_b)
-    response_pair_phase_q[2:0] <= 3'd0;
-  else
-    response_pair_phase_q[2:0] <= pair_phase[2:0];
+  if (!cpurst_b) begin
+    for (stage=0; stage<READ_LATENCY; stage=stage+1) phase_pipe[stage] <= 0;
+  end else begin
+    phase_pipe[0] <= pair_phase;
+    for (stage=1; stage<READ_LATENCY; stage=stage+1)
+      phase_pipe[stage] <= phase_pipe[stage-1];
+  end
 end
+assign response_pair_phase_q = phase_pipe[READ_LATENCY-1];
 
 edge_dtcm_pair_rotator4 #(
   .PAYLOAD_WIDTH(RESPONSE_WIDTH)

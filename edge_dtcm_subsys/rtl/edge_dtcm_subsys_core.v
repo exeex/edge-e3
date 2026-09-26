@@ -13,6 +13,9 @@ module edge_dtcm_subsys_core #(
   parameter [3:0] TENSOR_IO_LOOKAHEAD = 4'd2,
   parameter [3:0] TENSOR_WLD_LOOKAHEAD = 4'd2,
   parameter [3:0] DMA_LOOKAHEAD = 4'd3,
+  // Standalone legacy/proxy harnesses retain inferred SRAM. The product
+  // edge_dtcm_subsys boundary explicitly selects H4 by default.
+  parameter SRAM_H4 = 0,
   parameter TENSOR_PACKED_WEIGHT = 1
 )(
   clk,
@@ -406,7 +409,7 @@ assign dma_start_dtcm_addr[ADDR_WIDTH-1:0] =
        dma_start_dtcm_offset[ADDR_WIDTH+2:3];
 assign dtcm_lower_owned_mask[BANK_NUM-1:0] =
        tensor_native_phase[1] ? 16'hcccc : 16'h3333;
-assign stream_select = dma_stream_busy || dma_stream_cmd_valid;
+assign stream_select = dma_stream_busy_raw || dma_stream_cmd_valid;
 assign dma_axi_araddr = stream_select ? stream_dma_axi_araddr :
                                           legacy_dma_axi_araddr;
 assign dma_axi_arlen = stream_select ? stream_dma_axi_arlen :
@@ -432,9 +435,47 @@ assign dma_lease_delay = stream_select ? stream_dma_lease_delay :
                                          legacy_dma_lease_delay;
 assign dma_lease_valid = stream_select ? stream_dma_lease_valid :
                                          legacy_dma_lease_valid;
-assign dma_busy = legacy_dma_busy || dma_stream_busy;
+assign dma_busy = legacy_dma_busy || dma_stream_busy || dma_write_pending;
+
+localparam DTCM_READ_LATENCY = SRAM_H4 ? 4 : 1;
+wire memory_ready;
+wire tensor_start_ready_raw;
+assign tensor_start_ready = tensor_start_ready_raw && memory_ready;
+
+// Completion includes the physical write tail, including ACTU/CMPU and DMA.
+wire actu_busy_raw, actu_sync_stall_raw, actu_start_ready_raw;
+wire cmpu_busy_raw, cmpu_sync_stall_raw, cmpu_start_ready_raw;
+wire dma_stream_busy_raw;
+reg [DTCM_READ_LATENCY-1:0] accel_write_pipe, dma_write_pipe, stream_write_pipe;
+integer write_stage;
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b) begin
+    accel_write_pipe <= 0;
+    dma_write_pipe <= 0;
+    stream_write_pipe <= 0;
+  end else begin
+    accel_write_pipe[0] <= actu_dtcm_wr_req && actu_dtcm_wr_ready;
+    dma_write_pipe[0] <= dma_dtcm_req && dma_ready && dma_dtcm_we;
+    stream_write_pipe[0] <= dma_dtcm_req && dma_ready && dma_dtcm_we && stream_select;
+    for (write_stage=1; write_stage<DTCM_READ_LATENCY; write_stage=write_stage+1) begin
+      accel_write_pipe[write_stage] <= accel_write_pipe[write_stage-1];
+      dma_write_pipe[write_stage] <= dma_write_pipe[write_stage-1];
+      stream_write_pipe[write_stage] <= stream_write_pipe[write_stage-1];
+    end
+  end
+end
+wire accel_write_pending = SRAM_H4 && (|accel_write_pipe);
+wire dma_write_pending = SRAM_H4 && (|dma_write_pipe);
+assign actu_busy = actu_busy_raw || accel_write_pending;
+assign cmpu_busy = cmpu_busy_raw || accel_write_pending;
+assign actu_sync_stall = actu_sync_stall_raw || accel_write_pending;
+assign cmpu_sync_stall = cmpu_sync_stall_raw || accel_write_pending;
+assign actu_start_ready = actu_start_ready_raw && memory_ready && !accel_write_pending;
+assign cmpu_start_ready = cmpu_start_ready_raw && memory_ready && !accel_write_pending;
+assign dma_stream_busy = dma_stream_busy_raw || (SRAM_H4 && (|stream_write_pipe));
 
 edge_tensor_unit_bank16 #(
+  .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(16),
   .BANK_NUM(BANK_NUM),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
@@ -456,8 +497,8 @@ edge_tensor_unit_bank16 #(
   .cmd_setout_req(tensor_cmd_setout_req),
   .cmd_setpsum_ptr(tensor_cmd_setpsum_ptr[15:0]),
   .cmd_setpsum_req(tensor_cmd_setpsum_req),
-  .cmd_start_req(tensor_cmd_start_req),
-  .cmd_start_tile_req(tensor_cmd_start_tile_req),
+  .cmd_start_req(tensor_cmd_start_req && memory_ready),
+  .cmd_start_tile_req(tensor_cmd_start_tile_req && memory_ready),
   .cmd_start_mode(tensor_cmd_start_mode),
   .cmd_start_seq_id(tensor_cmd_start_seq_id),
   .cmd_start_epoch(tensor_cmd_start_epoch),
@@ -473,7 +514,7 @@ edge_tensor_unit_bank16 #(
   .cmd_sld_stream_setup_req(tensor_cmd_sld_stream_setup_req),
   .tensor_busy(tensor_busy),
   .tensor_cmd_ready(tensor_cmd_ready),
-  .tensor_start_ready(tensor_start_ready),
+  .tensor_start_ready(tensor_start_ready_raw),
   .tensor_wld_cmd_ready(tensor_wld_cmd_ready),
   .tensor_sld_cmd_ready(tensor_sld_cmd_ready),
   .tensor_sld_fill_done(tensor_sld_fill_done),
@@ -535,12 +576,12 @@ edge_accel_unit #(
   .actu_cmd_setn_value(actu_cmd_setn_value[15:0]),
   .actu_cmd_setscalar_req(actu_cmd_setscalar_req),
   .actu_cmd_setscalar_value(actu_cmd_setscalar_value[63:0]),
-  .actu_cmd_start_req(actu_cmd_start_req),
+  .actu_cmd_start_req(actu_cmd_start_req && memory_ready && !accel_write_pending),
   .actu_cmd_sync_req(actu_cmd_sync_req),
   .actu_cmd_ready(actu_cmd_ready),
-  .actu_start_ready(actu_start_ready),
-  .actu_sync_stall(actu_sync_stall),
-  .actu_busy(actu_busy),
+  .actu_start_ready(actu_start_ready_raw),
+  .actu_sync_stall(actu_sync_stall_raw),
+  .actu_busy(actu_busy_raw),
   .actu_done_valid(actu_done_valid),
   .cmpu_cmd_setcsr_mode(cmpu_cmd_setcsr_mode),
   .cmpu_cmd_setcsr_req(cmpu_cmd_setcsr_req),
@@ -554,12 +595,12 @@ edge_accel_unit #(
   .cmpu_cmd_setout_req(cmpu_cmd_setout_req),
   .cmpu_cmd_setn_req(cmpu_cmd_setn_req),
   .cmpu_cmd_setn_value(cmpu_cmd_setn_value),
-  .cmpu_cmd_start_req(cmpu_cmd_start_req),
+  .cmpu_cmd_start_req(cmpu_cmd_start_req && memory_ready && !accel_write_pending),
   .cmpu_cmd_sync_req(cmpu_cmd_sync_req),
   .cmpu_cmd_ready(cmpu_cmd_ready),
-  .cmpu_start_ready(cmpu_start_ready),
-  .cmpu_sync_stall(cmpu_sync_stall),
-  .cmpu_busy(cmpu_busy),
+  .cmpu_start_ready(cmpu_start_ready_raw),
+  .cmpu_sync_stall(cmpu_sync_stall_raw),
+  .cmpu_busy(cmpu_busy_raw),
   .cmpu_done_valid(),
   .cmpu_result_update(cmpu_result_update),
   .cmpu_max_value(cmpu_max_value),
@@ -580,6 +621,7 @@ edge_accel_unit #(
 );
 
 edge_actu_dtcm_bank16_adapter #(
+  .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
   .BANK_NUM(BANK_NUM),
@@ -590,12 +632,12 @@ edge_actu_dtcm_bank16_adapter #(
   .cpurst_b(cpurst_b),
   .phase(tensor_native_phase[BANK_INDEX_WIDTH-1:0]),
   .lower_owned_mask(dtcm_lower_owned_mask[BANK_NUM-1:0]),
-  .rd_req(actu_dtcm_rd_req),
+  .rd_req(actu_dtcm_rd_req && memory_ready),
   .rd_ready(actu_dtcm_rd_ready),
   .rd_addr(actu_dtcm_rd_addr[ADDR_WIDTH-1:0]),
   .rd_rvalid(actu_dtcm_rd_rvalid),
   .rd_rdata(actu_dtcm_rd_rdata[127:0]),
-  .wr_req(actu_dtcm_wr_req),
+  .wr_req(actu_dtcm_wr_req && memory_ready),
   .wr_ready(actu_dtcm_wr_ready),
   .wr_addr(actu_dtcm_wr_addr[ADDR_WIDTH-1:0]),
   .wr_wdata(actu_dtcm_wr_wdata[127:0]),
@@ -610,6 +652,7 @@ edge_actu_dtcm_bank16_adapter #(
 );
 
 edge_dtcm_arb #(
+  .SRAM_H4(SRAM_H4),
   .ADDR_WIDTH         (ADDR_WIDTH),
   .DATA_WIDTH         (DATA_WIDTH),
   .DMA_DATA_WIDTH     (DMA_DATA_WIDTH),
@@ -623,6 +666,7 @@ edge_dtcm_arb #(
   .TENSOR_WLD_LOOKAHEAD(TENSOR_WLD_LOOKAHEAD),
   .DMA_LOOKAHEAD      (DMA_LOOKAHEAD)
 ) x_edge_dtcm_arb (
+  .memory_ready(memory_ready),
   .clk           (clk),
   .cpurst_b      (cpurst_b),
   .dma_addr      (dma_dtcm_addr[ADDR_WIDTH-1:0]),
@@ -713,7 +757,7 @@ edge_dma_a2d_stream #(
   .dtcm_wstrb(stream_dma_dtcm_wstrb),
   .dtcm_ready(dma_ready && stream_select),
   .beat_done(dma_stream_beat_done),
-  .busy(dma_stream_busy),
+  .busy(dma_stream_busy_raw),
   .lease_channel(stream_dma_lease_channel),
   .lease_cycles(stream_dma_lease_cycles),
   .lease_delay(stream_dma_lease_delay),

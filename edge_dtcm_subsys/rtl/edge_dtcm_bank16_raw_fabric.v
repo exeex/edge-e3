@@ -20,7 +20,8 @@ module edge_dtcm_bank16_raw_fabric(
   lower_bank_wdata,
   lower_bank_wstrb,
   bank_rdata,
-  bank_rvalid
+  bank_rvalid,
+  phase_ready
 );
 
 parameter BANK_NUM        = 16;
@@ -30,6 +31,7 @@ parameter DATA_WIDTH      = 64;
 parameter BYTE_WIDTH      = DATA_WIDTH / 8;
 parameter SEGMENT_NUM     = 1;
 parameter SPLIT_MODE      = 0;
+parameter SRAM_H4         = 0;
 
 input                         clk;
 input                         cpurst_b;
@@ -55,7 +57,12 @@ output [BANK_NUM*DATA_WIDTH-1:0] bank_rdata;
 output [BANK_NUM-1:0]         bank_rvalid;
 
 reg [BANK_INDEX_WIDTH-1:0]    phase;
-reg [BANK_NUM-1:0]            bank_rvalid;
+output phase_ready;
+wire [BANK_NUM-1:0] bank_rvalid;
+wire [BANK_NUM-1:0] selected_req, selected_we;
+wire [BANK_NUM*ADDR_WIDTH-1:0] selected_addr;
+wire [BANK_NUM*DATA_WIDTH-1:0] selected_data;
+wire [BANK_NUM*BYTE_WIDTH-1:0] selected_strb;
 wire [BANK_NUM*DATA_WIDTH-1:0] bank_rdata;
 wire [BANK_NUM-1:0]           effective_bank_req;
 wire                          unused_split_enable;
@@ -74,12 +81,27 @@ always @(posedge clk or negedge cpurst_b) begin
                                  + {{BANK_INDEX_WIDTH-2{1'b0}}, 2'd2};
 end
 
-always @(posedge clk or negedge cpurst_b) begin
-  if (!cpurst_b)
-    bank_rvalid[BANK_NUM-1:0] <= {BANK_NUM{1'b0}};
-  else
-    bank_rvalid[BANK_NUM-1:0] <= effective_bank_req[BANK_NUM-1:0];
-end
+generate
+  if (SRAM_H4 != 0) begin: H4_STORAGE
+    edge_dtcm_h4_wrapper x_wrapper (
+      .clk(clk), .cpurst_b(cpurst_b), .pair_phase(phase[3:1]),
+      .phase_ready(phase_ready), .bank_req(selected_req),
+      .bank_we(selected_we), .bank_addr(selected_addr),
+      .bank_wdata(selected_data), .bank_wstrb(selected_strb),
+      .bank_rdata(bank_rdata), .bank_rvalid(bank_rvalid));
+`ifndef SYNTHESIS
+    initial if (BANK_NUM != 16 || DATA_WIDTH != 64 || ADDR_WIDTH != 10 || SEGMENT_NUM != 1)
+      $fatal(1, "H4 DTCM requires 16 x 64-bit banks, 1024 rows");
+`endif
+  end else begin: INFERRED_VALID
+    reg [BANK_NUM-1:0] valid_q;
+    always @(posedge clk or negedge cpurst_b)
+      if (!cpurst_b) valid_q <= 0;
+      else valid_q <= effective_bank_req;
+    assign bank_rvalid = valid_q;
+    assign phase_ready = cpurst_b;
+  end
+endgenerate
 
 generate
   for (bank_i = 0; bank_i < BANK_NUM; bank_i = bank_i + 1) begin: BANK
@@ -135,47 +157,55 @@ generate
 
     assign effective_bank_req[bank_i] = local_req && !local_we;
 
-    for (byte_i = 0; byte_i < BYTE_WIDTH; byte_i = byte_i + 1) begin: WEN
-      assign bank_wen[byte_i*8 +: 8] =
-          local_wstrb[byte_i] ? 8'h00 : 8'hff;
-    end
+    assign selected_req[bank_i] = local_req;
+    assign selected_we[bank_i] = local_we;
+    assign selected_addr[bank_i*ADDR_WIDTH +: ADDR_WIDTH] = local_addr;
+    assign selected_data[bank_i*DATA_WIDTH +: DATA_WIDTH] = local_wdata;
+    assign selected_strb[bank_i*BYTE_WIDTH +: BYTE_WIDTH] = local_wstrb;
 
-    if (SEGMENT_NUM == 1) begin: ONE_SEGMENT_RDATA
-      assign bank_rdata[bank_i*DATA_WIDTH +: DATA_WIDTH] =
-          segment_rdata[DATA_WIDTH-1:0];
-    end else begin: MANY_SEGMENT_RDATA
-      reg [$clog2(SEGMENT_NUM)-1:0] read_segment_q;
-      always @(posedge clk or negedge cpurst_b) begin
-        if (!cpurst_b)
-          read_segment_q <= 0;
-        else if (local_req && !local_we)
-          read_segment_q <=
-              local_addr[ADDR_WIDTH-1 -: $clog2(SEGMENT_NUM)];
+    if (SRAM_H4 == 0) begin: INFERRED_STORAGE
+      for (byte_i = 0; byte_i < BYTE_WIDTH; byte_i = byte_i + 1) begin: WEN
+        assign bank_wen[byte_i*8 +: 8] =
+            local_wstrb[byte_i] ? 8'h00 : 8'hff;
       end
-      assign bank_rdata[bank_i*DATA_WIDTH +: DATA_WIDTH] =
-          segment_rdata[read_segment_q*DATA_WIDTH +: DATA_WIDTH];
-    end
 
-    for (segment_i = 0; segment_i < SEGMENT_NUM; segment_i = segment_i + 1) begin: SEGMENT
-      wire segment_select;
-      if (SEGMENT_NUM == 1) begin: ONE_SEGMENT
-        assign segment_select = 1'b1;
-      end else begin: MANY_SEGMENTS
-        assign segment_select =
-            local_addr[ADDR_WIDTH-1 -: $clog2(SEGMENT_NUM)] == segment_i;
+      if (SEGMENT_NUM == 1) begin: ONE_SEGMENT_RDATA
+        assign bank_rdata[bank_i*DATA_WIDTH +: DATA_WIDTH] =
+            segment_rdata[DATA_WIDTH-1:0];
+      end else begin: MANY_SEGMENT_RDATA
+        reg [$clog2(SEGMENT_NUM)-1:0] read_segment_q;
+        always @(posedge clk or negedge cpurst_b) begin
+          if (!cpurst_b)
+            read_segment_q <= 0;
+          else if (local_req && !local_we)
+            read_segment_q <=
+                local_addr[ADDR_WIDTH-1 -: $clog2(SEGMENT_NUM)];
+        end
+        assign bank_rdata[bank_i*DATA_WIDTH +: DATA_WIDTH] =
+            segment_rdata[read_segment_q*DATA_WIDTH +: DATA_WIDTH];
       end
-      edge_dtcm_spsram_1024x64 #(
-        .ADDR_WIDTH(PHYSICAL_ADDR_WIDTH),
-        .DATA_WIDTH(DATA_WIDTH)
-      ) x_sram (
-        .A    (local_addr[PHYSICAL_ADDR_WIDTH-1:0]),
-        .CEN  (!(local_req && segment_select)),
-        .CLK  (clk),
-        .D    (local_wdata[DATA_WIDTH-1:0]),
-        .GWEN (!local_we),
-        .Q    (segment_rdata[segment_i*DATA_WIDTH +: DATA_WIDTH]),
-        .WEN  (bank_wen[DATA_WIDTH-1:0])
-      );
+
+      for (segment_i = 0; segment_i < SEGMENT_NUM; segment_i = segment_i + 1) begin: SEGMENT
+        wire segment_select;
+        if (SEGMENT_NUM == 1) begin: ONE_SEGMENT
+          assign segment_select = 1'b1;
+        end else begin: MANY_SEGMENTS
+          assign segment_select =
+              local_addr[ADDR_WIDTH-1 -: $clog2(SEGMENT_NUM)] == segment_i;
+        end
+        edge_dtcm_spsram_1024x64 #(
+          .ADDR_WIDTH(PHYSICAL_ADDR_WIDTH),
+          .DATA_WIDTH(DATA_WIDTH)
+        ) x_sram (
+          .A    (local_addr[PHYSICAL_ADDR_WIDTH-1:0]),
+          .CEN  (!(local_req && segment_select)),
+          .CLK  (clk),
+          .D    (local_wdata[DATA_WIDTH-1:0]),
+          .GWEN (!local_we),
+          .Q    (segment_rdata[segment_i*DATA_WIDTH +: DATA_WIDTH]),
+          .WEN  (bank_wen[DATA_WIDTH-1:0])
+        );
+      end
     end
   end
 endgenerate

@@ -6,6 +6,7 @@ module edge_actu_dtcm_bank16_adapter(
   bank_rdata, active_mask
 );
 
+parameter READ_LATENCY = 1;
 parameter ADDR_WIDTH       = 14;
 parameter DATA_WIDTH       = 64;
 parameter BYTE_WIDTH       = DATA_WIDTH / 8;
@@ -68,8 +69,11 @@ wire [REQUEST_PAYLOAD_WIDTH-1:0] request_payload;
 wire [4*REQUEST_PAYLOAD_WIDTH-1:0] logical_request_payload;
 wire [PAIR_NUM*REQUEST_PAYLOAD_WIDTH-1:0] physical_request_payload;
 wire [4*PAIR_DATA_WIDTH-1:0] logical_response_payload;
-reg                           rd_rvalid_q;
-reg  [1:0]                    rd_group_q;
+wire rd_rvalid_q;
+reg [READ_LATENCY-1:0] valid_pipe;
+reg [1:0] group_pipe [0:READ_LATENCY-1];
+integer stage;
+wire [1:0] rd_group_q;
 wire                          unused_compat;
 
 genvar group_i;
@@ -109,6 +113,7 @@ generate
 endgenerate
 
 edge_dtcm_upper_pair_router #(
+  .READ_LATENCY(READ_LATENCY),
   .REQUEST_WIDTH(REQUEST_PAYLOAD_WIDTH),
   .RESPONSE_WIDTH(PAIR_DATA_WIDTH), .CHANNEL_PARITY(0)
 ) x_lower_pair_router (
@@ -139,14 +144,19 @@ endgenerate
 
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
-    rd_rvalid_q <= 1'b0;
-    rd_group_q <= 2'b0;
+    valid_pipe <= 0;
+    for (stage=0; stage<READ_LATENCY; stage=stage+1) group_pipe[stage] <= 0;
   end else begin
-    rd_rvalid_q <= fire && !req_we;
-    if (fire && !req_we)
-      rd_group_q <= logical_group;
+    valid_pipe[0] <= fire && !req_we;
+    group_pipe[0] <= logical_group;
+    for (stage=1; stage<READ_LATENCY; stage=stage+1) begin
+      valid_pipe[stage] <= valid_pipe[stage-1];
+      group_pipe[stage] <= group_pipe[stage-1];
+    end
   end
 end
+assign rd_rvalid_q = valid_pipe[READ_LATENCY-1];
+assign rd_group_q = group_pipe[READ_LATENCY-1];
 
 assign rd_rvalid = rd_rvalid_q;
 assign rd_rdata = logical_response_payload[

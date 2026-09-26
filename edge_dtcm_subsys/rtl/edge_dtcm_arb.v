@@ -40,6 +40,7 @@ module edge_dtcm_arb(
   tensor_native_bank_we,
   tensor_native_bank_wstrb,
   tensor_native_phase,
+  memory_ready,
   actu_active_mask,
   actu_bank_addr,
   actu_bank_req,
@@ -65,6 +66,8 @@ module edge_dtcm_arb(
   tensor_wld_lease_valid
 );
 
+parameter SRAM_H4 = 0;
+localparam READ_LATENCY = SRAM_H4 ? 4 : 1;
 parameter ADDR_WIDTH          = 14;
 parameter DATA_WIDTH          = 64;
 parameter BYTE_WIDTH          = DATA_WIDTH / 8;
@@ -80,6 +83,7 @@ parameter [3:0] TENSOR_IO_LOOKAHEAD = 4'd2;
 parameter [3:0] TENSOR_WLD_LOOKAHEAD = 4'd2;
 parameter [3:0] DMA_LOOKAHEAD       = 4'd3;
 
+output memory_ready;
 input                    clk;
 input                    cpurst_b;
 input  [ADDR_WIDTH-1:0]  dma_addr;
@@ -216,6 +220,7 @@ assign lower_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0] =
     : tensor_native_bank_wstrb[BANK_NUM*BYTE_WIDTH-1:0];
 
 edge_dtcm_other_bank16_adapter #(
+  .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
   .DMA_DATA_WIDTH(DMA_DATA_WIDTH),
@@ -230,7 +235,7 @@ edge_dtcm_other_bank16_adapter #(
   .dma_addr(dma_addr[ADDR_WIDTH-1:0]),
   .dma_rdata(dma_rdata[DMA_DATA_WIDTH-1:0]),
   .dma_ready(dma_ready),
-  .dma_req(dma_req && !lsu_store_block),
+  .dma_req(dma_req && !lsu_store_block && memory_ready),
   .dma_rvalid(dma_rvalid),
   .dma_we(dma_we),
   .dma_wdata(dma_wdata[DMA_DATA_WIDTH-1:0]),
@@ -238,7 +243,7 @@ edge_dtcm_other_bank16_adapter #(
   .lsu_addr(lsu_addr[ADDR_WIDTH-1:0]),
   .lsu_rdata(lsu_rdata[DATA_WIDTH-1:0]),
   .lsu_ready(lsu_ready),
-  .lsu_req(lsu_req),
+  .lsu_req(lsu_req && memory_ready),
   .lsu_rvalid(lsu_rvalid),
   .lsu_we(lsu_we),
   .lsu_wdata(lsu_wdata[DATA_WIDTH-1:0]),
@@ -246,12 +251,12 @@ edge_dtcm_other_bank16_adapter #(
   .sld_addr(sld_addr[ADDR_WIDTH-1:0]),
   .sld_rdata(sld_rdata[DMA_DATA_WIDTH-1:0]),
   .sld_ready(sld_ready),
-  .sld_req(sld_req && !lsu_store_block),
+  .sld_req(sld_req && !lsu_store_block && memory_ready),
   .sld_rvalid(sld_rvalid),
   .wld_addr(wld_addr[ADDR_WIDTH-1:0]),
   .wld_rdata(wld_rdata[DMA_DATA_WIDTH-1:0]),
   .wld_ready(wld_ready),
-  .wld_req(wld_req && !lsu_store_block),
+  .wld_req(wld_req && !lsu_store_block && memory_ready),
   .wld_rvalid(wld_rvalid),
   .upper_bank_req(other_bank_req[BANK_NUM-1:0]),
   .upper_bank_we(other_bank_we[BANK_NUM-1:0]),
@@ -261,6 +266,7 @@ edge_dtcm_other_bank16_adapter #(
 );
 
 edge_dtcm_bank16_raw_fabric #(
+  .SRAM_H4(SRAM_H4),
   .BANK_NUM(BANK_NUM),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .ADDR_WIDTH(SRAM_ADDR_WIDTH),
@@ -268,6 +274,7 @@ edge_dtcm_bank16_raw_fabric #(
   .SEGMENT_NUM(SEGMENT_NUM),
   .SPLIT_MODE(1)
 ) x_raw_fabric (
+  .phase_ready(memory_ready),
   .clk(clk),
   .cpurst_b(cpurst_b),
   .phase(bank16_phase_unused[BANK_INDEX_WIDTH-1:0]),

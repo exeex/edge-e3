@@ -8,6 +8,7 @@ module edge_dtcm_subsys #(
   parameter DTCM_ADDR_WIDTH = 14,
   parameter LSU_DATA_WIDTH = 64,
   parameter SRAM_ADDR_WIDTH = 10,
+  parameter SRAM_H4 = 1,
   parameter SEGMENT_NUM = 1
 ) (
   input  wire                         forever_cpuclk,
@@ -189,6 +190,7 @@ module edge_dtcm_subsys #(
   assign dma_axi_awsize[2:0] = 3'b100;
 
   edge_dtcm_subsys_core #(
+    .SRAM_H4(SRAM_H4),
     .ADDR_WIDTH(DTCM_ADDR_WIDTH),
     .DATA_WIDTH(LSU_DATA_WIDTH),
     .DMA_DATA_WIDTH(AXI_DATA_WIDTH),

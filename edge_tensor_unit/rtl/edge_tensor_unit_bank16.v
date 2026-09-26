@@ -7,6 +7,7 @@ module edge_tensor_unit_bank16 #(
   parameter VECTOR_COUNT_WIDTH = 16,
   parameter SEQ_ID_WIDTH = 8,
   parameter EPOCH_WIDTH = 4,
+  parameter READ_LATENCY = 1,
   parameter PACKED_WEIGHT = 0
 ) (
   input  wire                         clk,
@@ -137,7 +138,10 @@ reg                           wld_active_bf16_q;
 reg  [ADDR_WIDTH-1:0]         wld_base_q;
 reg  [2:0]                    wld_issue_idx_q;
 reg  [3:0]                    wld_read_count_q;
-reg  [2:0]                    wld_rsp_idx_q;
+wire [2:0] wld_rsp_idx_q;
+reg [2:0] wld_tag_pipe [0:READ_LATENCY-1];
+integer wld_stage;
+wire [BANK_INDEX_WIDTH-1:0] engine_host_rsp_bank;
 reg  [127:0]                  scale_buf_q [0:1];
 reg                           scale_active_sel_q;
 reg                           scale_active_valid_q;
@@ -370,6 +374,18 @@ assign scale_stream_push = tensor_sld_rvalid && sld_wait_q && sld_stream_q;
 assign tensor_wld_fill_done = wld_fill_done;
 assign tensor_wld_tile_words[4:0] =
     (cfg_wtype_q[cfg_write_sel_q][3:0] == 4'd1) ? 5'd16 : 5'd8;
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b) begin
+    for (wld_stage=0; wld_stage<READ_LATENCY; wld_stage=wld_stage+1)
+      wld_tag_pipe[wld_stage] <= 0;
+  end else begin
+    wld_tag_pipe[0] <= wld_issue_idx_q;
+    for (wld_stage=1; wld_stage<READ_LATENCY; wld_stage=wld_stage+1)
+      wld_tag_pipe[wld_stage] <= wld_tag_pipe[wld_stage-1];
+  end
+end
+assign wld_rsp_idx_q = wld_tag_pipe[READ_LATENCY-1];
+
 assign tensor_sync_stall = engine_busy
                          || copy_active_q
                          || queued_start_valid_q
@@ -558,7 +574,7 @@ assign tensor_wld_req = wld_active_q
 assign wld_read_fire = tensor_wld_req && tensor_wld_ready;
 assign wld_load_data[PAIR_WIDTH-1:0] = tensor_wld_rdata[PAIR_WIDTH-1:0];
 assign engine_host_bank_rdata[DATA_WIDTH-1:0] =
-    bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_host_bank);
+    bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_host_rsp_bank);
 assign copy_host_req = copy_active_q && engine_host_ready
                      && (copy_host_addr[1] == tensor_phase[1])
                      && (copy_write_q || !engine_host_rvalid);
@@ -583,6 +599,7 @@ assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
                       || engine_done;
 
 edge_tensor_engine #(
+  .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
@@ -643,6 +660,7 @@ edge_tensor_engine #(
   .host_ready(engine_host_ready),
   .host_rdata(engine_host_rdata),
   .host_rvalid(engine_host_rvalid),
+  .host_rsp_bank(engine_host_rsp_bank),
   .fabric_phase(tensor_phase[BANK_INDEX_WIDTH-1:0]),
   .host_bank_req(engine_host_bank_req),
   .host_bank_we(engine_host_bank_we),
@@ -825,7 +843,6 @@ always @(posedge clk or negedge cpurst_b) begin
     wld_base_q <= {ADDR_WIDTH{1'b0}};
     wld_issue_idx_q <= 3'b0;
     wld_read_count_q <= 4'b0;
-    wld_rsp_idx_q <= 3'b0;
     scale_buf_q[0] <= 128'b0;
     scale_buf_q[1] <= 128'b0;
     scale_active_sel_q <= 1'b0;
@@ -982,7 +999,6 @@ always @(posedge clk or negedge cpurst_b) begin
     end
 
     if (wld_read_fire) begin
-      wld_rsp_idx_q <= wld_issue_idx_q[2:0];
       wld_issue_idx_q <= wld_issue_idx_q + 3'd1;
       wld_read_count_q <= wld_read_count_q + 4'd1;
     end

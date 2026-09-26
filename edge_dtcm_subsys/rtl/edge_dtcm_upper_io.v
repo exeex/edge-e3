@@ -34,6 +34,7 @@ parameter BANK_INDEX_WIDTH = 4;
 parameter SRAM_ADDR_WIDTH  = 10;
 parameter [2:0] FIXED_CHANNEL = 3'd0;
 parameter ALLOW_WRITE      = 1;
+parameter READ_LATENCY     = 1;
 
 input                              clk;
 input                              cpurst_b;
@@ -64,9 +65,9 @@ wire [2:0]                         target_pair;
 wire                               phase_match;
 wire                               request_legal;
 wire                               fire;
-reg                                rvalid_q;
-reg  [BANK_INDEX_WIDTH-1:0]        rsp_bank0_q;
-reg  [BANK_INDEX_WIDTH-1:0]        rsp_bank1_q;
+wire                               rvalid_q;
+wire [BANK_INDEX_WIDTH-1:0]        rsp_bank0_q;
+wire [BANK_INDEX_WIDTH-1:0]        rsp_bank1_q;
 
 assign bank0[BANK_INDEX_WIDTH-1:0] = req_addr[BANK_INDEX_WIDTH-1:0];
 assign bank1[BANK_INDEX_WIDTH-1:0] =
@@ -87,19 +88,31 @@ assign ready = fire;
 assign bank_req = fire;
 assign bank_we = req_we;
 
+reg [READ_LATENCY-1:0] valid_pipe;
+reg [BANK_INDEX_WIDTH-1:0] bank0_pipe [0:READ_LATENCY-1];
+reg [BANK_INDEX_WIDTH-1:0] bank1_pipe [0:READ_LATENCY-1];
+integer stage;
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
-    rvalid_q <= 1'b0;
-    rsp_bank0_q <= {BANK_INDEX_WIDTH{1'b0}};
-    rsp_bank1_q <= {BANK_INDEX_WIDTH{1'b0}};
+    valid_pipe <= 0;
+    for (stage=0; stage<READ_LATENCY; stage=stage+1) begin
+      bank0_pipe[stage] <= 0;
+      bank1_pipe[stage] <= 0;
+    end
   end else begin
-    rvalid_q <= fire && !req_we;
-    if (fire && !req_we) begin
-      rsp_bank0_q <= bank0[BANK_INDEX_WIDTH-1:0];
-      rsp_bank1_q <= bank1[BANK_INDEX_WIDTH-1:0];
+    valid_pipe[0] <= fire && !req_we;
+    bank0_pipe[0] <= bank0;
+    bank1_pipe[0] <= bank1;
+    for (stage=1; stage<READ_LATENCY; stage=stage+1) begin
+      valid_pipe[stage] <= valid_pipe[stage-1];
+      bank0_pipe[stage] <= bank0_pipe[stage-1];
+      bank1_pipe[stage] <= bank1_pipe[stage-1];
     end
   end
 end
+assign rvalid_q = valid_pipe[READ_LATENCY-1];
+assign rsp_bank0_q = bank0_pipe[READ_LATENCY-1];
+assign rsp_bank1_q = bank1_pipe[READ_LATENCY-1];
 
 assign rvalid = rvalid_q;
 assign rsp_bank0[BANK_INDEX_WIDTH-1:0] = rsp_bank0_q[BANK_INDEX_WIDTH-1:0];

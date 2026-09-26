@@ -15,7 +15,7 @@ module edge_tensor_engine(
   next_input_prefetch_psum_base_addr, next_input_prefetch_mode,
   next_input_prefetch_vector_count,
   handoff_ready, busy, done, host_req, host_we, host_addr, host_wdata,
-  host_wstrb, host_ready, host_rdata, host_rvalid, fabric_phase,
+  host_wstrb, host_ready, host_rdata, host_rvalid, host_rsp_bank, fabric_phase,
   host_bank_req, host_bank_we, host_bank, host_bank_addr, host_bank_wdata,
   host_bank_wstrb, host_bank_rdata, i_pair_req, i_pair_bank0,
   i_pair_bank1, i_pair_addr, i_pair_rsp_bank0, i_pair_rsp_bank1,
@@ -33,6 +33,7 @@ parameter BANK_NUM = 16;
 parameter BANK_INDEX_WIDTH = 4;
 parameter VECTOR_COUNT_WIDTH = 16;
 parameter PACKED_WEIGHT = 0;
+parameter READ_LATENCY = 1;
 
 localparam BYTE_WIDTH = DATA_WIDTH / 8;
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
@@ -96,6 +97,7 @@ input [BYTE_WIDTH-1:0] host_wstrb;
 output host_ready;
 output [DATA_WIDTH-1:0] host_rdata;
 output host_rvalid;
+output [BANK_INDEX_WIDTH-1:0] host_rsp_bank;
 input [BANK_INDEX_WIDTH-1:0] fabric_phase;
 output host_bank_req;
 output host_bank_we;
@@ -142,14 +144,14 @@ reg [VECTOR_COUNT_WIDTH-1:0] psum_issue_count_q;
 reg [ADDR_WIDTH-1:0] in_base_q;
 reg [ADDR_WIDTH-1:0] psum_base_q;
 reg [ADDR_WIDTH-1:0] out_base_q;
-reg iop_rsp_valid_q;
-reg psum_rsp_valid_q;
-reg [BANK_INDEX_WIDTH-1:0] i_rsp_bank0_q;
-reg [BANK_INDEX_WIDTH-1:0] i_rsp_bank1_q;
-reg [BANK_INDEX_WIDTH-1:0] psum_rsp_bank0_q;
-reg [BANK_INDEX_WIDTH-1:0] psum_rsp_bank1_q;
-reg [VECTOR_COUNT_WIDTH-1:0] i_rsp_index_q;
-reg i_rsp_next_input_q;
+wire iop_rsp_valid_q;
+wire psum_rsp_valid_q;
+wire [BANK_INDEX_WIDTH-1:0] i_rsp_bank0_q;
+wire [BANK_INDEX_WIDTH-1:0] i_rsp_bank1_q;
+wire [BANK_INDEX_WIDTH-1:0] psum_rsp_bank0_q;
+wire [BANK_INDEX_WIDTH-1:0] psum_rsp_bank1_q;
+wire [VECTOR_COUNT_WIDTH-1:0] i_rsp_index_q;
+wire i_rsp_next_input_q;
 reg [VECTOR_COUNT_WIDTH-1:0] next_input_issue_count_q;
 reg [PAIR_WIDTH-1:0] psum_data_fifo [0:PSUM_FIFO_DEPTH-1];
 reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_head_q;
@@ -170,8 +172,8 @@ reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_head_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_tail_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_fifo_count_q;
 reg [6:0] psum_stream_mode_pipe_q;
-reg host_rvalid_q;
-reg [BANK_INDEX_WIDTH-1:0] host_rsp_bank_q;
+wire host_rvalid_q;
+wire [BANK_INDEX_WIDTH-1:0] host_rsp_bank_q;
 // Native E3 RSUM performs the numerical merge in the dot kernel. Keep the
 // E4-style post-input drain boundary before publishing that final value.
 reg rsum_drain_pending_q;
@@ -381,10 +383,61 @@ assign next_input_keep = choose_input_keep(
     next_input_prefetch_base_addr, next_input_prefetch_psum_base_addr,
     next_input_prefetch_mode, next_input_prefetch_vector_count);
 
-assign busy = busy_q;
+// Fixed-latency memory tags. Reserve every outstanding P response, and
+// finish sync only after the final output has reached the SRAM array.
+reg [READ_LATENCY-1:0] i_valid_pipe, p_valid_pipe, host_valid_pipe, write_pipe;
+localparam I_TAG_WIDTH = 2*BANK_INDEX_WIDTH + VECTOR_COUNT_WIDTH + 1;
+reg [I_TAG_WIDTH-1:0] i_tag_pipe [0:READ_LATENCY-1];
+reg [2*BANK_INDEX_WIDTH-1:0] p_tag_pipe [0:READ_LATENCY-1];
+reg [BANK_INDEX_WIDTH-1:0] host_tag_pipe [0:READ_LATENCY-1];
+integer response_stage;
+integer psum_inflight;
+always @* begin
+  psum_inflight = 0;
+  for (integer s=0; s<READ_LATENCY; s=s+1)
+    psum_inflight = psum_inflight + int'(p_valid_pipe[s]);
+end
+assign iop_rsp_valid_q = i_valid_pipe[READ_LATENCY-1];
+assign psum_rsp_valid_q = p_valid_pipe[READ_LATENCY-1];
+assign host_rvalid_q = host_valid_pipe[READ_LATENCY-1];
+assign {i_rsp_bank0_q, i_rsp_bank1_q, i_rsp_index_q, i_rsp_next_input_q} =
+    i_tag_pipe[READ_LATENCY-1];
+assign {psum_rsp_bank0_q, psum_rsp_bank1_q} = p_tag_pipe[READ_LATENCY-1];
+assign host_rsp_bank_q = host_tag_pipe[READ_LATENCY-1];
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b) begin
+    i_valid_pipe <= 0; p_valid_pipe <= 0; host_valid_pipe <= 0; write_pipe <= 0;
+    for (response_stage=0; response_stage<READ_LATENCY; response_stage=response_stage+1) begin
+      i_tag_pipe[response_stage] <= 0;
+      p_tag_pipe[response_stage] <= 0;
+      host_tag_pipe[response_stage] <= 0;
+    end
+  end else begin
+    i_valid_pipe[0] <= read_fire;
+    p_valid_pipe[0] <= psum_read_fire;
+    host_valid_pipe[0] <= host_bank_req && !host_we;
+    write_pipe[0] <= output_write_fire || (host_bank_req && host_we);
+    i_tag_pipe[0] <= {i_req_addr[BANK_INDEX_WIDTH-1:0], next_bank(i_req_addr),
+        (next_input_select ? next_input_select_index : input_select_index), next_input_select};
+    p_tag_pipe[0] <= {psum_req_addr[BANK_INDEX_WIDTH-1:0], next_bank(psum_req_addr)};
+    host_tag_pipe[0] <= host_addr[BANK_INDEX_WIDTH-1:0];
+    for (response_stage=1; response_stage<READ_LATENCY; response_stage=response_stage+1) begin
+      i_valid_pipe[response_stage] <= i_valid_pipe[response_stage-1];
+      p_valid_pipe[response_stage] <= p_valid_pipe[response_stage-1];
+      host_valid_pipe[response_stage] <= host_valid_pipe[response_stage-1];
+      write_pipe[response_stage] <= write_pipe[response_stage-1];
+      i_tag_pipe[response_stage] <= i_tag_pipe[response_stage-1];
+      p_tag_pipe[response_stage] <= p_tag_pipe[response_stage-1];
+      host_tag_pipe[response_stage] <= host_tag_pipe[response_stage-1];
+    end
+  end
+end
+
+assign busy = busy_q || ((READ_LATENCY > 1) && (|write_pipe));
 assign done = done_q;
 assign handoff_ready = handoff_ready_q;
-assign host_ready = !busy_q;
+assign host_ready = !busy_q && !(|host_valid_pipe);
+assign host_rsp_bank = host_rsp_bank_q;
 assign host_rvalid = host_rvalid_q;
 assign host_rdata = host_bank_rdata;
 assign stream_out_push = output_skew_push;
@@ -392,6 +445,7 @@ assign stream_i_prefetch_accept = read_fire;
 assign stream_psum_prefetch_accept = psum_read_fire;
 
 assign start_accept = start && !compute_busy_q
+                   && !(|i_valid_pipe) && !(|host_valid_pipe)
                    && (start_use_active ? tensor_weight_active_valid
                                         : tensor_weight_pending_valid);
 assign weight_fill_start_ready = tensor_weight_fill_start_ready;
@@ -476,9 +530,8 @@ always @* begin
 end
 
 assign active_input_select = input_select_valid;
-// Stop issuing one cycle before handoff.  This guarantees the queued response
-// is resident in the next-input FIFO before start_accept copies its slots into
-// the active window.
+// Handoff waits for every outstanding response before changing the active
+// input window. Do not issue another prefetch on the handoff edge.
 assign next_input_select = !active_input_select
                         && next_input_select_valid
                         && !handoff_ready_next;
@@ -553,10 +606,10 @@ assign psum_start_prefetch = start_accept
                           && (vector_count != 0)
                           && !start_mode[1] && !start_mode[2]
                           && !start_mode[4];
-// Reserve space for the response already in flight.  The P request stream
+// Reserve space for every response already in flight.  The P request stream
 // can outrun the late dot join when an I or O bank pauses; permit a new
 // request at full occupancy only if the dot consumes a P beat this cycle.
-assign psum_fifo_credit = ({1'b0, psum_count_q} + psum_rsp_valid_q
+assign psum_fifo_credit = ({1'b0, psum_count_q} + psum_inflight
                            < PSUM_FIFO_DEPTH) || psum_fifo_pop;
 assign psum_candidate = ((compute_busy_q && stream_started_q
                        && (psum_stream_started_q
@@ -607,12 +660,14 @@ assign input_compute_fire = compute_busy_q
                          && input_head_valid
                          && (!scale_stream_enable_q || scale_stream_valid)
                          && (psum_stream_mode || compute_psum_valid)
-                         // Keep at most five unissued P beats ahead of the
-                         // seven-cycle dot join. If P falls behind, its bank
-                         // request takes priority until it catches up.
+                         // H4: issue this vector's P no later than I enters
+                         // compute. Four memory edges then fit before the
+                         // seven-cycle dot join even through bank conflicts.
                          && (!psum_stream_mode
-                             || ({1'b0, psum_issue_count_q} + INPUT_PSUM_LEAD
-                                 > {1'b0, input_consume_count_q})
+                             || ((READ_LATENCY > 1)
+                                 ? (psum_issue_count_q > input_consume_count_q)
+                                 : ({1'b0, psum_issue_count_q} + INPUT_PSUM_LEAD
+                                    > {1'b0, input_consume_count_q}))
                              || psum_read_fire)
                          && (!psum_stream_mode
                              || (psum_issue_count_q > input_consume_count_q)
@@ -667,8 +722,8 @@ assign handoff_ready_next = compute_busy_q
                          && (read_issue_count_q == target_count_q)
                          && (input_consume_count_q == target_count_q)
                          && (psum_issue_count_q == psum_target_count)
-                         && !iop_rsp_valid_q
-                         && !psum_rsp_valid_q
+                         && !(|i_valid_pipe)
+                         && !(|p_valid_pipe)
                          && (input_slot_valid_q == {INPUT_FIFO_DEPTH{1'b0}})
                          // Output addresses and data remain in the FIFO, so
                          // a younger descriptor can start while older writes
@@ -676,7 +731,8 @@ assign handoff_ready_next = compute_busy_q
                          && (!rsum_mode_q || tensor_output_valid);
 assign drain_done_next = busy_q && !compute_busy_q && !output_pending
                       && (meta_count_q == 0) && (psum_count_q == 0)
-                      && !output_skew_push && !start_accept;
+                      && !output_skew_push && !start_accept
+                      && !(|write_pipe);
 
 // E4 exposes one extra rsum_merge_pending cycle after the final tile. E3's
 // dot kernel already contains the accumulator, so this register is the
@@ -689,7 +745,7 @@ assign tensor_output_data = rsum_mode_q
                           ? rsum_drain_data_q
                           : tensor_core_output_data;
 
-assign host_bank_req = !busy_q && host_req;
+assign host_bank_req = host_ready && host_req;
 assign host_bank_we = host_we;
 assign host_bank = host_addr[BANK_INDEX_WIDTH-1:0];
 assign host_bank_addr = host_addr[SRAM_ADDR_WIDTH+BANK_INDEX_WIDTH-1:BANK_INDEX_WIDTH];
@@ -828,14 +884,6 @@ always @(posedge clk or negedge cpurst_b) begin
     in_base_q <= 0;
     psum_base_q <= 0;
     out_base_q <= 0;
-    iop_rsp_valid_q <= 1'b0;
-    psum_rsp_valid_q <= 1'b0;
-    i_rsp_bank0_q <= 0;
-    i_rsp_bank1_q <= 0;
-    psum_rsp_bank0_q <= 0;
-    psum_rsp_bank1_q <= 0;
-    i_rsp_index_q <= 0;
-    i_rsp_next_input_q <= 1'b0;
     next_input_issue_count_q <= 0;
     psum_head_q <= 0;
     psum_tail_q <= 0;
@@ -854,8 +902,6 @@ always @(posedge clk or negedge cpurst_b) begin
       output_old_fifo[output_fifo_i] <= 1'b0;
     end
     psum_stream_mode_pipe_q <= 7'b0;
-    host_rvalid_q <= 1'b0;
-    host_rsp_bank_q <= 0;
     rsum_drain_pending_q <= 1'b0;
     rsum_drain_data_q <= 0;
     scale_enable_q <= 1'b0;
@@ -882,11 +928,6 @@ always @(posedge clk or negedge cpurst_b) begin
          input_compute_fire && psum_stream_mode};
     done_q <= 1'b0;
     handoff_ready_q <= 1'b0;
-    iop_rsp_valid_q <= read_fire;
-    psum_rsp_valid_q <= psum_read_fire;
-    host_rvalid_q <= !busy_q && host_req && !host_we;
-    if (host_req && !busy_q && !host_we)
-      host_rsp_bank_q <= host_addr[BANK_INDEX_WIDTH-1:0];
 
     if (rsum_mode_q) begin
       rsum_drain_pending_q <= tensor_core_output_valid;
@@ -920,7 +961,6 @@ always @(posedge clk or negedge cpurst_b) begin
       in_base_q <= in_base_addr;
       psum_base_q <= psum_base_addr;
       out_base_q <= out_base_addr;
-      iop_rsp_valid_q <= 1'b0;
       next_input_issue_count_q <= 0;
       scale_enable_q <= start_mode[0] && !start_mode[4];
       scale_stream_enable_q <= start_mode[3] && !start_mode[4];
@@ -935,14 +975,9 @@ always @(posedge clk or negedge cpurst_b) begin
     end
 
     if (read_fire) begin
-      i_rsp_bank0_q <= i_req_addr[BANK_INDEX_WIDTH-1:0];
-      i_rsp_bank1_q <= next_bank(i_req_addr);
-      i_rsp_next_input_q <= next_input_select;
       if (next_input_select) begin
-        i_rsp_index_q <= next_input_select_index;
         next_input_issue_count_q <= next_input_issue_count_q + 1'b1;
       end else begin
-        i_rsp_index_q <= input_select_index;
         read_issue_count_q <= read_issue_count_q + 1'b1;
         if (!stream_started_q) begin
           stream_started_q <= 1'b1;
@@ -957,8 +992,6 @@ always @(posedge clk or negedge cpurst_b) begin
 
     if (psum_read_fire) begin
       psum_stream_started_q <= 1'b1;
-      psum_rsp_bank0_q <= psum_req_addr[BANK_INDEX_WIDTH-1:0];
-      psum_rsp_bank1_q <= next_bank(psum_req_addr);
       if (!start_accept)
         psum_issue_count_q <= psum_issue_count_q + 1'b1;
     end
@@ -1023,6 +1056,8 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
+    if (dot_ready && dot_needs_psum && !aligned_psum_valid)
+      $fatal(1, "tensor P response missed dot join");
     if (psum_fifo_push && (psum_count_q == PSUM_FIFO_DEPTH)
         && !psum_fifo_pop) begin
       $display("tensor P FIFO overflow");
