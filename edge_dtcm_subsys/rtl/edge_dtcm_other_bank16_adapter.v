@@ -182,15 +182,15 @@ assign unused_channel_request_payload[REQUEST_PAYLOAD_WIDTH-1:0] =
     {REQUEST_PAYLOAD_WIDTH{1'b0}};
 
 // Compressed logical groups 0, 1, 2, and 3 represent fixed channels
-// 1, 3, 5, and 7 in legacy mode. H4 maps LSU/DMA to 6/7 and
-// keeps SLD/WLD together on lower channel 5.
+// 1, 3, 5, and 7 in legacy mode. H4 maps LSU/DMA to 4/7 and
+// keeps SLD/WLD together on lower channel 3.
 assign logical_request_payload[4*REQUEST_PAYLOAD_WIDTH-1:0] =
     {unused_channel_request_payload, shared_ld_request_payload,
      dma_request_payload, lsu_request_payload};
 
 generate if (LOWER_SIX) begin: SIX_CHANNELS
-  // The shared SLD/WLD route belongs to lower channel 5. LSU/DMA own
-  // upper 6/7. Decode each physical pair once; no upper/lower borrowing.
+  // The shared SLD/WLD route belongs to lower channel 3. LSU/DMA own
+  // upper 4/7. Decode each physical pair once; no upper/lower borrowing.
   reg [2:0] phase_pipe [0:READ_LATENCY-1];
   integer st;
   always @(posedge clk or negedge cpurst_b)
@@ -204,16 +204,16 @@ generate if (LOWER_SIX) begin: SIX_CHANNELS
     wire [2:0] channel = 3'(p) - pair_phase;
     // Two binary payload choices. Unowned slots suppress request only;
     // there is no reason to zero their wide address/data/strobe buses.
-    wire [REQUEST_PAYLOAD_WIDTH-1:0] upper_payload =
-        channel[0] ? dma_request_payload : lsu_request_payload;
     wire [REQUEST_PAYLOAD_WIDTH-1:0] payload =
-        channel[1] ? upper_payload : shared_ld_request_payload;
+        channel == 3'd7 ? dma_request_payload :
+        channel == 3'd4 ? lsu_request_payload : shared_ld_request_payload;
     assign physical_request_payload[p*REQUEST_PAYLOAD_WIDTH +: REQUEST_PAYLOAD_WIDTH] =
         {payload[REQUEST_PAYLOAD_WIDTH-1:PAIR_REQ_WIDTH],
-         payload[PAIR_REQ_WIDTH-1:0] & {PAIR_REQ_WIDTH{channel >= 3'd5}}};
+         payload[PAIR_REQ_WIDTH-1:0] &
+             {PAIR_REQ_WIDTH{channel == 3'd3 || channel == 3'd4 || channel == 3'd7}}};
   end
   for (genvar c=0; c<3; c=c+1) begin: RESPONSE
-    localparam [2:0] CHANNEL = c == 0 ? 3'd6 : c == 1 ? 3'd7 : 3'd5;
+    localparam [2:0] CHANNEL = c == 0 ? 3'd4 : c == 1 ? 3'd7 : 3'd3;
     wire [2:0] response_pair = phase_pipe[READ_LATENCY-1] + CHANNEL;
     assign logical_response_payload[c*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH] =
         bank_rdata[response_pair*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH];
@@ -264,7 +264,7 @@ edge_dtcm_upper_io #(
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(1),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
-  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(LOWER_SIX ? 3'd6 : 3'd1), .ALLOW_WRITE(1)
+  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(LOWER_SIX ? 3'd4 : 3'd1), .ALLOW_WRITE(1)
 ) x_lsu_io (
   .clk(clk), .cpurst_b(cpurst_b), .phase(phase),
   .req(lsu_req), .req_we(lsu_we), .req_addr(lsu_addr),
@@ -334,7 +334,7 @@ edge_dtcm_upper_io #(
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(2),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
-  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(3'd5), .ALLOW_WRITE(0)
+  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(LOWER_SIX ? 3'd3 : 3'd5), .ALLOW_WRITE(0)
 ) x_shared_ld_io (
   .clk(clk), .cpurst_b(cpurst_b), .phase(phase),
   .req(shared_ld_req), .req_we(1'b0), .req_addr(shared_ld_addr),

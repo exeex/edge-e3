@@ -190,10 +190,11 @@ assign unused_lease_inputs = dma_lease_valid || (|dma_lease_channel[2:0])
                           || (DMA_LOOKAHEAD[0])
                           || (|tensor_native_active_mask[BANK_NUM-1:0]);
 
-wire [15:0] six_lower_mask = (16'h0fff << bank16_phase_unused)
-                              | (16'h0fff >> (16-bank16_phase_unused));
+// Tensor owns I0, P1/5, O2/6, and shared WLD/SLD3. Upper owns 4/7.
+wire [15:0] six_lower_mask = (16'h3cff << bank16_phase_unused)
+                              | (16'h3cff >> (16-bank16_phase_unused));
 wire [15:0] shared_load_mask = 16'h0003 <<
-    (2 * 3'(bank16_phase_unused[3:1] + 3'd5));
+    (2 * 3'(bank16_phase_unused[3:1] + 3'd3));
 assign tensor_lower_owned_mask = SRAM_H4 ? six_lower_mask :
     (bank16_phase_unused[1] ? 16'hcccc : 16'h3333);
 assign tensor_native_bank_rdata[BANK_NUM*DATA_WIDTH-1:0] =
@@ -222,7 +223,8 @@ generate if (SRAM_H4) begin: SIX_LOWER
     if (|(other_bank_req & actu_bank_req))
       $fatal(1, "LSU/ACTU upper channel collision");
     if (|(tensor_native_bank_req & (~six_lower_mask | shared_load_mask)))
-      $fatal(1, "compute request outside reserved lower channels");
+      $fatal(1, "compute request outside reserved lower channels phase=%h req=%h lower=%h load=%h",
+             bank16_phase_unused, tensor_native_bank_req, six_lower_mask, shared_load_mask);
     if (|(actu_bank_req & six_lower_mask))
       $fatal(1, "ACTU request outside upper channels");
   end

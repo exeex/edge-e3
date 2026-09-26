@@ -274,8 +274,10 @@ wire [SRAM_ADDR_WIDTH-1:0]    engine_o_pair_addr;
 wire [2*PAIR_WIDTH-1:0]       engine_o_pair_wdata;
 wire engine_psum_pair_req_fp32, engine_o_pair_fp32;
 wire [BANK_INDEX_WIDTH-1:0] engine_psum_pair_bank2, engine_psum_pair_bank3;
+wire [SRAM_ADDR_WIDTH-1:0] engine_psum_pair_extra_addr;
 wire [BANK_INDEX_WIDTH-1:0] engine_psum_pair_rsp_bank2, engine_psum_pair_rsp_bank3;
 wire [BANK_INDEX_WIDTH-1:0] engine_o_pair_bank2, engine_o_pair_bank3;
+wire [SRAM_ADDR_WIDTH-1:0] engine_o_pair_extra_addr;
 wire [PAIR_WIDTH-1:0] engine_psum_pair_extra_rdata;
 wire                          stream_out_push;
 wire                          stream_i_prefetch_accept;
@@ -588,7 +590,10 @@ assign wld_load_data[PAIR_WIDTH-1:0] = tensor_wld_rdata[PAIR_WIDTH-1:0];
 assign engine_host_bank_rdata[DATA_WIDTH-1:0] =
     bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_host_rsp_bank);
 assign copy_host_req = copy_active_q && engine_host_ready
-                     && (LOWER_SIX ? (3'(copy_host_addr[3:1]-tensor_phase[3:1]) < 3'd5)
+                     && (LOWER_SIX ?
+                         ((3'(copy_host_addr[3:1]-tensor_phase[3:1]) < 3'd3) ||
+                          (3'(copy_host_addr[3:1]-tensor_phase[3:1]) == 3'd5) ||
+                          (3'(copy_host_addr[3:1]-tensor_phase[3:1]) == 3'd6))
                                        : (copy_host_addr[1] == tensor_phase[1]))
                      && (copy_write_q || !engine_host_rvalid);
 assign copy_host_we = copy_write_q;
@@ -704,6 +709,7 @@ edge_tensor_engine #(
   .psum_pair_req_fp32(engine_psum_pair_req_fp32),
   .psum_pair_bank2(engine_psum_pair_bank2),
   .psum_pair_bank3(engine_psum_pair_bank3),
+  .psum_pair_extra_addr(engine_psum_pair_extra_addr),
   .psum_pair_rsp_bank2(engine_psum_pair_rsp_bank2),
   .psum_pair_rsp_bank3(engine_psum_pair_rsp_bank3),
   .o_pair_req(engine_o_pair_req),
@@ -714,6 +720,7 @@ edge_tensor_engine #(
   .o_pair_fp32(engine_o_pair_fp32),
   .o_pair_bank2(engine_o_pair_bank2),
   .o_pair_bank3(engine_o_pair_bank3),
+  .o_pair_extra_addr(engine_o_pair_extra_addr),
   .stream_out_push(stream_out_push),
   .stream_i_prefetch_accept(stream_i_prefetch_accept),
   .stream_psum_prefetch_accept(stream_psum_prefetch_accept)
@@ -795,11 +802,21 @@ generate
     assign engine_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
         (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
         ? engine_host_bank_addr : output_match
-          ? engine_o_pair_addr +
-              (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_o_pair_bank0)
+          ? ((engine_o_pair_fp32 &&
+              (engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+               engine_o_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+             ? engine_o_pair_extra_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_o_pair_bank2)
+             : engine_o_pair_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_o_pair_bank0))
           : psum_match
-          ? engine_psum_pair_addr +
-              (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_psum_pair_bank0)
+          ? ((engine_psum_pair_req_fp32 &&
+              (engine_psum_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+               engine_psum_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+             ? engine_psum_pair_extra_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_psum_pair_bank2)
+             : engine_psum_pair_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_psum_pair_bank0))
           : engine_i_pair_addr +
               (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_i_pair_bank0);
     assign engine_bank_wdata[bank_gen_i*DATA_WIDTH +: DATA_WIDTH] =

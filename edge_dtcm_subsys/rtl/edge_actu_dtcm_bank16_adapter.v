@@ -79,10 +79,10 @@ assign pair_phase = phase[BANK_INDEX_WIDTH-1:1];
 assign rd_target_pair = rd_addr[BANK_INDEX_WIDTH-1:1];
 assign wr_target_pair = wr_addr[BANK_INDEX_WIDTH-1:1];
 assign rd_phase_match = UPPER_SHARED ?
-    (rd_target_pair == 3'(pair_phase + 3'd6)) :
+    (rd_target_pair == 3'(pair_phase + 3'd4)) :
     rd_target_pair[0] == pair_phase[0];
 assign wr_phase_match = UPPER_SHARED ?
-    (wr_target_pair == 3'(pair_phase + 3'd6)) :
+    (wr_target_pair == 3'(pair_phase + 3'd4)) :
     wr_target_pair[0] == pair_phase[0];
 assign select_read = rd_req && rd_phase_match;
 assign select_write = wr_req && wr_phase_match && !select_read;
@@ -93,7 +93,7 @@ assign target_pair = req_addr[BANK_INDEX_WIDTH-1:1];
 assign pair_delta = target_pair - pair_phase;
 assign logical_group = pair_delta[2:1];
 assign channel_match = UPPER_SHARED ?
-    (target_pair == 3'(pair_phase + 3'd6)) :
+    (target_pair == 3'(pair_phase + 3'd4)) :
     target_pair[0] == pair_phase[0];
 assign fire = req_valid && channel_match;
 assign rd_ready = select_read;
