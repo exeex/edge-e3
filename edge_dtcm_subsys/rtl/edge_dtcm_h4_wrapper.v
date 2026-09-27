@@ -1,6 +1,6 @@
 // E3 word address: {row[9:0], bank[3:0]}; each bank is 64 bits.
 // Four H4s supply 16 banks / eight 128-bit channels / 128 KiB.
-// The only request registers are inside H4 -> H2 -> H1 -> SRAM.
+// H4 -> H2 -> H1/SRAM takes three edges; DTCM registers the fourth response edge.
 module edge_dtcm_h4_wrapper (
   input wire clk, cpurst_b,
   input wire [2:0] pair_phase,
@@ -9,8 +9,8 @@ module edge_dtcm_h4_wrapper (
   input wire [159:0] bank_addr,
   input wire [1023:0] bank_wdata,
   input wire [127:0] bank_wstrb,
-  output wire [1023:0] bank_rdata,
-  output wire [15:0] bank_rvalid
+  output reg [1023:0] bank_rdata,
+  output reg [15:0] bank_rvalid
 );
   // The four chained H4s have 256 H1 phase hops. Phase keeps advancing
   // during fill; clients may issue only after phase_ready.
@@ -22,14 +22,20 @@ module edge_dtcm_h4_wrapper (
 
   wire [2:0] h2_phase = pair_phase + 3'd1;
   wire [2:0] h1_phase = pair_phase + 3'd2;
-  reg [3:0] h4_tag, h2_tag;
+  reg [2:0] h4_tag, h2_tag;
+  wire [1023:0] response_data;
+  wire [15:0] response_valid;
+  always @(posedge clk or negedge cpurst_b)
+    if (!cpurst_b) bank_rvalid <= 0;
+    else bank_rvalid <= response_valid;
+  always @(posedge clk) bank_rdata <= response_data;
   always @(posedge clk or negedge cpurst_b)
     if (!cpurst_b) begin
       h4_tag <= 0;
       h2_tag <= 0;
     end else begin
-      h4_tag <= {h4_tag[2:0], pair_phase[2]};
-      h2_tag <= {h2_tag[2:0], h2_phase[1]};
+      h4_tag <= {h4_tag[1:0], pair_phase[2]};
+      h2_tag <= {h2_tag[1:0], h2_phase[1]};
     end
 
   wire [127:0] req_valid, req_write, req_strb, req_half, rsp_valid;
@@ -80,13 +86,13 @@ module edge_dtcm_h4_wrapper (
       wire [7:0] byte_valid;
       for (byte_no=0; byte_no<8; byte_no=byte_no+1) begin: BYTE
         wire [4:0] lane_idx =
-            {1'((bank/2)%2) ^ h4_tag[3], 1'(bank%2),
-             1'(byte_no/4) ^ h2_tag[3], 2'(byte_no%4)};
-        assign bank_rdata[bank*64+byte_no*8 +: 8] =
+            {1'((bank/2)%2) ^ h4_tag[2], 1'(bank%2),
+             1'(byte_no/4) ^ h2_tag[2], 2'(byte_no%4)};
+        assign response_data[bank*64+byte_no*8 +: 8] =
             rsp_data[(bank/4)*256+lane_idx*8 +: 8];
         assign byte_valid[byte_no] = rsp_valid[(bank/4)*32+lane_idx];
       end
-      assign bank_rvalid[bank] = &byte_valid;
+      assign response_valid[bank] = &byte_valid;
     end
   endgenerate
 `ifndef SYNTHESIS
