@@ -50,7 +50,13 @@ module edge_dtcm_h4_wide (
   assign grant_o[7:4] = eligible[7:4];
   wire [127:0] rsp_valid;
   wire [1023:0] rsp_data;
+  // Index address words directly: variable bit offsets (client*13) can
+  // otherwise infer FPGA DSP multipliers for an address-selection mux.
+  wire [12:0] lane_addr [0:7];
   genvar tile, b, lane;
+  generate for(genvar a=0;a<8;a=a+1) begin: ADDRESS_WORD
+    assign lane_addr[a]=addr_i[a*13+:13];
+  end endgenerate
   generate for (lane=0; lane<8; lane=lane+1) begin: OWNERSHIP
     wire [1:0] group_idx = phase_q[1:0] + 2'(lane/2);
     wire half_idx = 1'(lane%2) ^ ((lane >= 4) && phase_q[2]);
@@ -71,8 +77,8 @@ module edge_dtcm_h4_wide (
       assign valid[b] = grant_o[client];
       assign wr[b] = write_i[client];
       assign mask[b] = strb_i[client*16+byte_idx];
-      assign half[b] = addr_i[client*13+12] ^ h1_phase[0];
-      assign address[b*9 +: 9] = addr_i[client*13+3 +: 9];
+      assign half[b] = lane_addr[client][12] ^ h1_phase[0];
+      assign address[b*9 +: 9] = lane_addr[client][3+:9];
       assign payload[b*8 +: 8] = data_i[client*128+byte_idx*8 +: 8];
     end
     edge_sram_h4_tile32k #(.EXPLICIT_SWAP(1)) x_tile (

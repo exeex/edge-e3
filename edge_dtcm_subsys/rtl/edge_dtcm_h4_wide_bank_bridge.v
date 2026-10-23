@@ -22,6 +22,10 @@ module edge_dtcm_h4_wide_bank_bridge (
   wire [1023:0] rsp_data;
   reg [2:0] phase_q [0:3];
   reg [15:0] reads_q [0:3];
+  wire [9:0] bank_row [0:15];
+  generate for(genvar a=0;a<16;a=a+1) begin: ADDRESS_WORD
+    assign bank_row[a]=addr_i[a*10+:10];
+  end endgenerate
   integer pair_idx, bank_idx;
   always @* begin
     req=0;wr=0;addr=0;data=0;strb=0;
@@ -31,7 +35,7 @@ module edge_dtcm_h4_wide_bank_bridge (
       bank_idx=2*pair_idx;
       req[lane]=req_i[bank_idx] || req_i[bank_idx+1];
       wr[lane]=(req_i[bank_idx] && write_i[bank_idx]) || (req_i[bank_idx+1] && write_i[bank_idx+1]);
-      addr[lane*13+:13]={req_i[bank_idx] ? addr_i[bank_idx*10+:10] : addr_i[(bank_idx+1)*10+:10],3'(pair_idx)};
+      addr[lane*13+:13]={req_i[bank_idx] ? bank_row[bank_idx] : bank_row[bank_idx+1],3'(pair_idx)};
       data[lane*128+:128]=data_i[bank_idx*64+:128];
       strb[lane*16+:16]={req_i[bank_idx+1] && write_i[bank_idx+1] ? strb_i[(bank_idx+1)*8+:8] : 8'b0,
           req_i[bank_idx] && write_i[bank_idx] ? strb_i[bank_idx*8+:8] : 8'b0};

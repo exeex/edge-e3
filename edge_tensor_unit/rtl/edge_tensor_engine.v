@@ -765,7 +765,16 @@ assign input_head_from_rsp = iop_rsp_valid_q
                           && (i_rsp_index_q == input_consume_count_q);
 assign input_head_valid = input_slot_valid_q[input_head_slot]
                        || input_head_from_rsp;
+// Reserve an output slot before launching compute. Metadata counts all
+// results still inside the dot/scale pipeline; FIFO count covers arrived
+// results. Wide BF16 drain owns only one group per cycle and can be slower
+// than input, so fixed pipeline latency alone does not bound FIFO occupancy.
+wire output_launch_credit = !WIDE_H4
+    || (rsum_mode_q && input_consume_count_q != 0)
+    || ({1'b0,meta_count_q} + {2'b0,output_fifo_count_q} < OUTPUT_FIFO_DEPTH)
+    || output_write_fire;
 assign input_compute_fire = compute_busy_q
+                         && output_launch_credit
                          && (input_consume_count_q < target_count_q)
                          && input_head_valid
                          && (!scale_stream_enable_q || scale_stream_valid)
@@ -1218,18 +1227,18 @@ always @(posedge clk or negedge cpurst_b) begin
     if (psum_fifo_push && (psum_count_q == PSUM_FIFO_DEPTH)
         && !psum_fifo_pop) begin
       $display("tensor P FIFO overflow");
-      $finish;
+      $fatal(1,"tensor FIFO/skew invariant violated");
     end
     if (output_queue_push_valid && !output_skew_fifo_push) begin
       $display("tensor output FIFO overflow addr=%h phase=%h count=%0d",
                output_queue_push_payload[272:257], fabric_phase,
                output_fifo_count_q);
-      $finish;
+      $fatal(1,"tensor FIFO/skew invariant violated");
     end
     if (output_skew_cfg_valid && (output_skew_inflight_q != 0)) begin
       $display("tensor output skew reconfigured with %0d old beats in flight",
                output_skew_inflight_q);
-      $finish;
+      $fatal(1,"tensor FIFO/skew invariant violated");
     end
 `endif
 

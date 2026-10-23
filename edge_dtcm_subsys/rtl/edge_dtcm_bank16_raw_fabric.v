@@ -32,6 +32,7 @@ parameter BYTE_WIDTH      = DATA_WIDTH / 8;
 parameter SEGMENT_NUM     = 1;
 parameter SPLIT_MODE      = 0;
 parameter SRAM_H4         = 0;
+parameter WIDE_H4         = 0;
 
 input                         clk;
 input                         cpurst_b;
@@ -73,6 +74,7 @@ genvar bank_i;
 genvar byte_i;
 genvar segment_i;
 
+generate if (!WIDE_H4) begin: LEGACY_PHASE
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b)
     phase[BANK_INDEX_WIDTH-1:0] <= {BANK_INDEX_WIDTH{1'b0}};
@@ -80,9 +82,16 @@ always @(posedge clk or negedge cpurst_b) begin
     phase[BANK_INDEX_WIDTH-1:0] <= phase[BANK_INDEX_WIDTH-1:0]
                                  + {{BANK_INDEX_WIDTH-2{1'b0}}, 2'd2};
 end
+end endgenerate
 
 generate
-  if (SRAM_H4 != 0) begin: H4_STORAGE
+  if (WIDE_H4) begin: WIDE_STORAGE
+    edge_dtcm_h4_wide_bank_bridge x_bridge (
+      .clk(clk), .rst_b(cpurst_b), .ready_o(phase_ready), .phase_o(phase),
+      .req_i(selected_req), .write_i(selected_we), .addr_i(selected_addr),
+      .data_i(selected_data), .strb_i(selected_strb),
+      .valid_o(bank_rvalid), .data_o(bank_rdata));
+  end else if (SRAM_H4 != 0) begin: H4_STORAGE
     edge_dtcm_h4_wrapper x_wrapper (
       .clk(clk), .cpurst_b(cpurst_b), .pair_phase(phase[3:1]),
       .phase_ready(phase_ready), .bank_req(selected_req),

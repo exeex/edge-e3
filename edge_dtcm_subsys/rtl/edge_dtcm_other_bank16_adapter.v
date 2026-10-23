@@ -38,6 +38,7 @@ module edge_dtcm_other_bank16_adapter(
 
 parameter READ_LATENCY = 1;
 parameter LOWER_SIX = 0;
+parameter WIDE_H4 = 0;
 parameter ADDR_WIDTH       = 14;
 parameter DATA_WIDTH       = 64;
 parameter BYTE_WIDTH       = DATA_WIDTH / 8;
@@ -201,7 +202,11 @@ generate if (LOWER_SIX) begin: SIX_CHANNELS
       for (st=1; st<READ_LATENCY; st=st+1) phase_pipe[st] <= phase_pipe[st-1];
     end
   for (genvar p=0; p<8; p=p+1) begin: PAIR
-    wire [2:0] channel = 3'(p) - pair_phase;
+    wire [2:0] channel = WIDE_H4 ?
+        (3'(p) == {2'(pair_phase[1:0]+3),pair_phase[2]} ? 3'd4 :
+         3'(p) == {2'(pair_phase[1:0]+3),~pair_phase[2]} ? 3'd7 :
+         3'(p) == {2'(pair_phase[1:0]+2),~pair_phase[2]} ? 3'd3 : 3'd0) :
+        3'(p) - pair_phase;
     // Two binary payload choices. Unowned slots suppress request only;
     // there is no reason to zero their wide address/data/strobe buses.
     wire [REQUEST_PAYLOAD_WIDTH-1:0] payload =
@@ -214,7 +219,9 @@ generate if (LOWER_SIX) begin: SIX_CHANNELS
   end
   for (genvar c=0; c<3; c=c+1) begin: RESPONSE
     localparam [2:0] CHANNEL = c == 0 ? 3'd4 : c == 1 ? 3'd7 : 3'd3;
-    wire [2:0] response_pair = phase_pipe[READ_LATENCY-1] + CHANNEL;
+    wire [2:0] q = phase_pipe[READ_LATENCY-1];
+    wire [2:0] response_pair = WIDE_H4 ?
+        {2'(q[1:0]+(c==2 ? 2 : 3)), (q[2] ^ (c!=0))} : q + CHANNEL;
     assign logical_response_payload[c*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH] =
         bank_rdata[response_pair*PAIR_DATA_WIDTH +: PAIR_DATA_WIDTH];
   end
@@ -264,7 +271,7 @@ edge_dtcm_upper_io #(
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(1),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
-  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(LOWER_SIX ? 3'd4 : 3'd1), .ALLOW_WRITE(1)
+  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .WIDE_H4(WIDE_H4), .WIDE_LANE(6), .FIXED_CHANNEL(LOWER_SIX ? 3'd4 : 3'd1), .ALLOW_WRITE(1)
 ) x_lsu_io (
   .clk(clk), .cpurst_b(cpurst_b), .phase(phase),
   .req(lsu_req), .req_we(lsu_we), .req_addr(lsu_addr),
@@ -287,7 +294,7 @@ edge_dtcm_upper_io #(
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(2),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
-  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(LOWER_SIX ? 3'd7 : 3'd3), .ALLOW_WRITE(1)
+  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .WIDE_H4(WIDE_H4), .WIDE_LANE(7), .FIXED_CHANNEL(LOWER_SIX ? 3'd7 : 3'd3), .ALLOW_WRITE(1)
 ) x_dma_io (
   .clk(clk), .cpurst_b(cpurst_b), .phase(phase),
   .req(dma_req), .req_we(dma_we), .req_addr(dma_addr),
@@ -334,7 +341,7 @@ edge_dtcm_upper_io #(
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(DATA_WIDTH), .LANES(2),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
-  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .FIXED_CHANNEL(LOWER_SIX ? 3'd3 : 3'd5), .ALLOW_WRITE(0)
+  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH), .WIDE_H4(WIDE_H4), .WIDE_LANE(5), .FIXED_CHANNEL(LOWER_SIX ? 3'd3 : 3'd5), .ALLOW_WRITE(0)
 ) x_shared_ld_io (
   .clk(clk), .cpurst_b(cpurst_b), .phase(phase),
   .req(shared_ld_req), .req_we(1'b0), .req_addr(shared_ld_addr),

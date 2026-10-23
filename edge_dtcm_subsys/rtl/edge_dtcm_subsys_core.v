@@ -16,6 +16,7 @@ module edge_dtcm_subsys_core #(
   // Standalone legacy/proxy harnesses retain inferred SRAM. The product
   // edge_dtcm_subsys boundary explicitly selects H4 by default.
   parameter SRAM_H4 = 0,
+  parameter WIDE_H4 = 0,
   parameter TENSOR_PACKED_WEIGHT = 1
 )(
   clk,
@@ -374,7 +375,7 @@ wire [127:0]                  actu_dtcm_wr_wdata;
 wire [15:0]                   actu_dtcm_wr_wstrb;
 // ACTU/CMPU and scalar LSU share H4 channel 4. Both clients retain their
 // request until ready; arbitrate only requests that match this cycle's pair.
-wire [2:0] upper4_pair = 3'(tensor_native_phase[3:1] + 3'd4);
+wire [2:0] upper4_pair = WIDE_H4 ? {2'(tensor_native_phase[2:1]+3),tensor_native_phase[3]} : 3'(tensor_native_phase[3:1] + 3'd4);
 wire accel4_candidate = actu_dtcm_rd_req &&
     actu_dtcm_rd_addr[3:1] == upper4_pair || actu_dtcm_wr_req &&
     actu_dtcm_wr_addr[3:1] == upper4_pair;
@@ -414,8 +415,10 @@ wire [15:0] slot_rd_addr;
 wire [127:0] slot_rd_rdata;
 wire slot_sld_ready, slot_wld_ready, slot_sld_rvalid, slot_wld_rvalid;
 wire [127:0] slot_sld_rdata, slot_wld_rdata;
-assign physical_wld_req = tensor_wsld_slot_active ? slot_rd_req : tensor_wld_req;
-assign physical_wld_addr = tensor_wsld_slot_active ? slot_rd_addr : tensor_wld_addr;
+wire [12:0] wide_slot_addr;
+wire wide_slot_req;
+assign physical_wld_req = tensor_wsld_slot_active ? (WIDE_H4 ? wide_slot_req : slot_rd_req) : tensor_wld_req;
+assign physical_wld_addr = tensor_wsld_slot_active ? (WIDE_H4 ? {2'b0,wide_slot_addr,1'b0} : slot_rd_addr) : tensor_wld_addr;
 assign physical_sld_req = !tensor_wsld_slot_active && tensor_sld_req;
 assign physical_sld_addr = tensor_sld_addr;
 assign slot_rd_ready = physical_wld_ready;
@@ -427,6 +430,22 @@ assign tensor_wld_rdata = tensor_wsld_slot_active ? slot_wld_rdata : physical_wl
 assign tensor_sld_ready = tensor_wsld_slot_active ? slot_sld_ready : physical_sld_ready;
 assign tensor_sld_rvalid = tensor_wsld_slot_active ? slot_sld_rvalid : physical_sld_rvalid;
 assign tensor_sld_rdata = tensor_wsld_slot_active ? slot_sld_rdata : physical_sld_rdata;
+generate if(WIDE_H4) begin: WIDE_SLOT
+  edge_wsld_h4_wide x_slot (
+    .clk(clk),.rst_b(cpurst_b),.fabric_ready_i(memory_ready),.phase_i(tensor_native_phase[3:1]),
+    .start_i(tensor_wsld_slot_start),.start_ready_o(),.base_i(tensor_wsld_slot_addr),
+    .config_i(tensor_wsld_slot_config),.busy_o(),.done_o(),
+    .req_o(wide_slot_req),.addr_o(wide_slot_addr),.grant_i(physical_wld_ready),
+    .rsp_valid_i(slot_rd_rvalid),.rsp_data_i(physical_wld_rdata),
+    .sld_req(tensor_sld_req),.wld_req(tensor_wld_req),
+    .sld_ready(slot_sld_ready),.wld_ready(slot_wld_ready),
+    .sld_rvalid(slot_sld_rvalid),.wld_rvalid(slot_wld_rvalid),
+    .sld_rdata(slot_sld_rdata),.wld_rdata(slot_wld_rdata));
+  assign slot_rd_req=wide_slot_req;
+  assign slot_rd_addr={2'b0,wide_slot_addr,1'b0};
+end else begin: LEGACY_SLOT
+  assign wide_slot_req=0;
+  assign wide_slot_addr=0;
 edge_wsld_slot_reader #(.ADDR_WIDTH(16),.READ_LATENCY(DTCM_READ_LATENCY)) x_wsld_slot_reader (
  .clk(clk),.cpurst_b(cpurst_b),.start(tensor_wsld_slot_start),
  .active(tensor_wsld_slot_active),.base_addr(tensor_wsld_slot_addr),
@@ -437,6 +456,7 @@ edge_wsld_slot_reader #(.ADDR_WIDTH(16),.READ_LATENCY(DTCM_READ_LATENCY)) x_wsld
  .sld_rvalid(slot_sld_rvalid),.wld_rvalid(slot_wld_rvalid),
  .sld_rdata(slot_sld_rdata),.wld_rdata(slot_wld_rdata)
 );
+end endgenerate
 wire [15:0]                   tensor_sld_addr;
 wire                          tensor_sld_req;
 wire                          tensor_sld_ready;
@@ -472,7 +492,7 @@ assign dma_start_dtcm_offset[39:0] =
        dma_start_dtcm_pa[39:0] - cp0_lsu_dtcm_base[39:0];
 assign dma_start_dtcm_addr[ADDR_WIDTH-1:0] =
        dma_start_dtcm_offset[ADDR_WIDTH+2:3];
-assign stream_select = dma_stream_busy_raw || dma_stream_cmd_valid;
+assign stream_select = dma_stream_busy_raw || stream_queue_busy || dma_stream_cmd_valid;
 assign dma_axi_araddr = stream_select ? stream_dma_axi_araddr :
                                           legacy_dma_axi_araddr;
 assign dma_axi_arlen = stream_select ? stream_dma_axi_arlen :
@@ -535,10 +555,11 @@ assign actu_sync_stall = actu_sync_stall_raw || accel_write_pending;
 assign cmpu_sync_stall = cmpu_sync_stall_raw || accel_write_pending;
 assign actu_start_ready = actu_start_ready_raw && memory_ready && !accel_write_pending;
 assign cmpu_start_ready = cmpu_start_ready_raw && memory_ready && !accel_write_pending;
-assign dma_stream_busy = dma_stream_busy_raw || (SRAM_H4 && (|stream_write_pipe));
+assign dma_stream_busy = dma_stream_busy_raw || stream_queue_busy || (SRAM_H4 && (|stream_write_pipe));
 
 edge_tensor_unit_bank16 #(
   .LOWER_SIX(SRAM_H4),
+  .WIDE_H4(WIDE_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(16),
   .BANK_NUM(BANK_NUM),
@@ -688,6 +709,7 @@ edge_accel_unit #(
 
 edge_actu_dtcm_bank16_adapter #(
   .UPPER_SHARED(SRAM_H4),
+  .WIDE_H4(WIDE_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
@@ -718,6 +740,7 @@ edge_actu_dtcm_bank16_adapter #(
 
 edge_dtcm_arb #(
   .SRAM_H4(SRAM_H4),
+  .WIDE_H4(WIDE_H4),
   .ADDR_WIDTH         (ADDR_WIDTH),
   .DATA_WIDTH         (DATA_WIDTH),
   .DMA_DATA_WIDTH     (DMA_DATA_WIDTH),
@@ -797,6 +820,28 @@ edge_dtcm_arb #(
   .tensor_wld_lease_valid(edge_tensor_wld_lease_valid)
 );
 
+wire stream_queue_busy,stream_input_req,stream_input_ready,stream_input_done;
+wire [13:0] stream_input_addr;
+wire [127:0] stream_input_data;
+wire [15:0] stream_input_strb;
+generate if(WIDE_H4) begin: WIDE_STREAM
+  edge_dtcm_h4_stream_writer x_queue (
+    .clk(clk),.rst_b(cpurst_b),.phase_i(tensor_native_phase[3:1]),
+    .valid_i(stream_input_req),.ready_o(stream_input_ready),
+    .addr_i(stream_input_addr),.data_i(stream_input_data),.strb_i(stream_input_strb),
+    .busy_o(stream_queue_busy),.done_o(dma_stream_beat_done),
+    .req_o(stream_dma_dtcm_req),.addr_o(stream_dma_dtcm_addr),
+    .data_o(stream_dma_dtcm_wdata),.strb_o(stream_dma_dtcm_wstrb),
+    .grant_i(dma_ready && stream_select));
+end else begin: LEGACY_STREAM
+  assign stream_queue_busy=0;
+  assign stream_dma_dtcm_req=stream_input_req;
+  assign stream_dma_dtcm_addr=stream_input_addr;
+  assign stream_dma_dtcm_wdata=stream_input_data;
+  assign stream_dma_dtcm_wstrb=stream_input_strb;
+  assign stream_input_ready=dma_ready && stream_select;
+  assign dma_stream_beat_done=stream_input_done;
+end endgenerate
 edge_dma_a2d_stream #(
   .AXI_ADDR_WIDTH(40),
   .DTCM_ADDR_WIDTH(ADDR_WIDTH),
@@ -816,12 +861,12 @@ edge_dma_a2d_stream #(
   .axi_rdata(dma_axi_rdata),
   .axi_rvalid(dma_axi_rvalid && stream_select),
   .axi_rready(stream_dma_axi_rready),
-  .dtcm_req(stream_dma_dtcm_req),
-  .dtcm_addr(stream_dma_dtcm_addr),
-  .dtcm_wdata(stream_dma_dtcm_wdata),
-  .dtcm_wstrb(stream_dma_dtcm_wstrb),
-  .dtcm_ready(dma_ready && stream_select),
-  .beat_done(dma_stream_beat_done),
+  .dtcm_req(stream_input_req),
+  .dtcm_addr(stream_input_addr),
+  .dtcm_wdata(stream_input_data),
+  .dtcm_wstrb(stream_input_strb),
+  .dtcm_ready(stream_input_ready),
+  .beat_done(stream_input_done),
   .busy(dma_stream_busy_raw),
   .lease_channel(stream_dma_lease_channel),
   .lease_cycles(stream_dma_lease_cycles),
@@ -830,6 +875,42 @@ edge_dma_a2d_stream #(
   .outstanding_count(),
   .buffered_count()
 );
+generate if(WIDE_H4) begin: WIDE_DMA
+wire [12:0] addr;
+assign legacy_dma_dtcm_addr={addr,1'b0};
+assign legacy_dma_lease_channel=0;
+assign legacy_dma_lease_cycles=0;
+assign legacy_dma_lease_delay=0;
+assign legacy_dma_lease_valid=0;
+edge_dma_h4_wide x_dma (
+ .clk(clk),.rst_b(cpurst_b),.fabric_ready_i(memory_ready),.phase_i(tensor_native_phase[3:1]),
+ .start_i((dma_start_a2d || dma_start_d2a) && !legacy_dma_busy && !stream_select),
+ .start_ready_o(),.dir_i(dma_start_d2a),.axi_addr_i(dma_start_axi_addr),
+ .dtcm_addr_i({2'b0,dma_start_dtcm_addr}),.length_i(edge_dma_start_len),
+ .busy_o(legacy_dma_busy),.done_o(dma_done),
+ .req_o(legacy_dma_dtcm_req),.write_o(legacy_dma_dtcm_we),.addr_o(addr),
+ .data_o(legacy_dma_dtcm_wdata),.strb_o(legacy_dma_dtcm_wstrb),
+ .grant_i(dma_ready && !stream_select),.rsp_valid_i(dma_rvalid),.rsp_data_i(dma_rdata),
+ .axi_araddr(legacy_dma_axi_araddr[39:0]),
+ .axi_arlen(legacy_dma_axi_arlen[7:0]),
+ .axi_arready(dma_axi_arready && !stream_select),
+ .axi_arvalid(legacy_dma_axi_arvalid),
+ .axi_awaddr(dma_axi_awaddr[39:0]),
+ .axi_awlen(dma_axi_awlen[7:0]),
+ .axi_awready(dma_axi_awready),
+ .axi_awvalid(dma_axi_awvalid),
+ .axi_bready(dma_axi_bready),
+ .axi_bvalid(dma_axi_bvalid),
+ .axi_rdata(dma_axi_rdata[DMA_DATA_WIDTH-1:0]),
+ .axi_rready(legacy_dma_axi_rready),
+ .axi_rlast(dma_axi_rlast),
+ .axi_rvalid(dma_axi_rvalid && !stream_select),
+ .axi_wdata(dma_axi_wdata[DMA_DATA_WIDTH-1:0]),
+ .axi_wlast(dma_axi_wlast),
+ .axi_wready(dma_axi_wready),
+ .axi_wstrb(dma_axi_wstrb[DMA_BYTE_WIDTH-1:0]),
+ .axi_wvalid(dma_axi_wvalid));
+end else begin: LEGACY_DMA
 
 edge_dtcm_dma #(
   .AXI_ADDR_WIDTH (40),
@@ -881,4 +962,10 @@ edge_dtcm_dma #(
   .start_len        (edge_dma_start_len[31:0])
 );
 
+end endgenerate
+
+`ifndef SYNTHESIS
+initial if(WIDE_H4 && !SRAM_H4)
+  $fatal(1,"WIDE_H4 requires SRAM_H4=1");
+`endif
 endmodule

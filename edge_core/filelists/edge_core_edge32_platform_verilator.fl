@@ -90,6 +90,8 @@ edge_dtcm_subsys/edge_dtcm_subsys.v
 ../edge-asic/rtl/sram/edge_dtcm_spsram_1024x64.v
 edge_dtcm_subsys/rtl/edge_dtcm_bank16_raw_fabric.v
 edge_dtcm_subsys/rtl/edge_dtcm_h4_wrapper.v
+edge_dtcm_subsys/rtl/edge_dtcm_h4_wide.v
+edge_dtcm_subsys/rtl/edge_dtcm_h4_wide_bank_bridge.v
 ../edge-asic/rtl/sram/edge_sram_h1_tile4k.v
 ../edge-asic/rtl/sram/edge_sram_h2_tile8k.v
 ../edge-asic/rtl/sram/edge_sram_h4_tile32k.v
@@ -109,3 +111,10 @@ edge_dtcm_subsys/rtl/edge_dtcm_subsys_core.v
 ../edge-asic/rtl/actu/rtl/edge_actu_exp_ingress.v
 ../edge-asic/rtl/actu/rtl/edge_actu_exp_range_bf22.v
 ../edge-asic/rtl/actu/rtl/edge_actu_softmax_sub_bf16.v
+
+edge_dtcm_subsys/rtl/edge_dtcm_beat_reorder.v
+edge_dtcm_subsys/rtl/edge_dtcm_h4_narrow_reader.v
+edge_dtcm_subsys/rtl/edge_dtcm_h4_narrow_writer.v
+edge_dtcm_subsys/rtl/edge_dtcm_h4_stream_writer.v
+edge_dtcm_subsys/rtl/edge_wsld_h4_wide.v
+edge_dtcm_subsys/rtl/edge_dma_h4_wide.v

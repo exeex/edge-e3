@@ -66,6 +66,7 @@ module edge_dtcm_arb(
 );
 
 parameter SRAM_H4 = 0;
+parameter WIDE_H4 = 0;
 localparam READ_LATENCY = SRAM_H4 ? 4 : 1;
 parameter ADDR_WIDTH          = 14;
 parameter DATA_WIDTH          = 64;
@@ -191,10 +192,11 @@ assign unused_lease_inputs = dma_lease_valid || (|dma_lease_channel[2:0])
                           || (|tensor_native_active_mask[BANK_NUM-1:0]);
 
 // Tensor owns I0, P1/5, O2/6, and shared WLD/SLD3. Upper owns 4/7.
-wire [15:0] six_lower_mask = (16'h3cff << bank16_phase_unused)
+wire [15:0] six_lower_mask = WIDE_H4 ? ~(16'h000f << (4 * 2'(bank16_phase_unused[2:1]+3))) : (16'h3cff << bank16_phase_unused)
                               | (16'h3cff >> (16-bank16_phase_unused));
 wire [15:0] shared_load_mask = 16'h0003 <<
-    (2 * 3'(bank16_phase_unused[3:1] + 3'd3));
+    (WIDE_H4 ? {2'(bank16_phase_unused[2:1]+2),~bank16_phase_unused[3],1'b0} :
+     (2 * 3'(bank16_phase_unused[3:1] + 3'd3)));
 assign tensor_lower_owned_mask = SRAM_H4 ? six_lower_mask :
     (bank16_phase_unused[1] ? 16'hcccc : 16'h3333);
 assign tensor_native_bank_rdata[BANK_NUM*DATA_WIDTH-1:0] =
@@ -270,6 +272,7 @@ end endgenerate
 
 edge_dtcm_other_bank16_adapter #(
   .LOWER_SIX(SRAM_H4),
+  .WIDE_H4(WIDE_H4),
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
@@ -317,6 +320,7 @@ edge_dtcm_other_bank16_adapter #(
 
 edge_dtcm_bank16_raw_fabric #(
   .SRAM_H4(SRAM_H4),
+  .WIDE_H4(WIDE_H4),
   .BANK_NUM(BANK_NUM),
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .ADDR_WIDTH(SRAM_ADDR_WIDTH),

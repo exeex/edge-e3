@@ -9,6 +9,7 @@ module edge_tensor_unit_bank16 #(
   parameter EPOCH_WIDTH = 4,
   parameter READ_LATENCY = 1,
   parameter LOWER_SIX = 0,
+  parameter WIDE_H4 = 0,
   parameter PACKED_WEIGHT = 0
 ) (
   input  wire                         clk,
@@ -594,7 +595,10 @@ assign wld_load_data[PAIR_WIDTH-1:0] = tensor_wld_rdata[PAIR_WIDTH-1:0];
 assign engine_host_bank_rdata[DATA_WIDTH-1:0] =
     bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_host_rsp_bank);
 assign copy_host_req = copy_active_q && engine_host_ready
-                     && (LOWER_SIX ?
+                     && (WIDE_H4 ?
+                         ((copy_host_addr[3:2] == tensor_phase[2:1]) ||
+                          (copy_host_addr[3:2] == 2'(tensor_phase[2:1]+1)) ||
+                          (copy_host_addr[3:1] == {2'(tensor_phase[2:1]+2),tensor_phase[3]})) : LOWER_SIX ?
                          ((3'(copy_host_addr[3:1]-tensor_phase[3:1]) < 3'd3) ||
                           (3'(copy_host_addr[3:1]-tensor_phase[3:1]) == 3'd5) ||
                           (3'(copy_host_addr[3:1]-tensor_phase[3:1]) == 3'd6))
@@ -624,6 +628,7 @@ assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
 
 edge_tensor_engine #(
   .LOWER_SIX(LOWER_SIX),
+  .WIDE_H4(WIDE_H4),
   .READ_LATENCY(READ_LATENCY),
   .ADDR_WIDTH(ADDR_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),

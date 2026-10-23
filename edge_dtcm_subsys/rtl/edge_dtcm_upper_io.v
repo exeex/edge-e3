@@ -24,6 +24,8 @@ module edge_dtcm_upper_io(
   rsp_bank1_rdata
 );
 
+parameter WIDE_H4 = 0;
+parameter WIDE_LANE = 6;
 parameter ADDR_WIDTH       = 14;
 parameter DATA_WIDTH       = 64;
 parameter BYTE_WIDTH       = DATA_WIDTH / 8;
@@ -80,7 +82,8 @@ assign bank_wstrb[CLIENT_BYTE_WIDTH-1:0] = req_wstrb[CLIENT_BYTE_WIDTH-1:0];
 
 assign phase_pair[2:0] = phase[BANK_INDEX_WIDTH-1:1];
 assign target_pair[2:0] = bank0[BANK_INDEX_WIDTH-1:1];
-assign phase_match = (FIXED_CHANNEL[2:0] + phase_pair[2:0])
+wire [2:0] wide_pair = {2'(phase_pair[1:0]+WIDE_LANE/2), (phase_pair[2] ^ 1'(WIDE_LANE))};
+assign phase_match = (WIDE_H4 ? wide_pair : (FIXED_CHANNEL[2:0] + phase_pair[2:0]))
                   == target_pair[2:0];
 assign request_legal = !req_we || (ALLOW_WRITE != 0);
 assign fire = req && request_legal && phase_match;
