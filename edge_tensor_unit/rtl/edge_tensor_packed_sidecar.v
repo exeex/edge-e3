@@ -1,5 +1,5 @@
-// Complete packed-weight tensor sidecar through scale * dot + psum.
-module edge_tensor_packed_sidecar(
+// E3 packed WLD relay ingress through final local banks and scale * dot + psum.
+module edge_tensor_packed_sidecar #(parameter RELAY_WEIGHT=2)(
   clk, rst_b,
   weight_start_i, weight_start_ready_o,
   weight_format_i, weight_transpose_i,
@@ -34,6 +34,81 @@ output dot_ready_o;
 output output_valid_o;
 output [127:0] output_bf16_o;
 
+generate if (RELAY_WEIGHT==1) begin : GEN_RELAY
+wire [63:0] take_valid;
+wire [1023:0] take_data;
+wire [1:0] width_code;
+wire [2:0] relay_mode={weight_format_i,weight_transpose_i};
+wire [7:0] dot_valid;
+wire [127:0] dot_bf16;
+
+edge_wld_relay_router #(.DOTS(8)) x_weight_ingress (
+  .clk(clk), .rst_b(rst_b), .start_i(weight_start_i),
+  .start_ready_o(weight_start_ready_o), .mode_i(relay_mode),
+  .load_valid_i(weight_load_valid_i), .load_ready_o(weight_load_ready_o),
+  .load_data_i(weight_load_data_i), .advance_i(weight_drain_ready_i),
+  .busy_o(), .done_o(weight_done_o),
+  .take_valid_o(take_valid), .take_data_o(take_data), .width_code_o(width_code)
+);
+
+genvar dot;
+for (dot=0;dot<8;dot=dot+1) begin : GEN_DOT
+  wire [127:0] active_weight;
+  edge_dot8_weight_bank_elements x_weight_bank (
+    .clk(clk), .rst_b(rst_b), .fill_valid_i(take_valid[dot*8 +: 8]),
+    .fill_data_i(take_data[dot*128 +: 128]), .fill_format_i(width_code),
+    .fill_bank_i(weight_fill_bank_i), .activate_i(weight_activate_i),
+    .activate_bank_i(weight_activate_bank_i), .active_weight_o(active_weight)
+  );
+  edge_dot_kernel x_kernel (
+    .clk(clk), .rst_b(rst_b), .in_valid(compute_valid_i),
+    .bf16_vec_i(input_bf16_i), .int8_vec_i(64'b0),
+    .weight_bf16_mode_i(1'b1), .bf16_weight_vec_i(active_weight),
+    .weight_exp_vec_i(64'b0), .external_product_vec_i(128'b0),
+    .external_product_sign_i(8'b0), .rsum_enable_i(rsum_enable_i),
+    .rsum_first_i(rsum_first_i), .rsum_last_i(rsum_last_i),
+    .out_valid(dot_valid[dot]), .bf22_o(), .bf16_o(dot_bf16[dot*16 +: 16])
+  );
+end
+edge_tensor_scale_psum8 x_post (
+  .clk(clk), .rst_b(rst_b), .dot_valid(dot_valid[0]), .dot_bf16(dot_bf16),
+  .late_psum_mode_i(late_psum_mode_i), .late_psum_valid_i(late_psum_valid_i),
+  .psum_bf16_i(psum_bf16_i), .scale_enable_i(scale_enable_i),
+  .scale_bf16_i(scale_bf16_i), .rsum_enable_i(rsum_enable_i),
+  .dot_ready_o(dot_ready_o), .out_valid(output_valid_o), .output_bf16_o(output_bf16_o)
+);
+`ifndef SYNTHESIS
+always @(posedge clk)
+  if (rst_b && weight_start_i && weight_start_ready_o && weight_format_i>1)
+    $fatal(1,"E3 relay product supports BF16 and signed I8 only");
+`endif
+end else if (RELAY_WEIGHT==2) begin : GEN_DOT_RELAY
+wire [1023:0] active_weights;
+wire [7:0] dot_valid;
+wire [127:0] dot_bf16;
+edge_tensor_dot_relay_weights x_weights(
+ .clk(clk),.rst_b(rst_b),.weight_start_i(weight_start_i),.weight_start_ready_o(weight_start_ready_o),
+ .weight_format_i(weight_format_i),.weight_transpose_i(weight_transpose_i),
+ .weight_load_valid_i(weight_load_valid_i),.weight_load_ready_o(weight_load_ready_o),
+ .weight_load_data_i(weight_load_data_i),.weight_drain_ready_i(weight_drain_ready_i),
+ .weight_done_o(weight_done_o),.busy_o(),.weight_fill_bank_i(weight_fill_bank_i),
+ .weight_activate_i(weight_activate_i),.weight_activate_bank_i(weight_activate_bank_i),
+ .active_weights_o(active_weights));
+genvar dot;
+for(dot=0;dot<8;dot=dot+1)begin : GEN_DOT
+ edge_dot_kernel x_kernel(
+  .clk(clk),.rst_b(rst_b),.in_valid(compute_valid_i),.bf16_vec_i(input_bf16_i),.int8_vec_i(64'b0),
+  .weight_bf16_mode_i(1'b1),.bf16_weight_vec_i(active_weights[dot*128+:128]),.weight_exp_vec_i(64'b0),
+  .external_product_vec_i(128'b0),.external_product_sign_i(8'b0),
+  .rsum_enable_i(rsum_enable_i),.rsum_first_i(rsum_first_i),.rsum_last_i(rsum_last_i),
+  .out_valid(dot_valid[dot]),.bf22_o(),.bf16_o(dot_bf16[dot*16+:16]));
+end
+edge_tensor_scale_psum8 x_post(
+ .clk(clk),.rst_b(rst_b),.dot_valid(dot_valid[0]),.dot_bf16(dot_bf16),
+ .late_psum_mode_i(late_psum_mode_i),.late_psum_valid_i(late_psum_valid_i),
+ .psum_bf16_i(psum_bf16_i),.scale_enable_i(scale_enable_i),.scale_bf16_i(scale_bf16_i),
+ .rsum_enable_i(rsum_enable_i),.dot_ready_o(dot_ready_o),.out_valid(output_valid_o),.output_bf16_o(output_bf16_o));
+end else begin : GEN_CIRCULAR
 wire [127:0] drain_data;
 wire [3:0] drain_lane_valid;
 wire [7:0] drain_slot;
@@ -83,4 +158,5 @@ always @(posedge clk or negedge rst_b) begin
 end
 
 wire unused_circular_busy = circular_busy;
+end endgenerate
 endmodule

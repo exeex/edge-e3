@@ -1,5 +1,5 @@
 // Packed tensor sidecar with automatic double-bank ownership.
-module edge_tensor_packed_bank_sidecar(
+module edge_tensor_packed_bank_sidecar #(parameter RELAY_WEIGHT=2)(
   clk, rst_b,
   weight_start_i, weight_start_ready_o,
   weight_format_i, weight_transpose_i,
@@ -47,13 +47,16 @@ wire inner_done;
 wire start_accept = weight_start_i && weight_start_ready_o;
 wire activate_accept = weight_activate_i && weight_activate_ready_o;
 
-assign weight_start_ready_o = inner_start_ready && !pending_valid_q;
+// Completion must first be claimed by this owner. During inner_done the
+// pending bit has not clocked yet; accepting a new load could overwrite the
+// just-completed bank, or choose the wrong bank on simultaneous activation.
+assign weight_start_ready_o = inner_start_ready && !pending_valid_q && !inner_done;
 assign weight_activate_ready_o = pending_valid_q || inner_done;
 assign weight_active_valid_o = active_valid_q;
 assign weight_pending_valid_o = pending_valid_q;
 assign weight_done_o = inner_done;
 
-edge_tensor_packed_sidecar x_packed (
+edge_tensor_packed_sidecar #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_packed (
   .clk(clk), .rst_b(rst_b),
   .weight_start_i(weight_start_i && weight_start_ready_o),
   .weight_start_ready_o(inner_start_ready),

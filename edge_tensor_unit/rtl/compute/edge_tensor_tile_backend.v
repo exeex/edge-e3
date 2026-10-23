@@ -1,6 +1,7 @@
 // Selectable legacy-fill or packed-raw-WLD tensor tile backend.
 module edge_tensor_tile_backend #(
-  parameter PACKED_WEIGHT = 0
+  parameter PACKED_WEIGHT = 0,
+  parameter RELAY_WEIGHT = 2
 )(
   clk, rst_b,
   compute_valid, late_psum_mode_i, late_psum_valid_i,
@@ -44,7 +45,7 @@ output [127:0] output_bf16_o;
 generate
   if (PACKED_WEIGHT) begin : GEN_PACKED
     wire packed_active_valid, packed_pending_valid;
-    edge_tensor_packed_wld_tile x_tile (
+    edge_tensor_packed_wld_tile #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_tile (
       .clk(clk), .rst_b(rst_b),
       .start(packed_start_i), .start_ready(packed_start_ready_o),
       .start_bf16_mode(packed_bf16_mode_i),
