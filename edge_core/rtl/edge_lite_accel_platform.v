@@ -56,6 +56,11 @@ module edge_lite_accel_platform #(
   wire [3:0] tensor_cmd_setcsr_dtype,tensor_cmd_setcsr_wtype;
   wire tensor_cmd_setcsr_req,tensor_cmd_setin_req,tensor_cmd_setn_req;
   wire tensor_cmd_setout_req,tensor_cmd_setpsum_req,tensor_cmd_start_req;
+  wire [31:0] tensor_cmd_wsld_circular_config;
+  wire  tensor_wsld_slot_active;
+  wire  tensor_wsld_slot_start;
+  wire [15:0] tensor_wsld_slot_addr;
+  wire [31:0] tensor_wsld_slot_config;
   wire tensor_cmd_start_tile_req,tensor_cmd_sync_req,tensor_cmd_wld_req;
   wire tensor_cmd_wld_trans_req,tensor_cmd_wld_reuse,tensor_cmd_sld_req;
   wire tensor_cmd_sld_reuse,tensor_cmd_sld_stream_setup_req;
@@ -166,6 +171,7 @@ module edge_lite_accel_platform #(
     .cmd_sld_req(tensor_cmd_sld_req),.cmd_sld_reuse(tensor_cmd_sld_reuse),
     .cmd_sld_stream_ptr(tensor_cmd_sld_stream_setup_ptr),
     .cmd_sld_stream_req(tensor_cmd_sld_stream_setup_req),
+    .cmd_wsld_circular_config(tensor_cmd_wsld_circular_config),
     .cmd_wsld_circular_req(tensor_cmd_wsld_circular_req),
     .cmd_wsld_circular_transpose(tensor_cmd_wsld_circular_transpose),
     .cmd_sld_circular_req(tensor_cmd_sld_circular_req),
@@ -184,7 +190,7 @@ module edge_lite_accel_platform #(
     .cmpu_cmd_setn_value(cmpu_cmd_setn_value),.cmpu_cmd_start_req(cmpu_cmd_start_req),
     .cmpu_cmd_sync_req(cmpu_cmd_sync_req));
 
-  edge_accel_data_ctrl #(.ADDR_WIDTH(AXI_ADDR_WIDTH),.VALUE_WIDTH(64)) data_ctrl(
+  edge_accel_data_ctrl #(.ADDR_WIDTH(AXI_ADDR_WIDTH),.VALUE_WIDTH(64),.WSLD_SLOT_CONFIG(1)) data_ctrl(
     .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),
     .mem_region_base(mem_region_base),
     .edge_start_req(1'b0),.edge_start_src({AXI_ADDR_WIDTH{1'b0}}),
@@ -206,9 +212,15 @@ module edge_lite_accel_platform #(
     .tensor_cmd_wld_circular_req(tensor_cmd_wld_circular_req),
     .tensor_cmd_wld_trans_req(tensor_cmd_wld_trans_req),
     .tensor_cmd_wld_reuse(tensor_cmd_wld_reuse),.tensor_cmd_wld_ptr(tensor_cmd_wld_ptr),
+    .tensor_cmd_wsld_circular_config(tensor_cmd_wsld_circular_config),
     .tensor_cmd_wsld_circular_req(tensor_cmd_wsld_circular_req),
     .tensor_cmd_wsld_circular_transpose(tensor_cmd_wsld_circular_transpose),
     .tensor_cmd_sld_req(tensor_cmd_sld_req),
+    .tensor_wsld_slot_active(tensor_wsld_slot_active),
+    .tensor_wsld_slot_start(tensor_wsld_slot_start),
+    .tensor_wsld_slot_addr(tensor_wsld_slot_addr),
+    .tensor_wsld_slot_config(tensor_wsld_slot_config),
+
     .tensor_cmd_sld_circular_req(tensor_cmd_sld_circular_req),
     .tensor_cmd_sld_reuse(tensor_cmd_sld_reuse),.tensor_cmd_sld_ptr(tensor_cmd_sld_ptr),
     .tensor_unit_sync_stall(tensor_unit_sync_stall),
@@ -255,6 +267,11 @@ module edge_lite_accel_platform #(
     .tensor_cmd_wld_reuse(tensor_unit_cmd_wld_reuse),
     .tensor_cmd_sld_ptr(tensor_unit_cmd_sld_ptr),
     .tensor_cmd_sld_req(tensor_unit_cmd_sld_req),
+    .tensor_wsld_slot_active(tensor_wsld_slot_active),
+    .tensor_wsld_slot_start(tensor_wsld_slot_start),
+    .tensor_wsld_slot_addr(tensor_wsld_slot_addr),
+    .tensor_wsld_slot_config(tensor_wsld_slot_config),
+
     .tensor_cmd_sld_reuse(tensor_unit_cmd_sld_reuse),
     .tensor_cmd_sld_stream(tensor_unit_cmd_sld_stream),
     .tensor_sync_stall(tensor_unit_sync_stall),

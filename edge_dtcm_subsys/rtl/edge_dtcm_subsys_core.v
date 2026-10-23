@@ -75,6 +75,10 @@ module edge_dtcm_subsys_core #(
   tensor_cmd_sld_ptr,
   tensor_cmd_sld_req,
   tensor_cmd_sld_reuse,
+  tensor_wsld_slot_active,
+  tensor_wsld_slot_start,
+  tensor_wsld_slot_addr,
+  tensor_wsld_slot_config,
   tensor_cmd_sld_stream,
   tensor_cmd_sld_stream_setup_ptr,
   tensor_cmd_sld_stream_setup_req,
@@ -200,6 +204,10 @@ input                         tensor_cmd_wld_reuse;
 input  [15:0]                 tensor_cmd_sld_ptr;
 input                         tensor_cmd_sld_req;
 input                         tensor_cmd_sld_reuse;
+input  tensor_wsld_slot_active;
+input  tensor_wsld_slot_start;
+input [15:0] tensor_wsld_slot_addr;
+input [31:0] tensor_wsld_slot_config;
 input                         tensor_cmd_sld_stream;
 input  [15:0]                 tensor_cmd_sld_stream_setup_ptr;
 input                         tensor_cmd_sld_stream_setup_req;
@@ -391,6 +399,44 @@ wire [BANK_NUM*DATA_WIDTH-1:0] actu_bank_rdata;
 wire [BANK_NUM*DATA_WIDTH-1:0] actu_bank_wdata;
 wire [BANK_NUM-1:0]           actu_bank_we;
 wire [BANK_NUM*BYTE_WIDTH-1:0] actu_bank_wstrb;
+wire [15:0] physical_sld_addr;
+wire  physical_sld_req;
+wire  physical_sld_ready;
+wire [127:0] physical_sld_rdata;
+wire  physical_sld_rvalid;
+wire [15:0] physical_wld_addr;
+wire  physical_wld_req;
+wire  physical_wld_ready;
+wire [127:0] physical_wld_rdata;
+wire  physical_wld_rvalid;
+wire slot_rd_req, slot_rd_ready, slot_rd_rvalid;
+wire [15:0] slot_rd_addr;
+wire [127:0] slot_rd_rdata;
+wire slot_sld_ready, slot_wld_ready, slot_sld_rvalid, slot_wld_rvalid;
+wire [127:0] slot_sld_rdata, slot_wld_rdata;
+assign physical_wld_req = tensor_wsld_slot_active ? slot_rd_req : tensor_wld_req;
+assign physical_wld_addr = tensor_wsld_slot_active ? slot_rd_addr : tensor_wld_addr;
+assign physical_sld_req = !tensor_wsld_slot_active && tensor_sld_req;
+assign physical_sld_addr = tensor_sld_addr;
+assign slot_rd_ready = physical_wld_ready;
+assign slot_rd_rvalid = physical_wld_rvalid && tensor_wsld_slot_active;
+assign slot_rd_rdata = physical_wld_rdata;
+assign tensor_wld_ready = tensor_wsld_slot_active ? slot_wld_ready : physical_wld_ready;
+assign tensor_wld_rvalid = tensor_wsld_slot_active ? slot_wld_rvalid : physical_wld_rvalid;
+assign tensor_wld_rdata = tensor_wsld_slot_active ? slot_wld_rdata : physical_wld_rdata;
+assign tensor_sld_ready = tensor_wsld_slot_active ? slot_sld_ready : physical_sld_ready;
+assign tensor_sld_rvalid = tensor_wsld_slot_active ? slot_sld_rvalid : physical_sld_rvalid;
+assign tensor_sld_rdata = tensor_wsld_slot_active ? slot_sld_rdata : physical_sld_rdata;
+edge_wsld_slot_reader #(.ADDR_WIDTH(16),.READ_LATENCY(DTCM_READ_LATENCY)) x_wsld_slot_reader (
+ .clk(clk),.cpurst_b(cpurst_b),.start(tensor_wsld_slot_start),
+ .active(tensor_wsld_slot_active),.base_addr(tensor_wsld_slot_addr),
+ .config_i(tensor_wsld_slot_config),.rd_req(slot_rd_req),.rd_addr(slot_rd_addr),
+ .rd_ready(slot_rd_ready),.rd_rvalid(slot_rd_rvalid),.rd_rdata(slot_rd_rdata),
+ .sld_req(tensor_sld_req),.wld_req(tensor_wld_req),
+ .sld_ready(slot_sld_ready),.wld_ready(slot_wld_ready),
+ .sld_rvalid(slot_sld_rvalid),.wld_rvalid(slot_wld_rvalid),
+ .sld_rdata(slot_sld_rdata),.wld_rdata(slot_wld_rdata)
+);
 wire [15:0]                   tensor_sld_addr;
 wire                          tensor_sld_req;
 wire                          tensor_sld_ready;
@@ -536,6 +582,8 @@ edge_tensor_unit_bank16 #(
   .tensor_wld_cmd_ready(tensor_wld_cmd_ready),
   .tensor_sld_cmd_ready(tensor_sld_cmd_ready),
   .tensor_sld_fill_done(tensor_sld_fill_done),
+  .wsld_active(tensor_wsld_slot_active),
+  .wsld_wtype(tensor_wsld_slot_config[19:16]),
   .tensor_sld_addr(tensor_sld_addr[15:0]),
   .tensor_sld_req(tensor_sld_req),
   .tensor_sld_ready(tensor_sld_ready),
@@ -707,16 +755,16 @@ edge_dtcm_arb #(
   .lsu_we        (lsu_we),
   .lsu_wdata     (lsu_wdata[DATA_WIDTH-1:0]),
   .lsu_wstrb     (lsu_wstrb[BYTE_WIDTH-1:0]),
-  .sld_addr      (tensor_sld_addr[ADDR_WIDTH-1:0]),
-  .sld_rdata     (tensor_sld_rdata[127:0]),
-  .sld_ready     (tensor_sld_ready),
-  .sld_req       (tensor_sld_req),
-  .sld_rvalid    (tensor_sld_rvalid),
-  .wld_addr      (tensor_wld_addr[ADDR_WIDTH-1:0]),
-  .wld_rdata     (tensor_wld_rdata[127:0]),
-  .wld_ready     (tensor_wld_ready),
-  .wld_req       (tensor_wld_req),
-  .wld_rvalid    (tensor_wld_rvalid),
+  .sld_addr      (physical_sld_addr[ADDR_WIDTH-1:0]),
+  .sld_rdata     (physical_sld_rdata[127:0]),
+  .sld_ready     (physical_sld_ready),
+  .sld_req       (physical_sld_req),
+  .sld_rvalid    (physical_sld_rvalid),
+  .wld_addr      (physical_wld_addr[ADDR_WIDTH-1:0]),
+  .wld_rdata     (physical_wld_rdata[127:0]),
+  .wld_ready     (physical_wld_ready),
+  .wld_req       (physical_wld_req),
+  .wld_rvalid    (physical_wld_rvalid),
   .tensor_native_active_mask(tensor_native_active_mask[BANK_NUM-1:0]),
   .tensor_native_bank_addr(tensor_native_bank_addr[BANK_NUM*SRAM_ADDR_WIDTH-1:0]),
   .tensor_native_bank_req(tensor_native_bank_req[BANK_NUM-1:0]),

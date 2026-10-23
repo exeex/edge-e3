@@ -5,6 +5,7 @@
 module edge_accel_data_ctrl #(
   parameter ADDR_WIDTH = 40,
   parameter VALUE_WIDTH = 64,
+  parameter WSLD_SLOT_CONFIG = 0,
   parameter CIRCULAR_FRAGMENT_WORDS = 2
 ) (
   input  wire                   forever_cpuclk,
@@ -42,6 +43,7 @@ module edge_accel_data_ctrl #(
   input  wire                   tensor_cmd_wld_trans_req,
   input  wire                   tensor_cmd_wld_reuse,
   input  wire [15:0]            tensor_cmd_wld_ptr,
+  input wire [31:0] tensor_cmd_wsld_circular_config,
   input  wire                   tensor_cmd_wsld_circular_req,
   input  wire                   tensor_cmd_wsld_circular_transpose,
   input  wire                   tensor_cmd_sld_req,
@@ -70,6 +72,10 @@ module edge_accel_data_ctrl #(
   output wire [ADDR_WIDTH-1:0]  dma_stream_cmd_axi_addr,
   output wire [15:0]            dma_stream_cmd_dtcm_addr,
 
+  output wire  tensor_wsld_slot_active,
+  output wire  tensor_wsld_slot_start,
+  output wire [15:0] tensor_wsld_slot_addr,
+  output wire [31:0] tensor_wsld_slot_config,
   output wire                   tensor_wld_cmd_ready,
   output wire                   tensor_sld_cmd_ready,
   output wire                   tensor_wld_circular_ready,
@@ -104,10 +110,35 @@ module edge_accel_data_ctrl #(
   reg [15:0] circular_reserved_entries_q;
   reg circular_wld_active_q, wsld_active_q, sld_circular_active_q;
   reg sld_circular_inflight_q, wsld_group_active_q, wsld_transpose_q;
-  reg [2:0] wsld_sld_issued_q, wsld_wld_issued_q;
+  reg [8:0] wsld_sld_issued_q, wsld_wld_issued_q;
   reg wsld_sld_done_q;
-  reg [2:0] wsld_wld_done_q, wsld_start_done_q;
+  reg [8:0] wsld_wld_done_q, wsld_start_done_q;
   reg [15:0] wsld_group_addr_q;
+  reg [31:0] wsld_config_q;
+  wire [15:0] wsld_tile_offset = wsld_config_q[19:16] == 1 ?
+      {wsld_wld_issued_q,7'b0} : wsld_config_q[19:16] == 4 ?
+      {2'b0,wsld_wld_issued_q,5'b0} : {1'b0,wsld_wld_issued_q,6'b0};
+  wire [15:0] wsld_weight_byte_offset = {11'd0,wsld_config_q[11:8],1'b0} +
+      wsld_tile_offset;
+  // Pointer is informational in slot mode: the reader owns the byte cursor.
+  wire [7:0] wsld_tiles = wsld_config_q[7:0];
+  wire [31:0] wsld_config_in = (!WSLD_SLOT_CONFIG || tensor_cmd_wsld_circular_config == 0)
+      ? 32'h00020804 : tensor_cmd_wsld_circular_config;
+  wire [15:0] wsld_weight_bytes_in = wsld_config_in[19:16] == 1 ?
+      {1'b0,wsld_config_in[7:0],7'b0} : wsld_config_in[19:16] == 4 ?
+      {3'b0,wsld_config_in[7:0],5'b0} : {2'b0,wsld_config_in[7:0],6'b0};
+  wire [15:0] wsld_payload_bytes_in = wsld_weight_bytes_in +
+      {11'd0,wsld_config_in[11:8],1'b0};
+  wire [15:0] wsld_slot_words_in = ((wsld_payload_bytes_in + 16'd15) >> 4) << 1;
+  wire wsld_config_valid = wsld_config_in[7:0] != 0 &&
+      (wsld_config_in[11:8] == 1 || wsld_config_in[11:8] == 8) &&
+      wsld_config_in[15:12] == 0 && wsld_config_in[31:20] == 0 &&
+      wsld_config_in[19:16] >= 1 && wsld_config_in[19:16] <= 5;
+  assign tensor_wsld_slot_active = wsld_group_active_q;
+  assign tensor_wsld_slot_start = wsld_group_claim;
+  assign tensor_wsld_slot_addr = circular_consumer_addr_q;
+  assign tensor_wsld_slot_config = wsld_config_q;
+
 
   wire [63:0] dma_xy_total = tensor_dma_start_x[63:32] *
                              tensor_dma_start_y[63:32];
@@ -218,9 +249,9 @@ module edge_accel_data_ctrl #(
     circular_config_valid && !circular_ring_empty &&
     (circular_entry_words_q == {9'b0, tensor_wld_tile_words});
   assign tensor_wsld_circular_ready = circular_config_valid &&
-    !wsld_active_q && !circular_wld_active_q && !tensor_unit_sync_stall &&
+    !wsld_active_q && !sld_circular_active_q && !circular_wld_active_q && !tensor_unit_sync_stall &&
     tensor_wld_unit_cmd_ready && tensor_sld_unit_cmd_ready &&
-    (circular_entry_words_q == 16'd34);
+    wsld_config_valid && (circular_entry_words_q == wsld_slot_words_in) && !circular_base_q[0];
   assign tensor_sld_circular_ready = circular_config_valid &&
     !sld_circular_active_q && !wsld_active_q && !circular_wld_active_q &&
     (circular_entry_words_q == 16'd2);
@@ -232,19 +263,19 @@ module edge_accel_data_ctrl #(
                                tensor_wld_circular_ready;
   assign wsld_group_claim = wsld_active_q && !wsld_group_active_q &&
                             !circular_ring_empty;
-  assign wsld_sld_launch = wsld_group_active_q && (wsld_sld_issued_q < 3'd4) &&
+  assign wsld_sld_launch = wsld_group_active_q && (wsld_sld_issued_q < {1'b0,wsld_tiles}) &&
                            (wsld_sld_issued_q <= wsld_start_done_q) &&
                            tensor_sld_unit_cmd_ready;
   assign wsld_wld_launch = wsld_group_active_q && wsld_sld_done_q &&
-                           (wsld_wld_issued_q < 3'd4) &&
+                           (wsld_wld_issued_q < {1'b0,wsld_tiles}) &&
                            (wsld_wld_issued_q < wsld_sld_issued_q) &&
                            (wsld_wld_issued_q <= wsld_start_done_q) &&
                            tensor_wld_unit_cmd_ready;
   assign wsld_group_release = wsld_group_active_q &&
-                              (wsld_wld_done_q == 3'd4) &&
-                              (wsld_start_done_q == 3'd4);
+                              (wsld_wld_done_q == {1'b0,wsld_tiles}) &&
+                              (wsld_start_done_q == {1'b0,wsld_tiles});
   assign tensor_unit_cmd_wld_ptr = wsld_wld_launch ?
-    (wsld_group_addr_q + 16'd2 + {wsld_wld_issued_q, 3'b000}) :
+    (wsld_group_addr_q + (wsld_weight_byte_offset >> 3)) :
     (circular_wld_launch ? circular_consumer_addr_q : tensor_cmd_wld_ptr);
   assign tensor_unit_cmd_wld_req =
     (tensor_cmd_wld_req && !wsld_active_q) ||
@@ -260,7 +291,7 @@ module edge_accel_data_ctrl #(
   assign tensor_unit_cmd_sld_req = sld_circular_launch || wsld_sld_launch ||
     (tensor_cmd_sld_req && !wsld_active_q && !sld_circular_active_q);
   assign tensor_unit_cmd_sld_reuse = wsld_active_q ?
-    (wsld_sld_issued_q != 3'd0) : tensor_cmd_sld_reuse;
+    (wsld_sld_issued_q != 9'd0) : tensor_cmd_sld_reuse;
   assign tensor_unit_cmd_sld_stream = sld_circular_launch;
 
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
@@ -306,11 +337,12 @@ module edge_accel_data_ctrl #(
       sld_circular_inflight_q <= 1'b0;
       wsld_group_active_q <= 1'b0;
       wsld_transpose_q <= 1'b0;
-      wsld_sld_issued_q <= 3'd0;
+      wsld_config_q <= 32'h00020804;
+      wsld_sld_issued_q <= 9'd0;
       wsld_sld_done_q <= 1'b0;
-      wsld_wld_issued_q <= 3'd0;
-      wsld_wld_done_q <= 3'd0;
-      wsld_start_done_q <= 3'd0;
+      wsld_wld_issued_q <= 9'd0;
+      wsld_wld_done_q <= 9'd0;
+      wsld_start_done_q <= 9'd0;
       wsld_group_addr_q <= 16'd0;
     end else begin
       if (tensor_dma_start_circular_req) begin
@@ -433,6 +465,7 @@ module edge_accel_data_ctrl #(
       if (tensor_cmd_wsld_circular_req && tensor_wsld_circular_ready) begin
         wsld_active_q <= 1'b1;
         wsld_transpose_q <= tensor_cmd_wsld_circular_transpose;
+        wsld_config_q <= wsld_config_in;
       end
       if (tensor_cmd_sld_circular_req && tensor_sld_circular_ready)
         sld_circular_active_q <= 1'b1;
@@ -455,11 +488,11 @@ module edge_accel_data_ctrl #(
       if (wsld_group_claim) begin
         wsld_group_active_q <= 1'b1;
         wsld_group_addr_q <= circular_consumer_addr_q;
-        wsld_sld_issued_q <= 3'd0;
+        wsld_sld_issued_q <= 9'd0;
         wsld_sld_done_q <= 1'b0;
-        wsld_wld_issued_q <= 3'd0;
-        wsld_wld_done_q <= 3'd0;
-        wsld_start_done_q <= 3'd0;
+        wsld_wld_issued_q <= 9'd0;
+        wsld_wld_done_q <= 9'd0;
+        wsld_start_done_q <= 9'd0;
         if (circular_consumer_entry_q == circular_ring_capacity_entries_q - 16'd1) begin
           circular_consumer_entry_q <= 16'd0;
           circular_consumer_addr_q <= circular_base_q;
@@ -469,15 +502,15 @@ module edge_accel_data_ctrl #(
         end
       end
       if (wsld_sld_launch)
-        wsld_sld_issued_q <= wsld_sld_issued_q + 3'd1;
+        wsld_sld_issued_q <= wsld_sld_issued_q + 9'd1;
       if (wsld_active_q && tensor_sld_fill_done)
         wsld_sld_done_q <= 1'b1;
       if (wsld_wld_launch)
-        wsld_wld_issued_q <= wsld_wld_issued_q + 3'd1;
-      if (wsld_group_active_q && tensor_wld_fill_done && wsld_wld_done_q < 3'd4)
-        wsld_wld_done_q <= wsld_wld_done_q + 3'd1;
-      if (wsld_group_active_q && tensor_start_retire_valid && wsld_start_done_q < 3'd4)
-        wsld_start_done_q <= wsld_start_done_q + 3'd1;
+        wsld_wld_issued_q <= wsld_wld_issued_q + 9'd1;
+      if (wsld_group_active_q && tensor_wld_fill_done && wsld_wld_done_q < {1'b0,wsld_tiles})
+        wsld_wld_done_q <= wsld_wld_done_q + 9'd1;
+      if (wsld_group_active_q && tensor_start_retire_valid && wsld_start_done_q < {1'b0,wsld_tiles})
+        wsld_start_done_q <= wsld_start_done_q + 9'd1;
       if (wsld_group_release) begin
         wsld_group_active_q <= 1'b0;
         circular_consumed_entries_q <= circular_consumed_entries_q + 16'd1;

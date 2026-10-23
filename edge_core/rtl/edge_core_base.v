@@ -478,6 +478,11 @@ module edge_core_base #(
   wire                    tensor_sld_cmd_ready;
   wire                    tensor_sld_unit_cmd_ready;
   wire                    tensor_sld_fill_done;
+  wire [31:0] tensor_cmd_wsld_circular_config;
+  wire  tensor_wsld_slot_active;
+  wire  tensor_wsld_slot_start;
+  wire [15:0] tensor_wsld_slot_addr;
+  wire [31:0] tensor_wsld_slot_config;
   wire                    tensor_cmd_wsld_circular_req;
   wire                    tensor_cmd_wsld_circular_transpose;
   wire                    tensor_cmd_sld_circular_req;
@@ -1135,6 +1140,7 @@ module edge_core_base #(
   );
 
   edge_accel_data_ctrl #(
+    .WSLD_SLOT_CONFIG(1),
     .ADDR_WIDTH(PC_WIDTH),
     .VALUE_WIDTH(VALUE_WIDTH)
   ) accel_data_ctrl (
@@ -1169,9 +1175,15 @@ module edge_core_base #(
     .tensor_cmd_wld_trans_req(tensor_cmd_wld_trans_req),
     .tensor_cmd_wld_reuse(tensor_cmd_wld_reuse),
     .tensor_cmd_wld_ptr(tensor_cmd_wld_ptr),
+    .tensor_cmd_wsld_circular_config(tensor_cmd_wsld_circular_config),
     .tensor_cmd_wsld_circular_req(tensor_cmd_wsld_circular_req),
     .tensor_cmd_wsld_circular_transpose(tensor_cmd_wsld_circular_transpose),
     .tensor_cmd_sld_req(tensor_cmd_sld_req),
+    .tensor_wsld_slot_active(tensor_wsld_slot_active),
+    .tensor_wsld_slot_start(tensor_wsld_slot_start),
+    .tensor_wsld_slot_addr(tensor_wsld_slot_addr),
+    .tensor_wsld_slot_config(tensor_wsld_slot_config),
+
     .tensor_cmd_sld_circular_req(tensor_cmd_sld_circular_req),
     .tensor_cmd_sld_reuse(tensor_cmd_sld_reuse),
     .tensor_cmd_sld_ptr(tensor_cmd_sld_ptr),
@@ -1625,6 +1637,7 @@ module edge_core_base #(
     .cmd_sld_reuse(tensor_cmd_sld_reuse),
     .cmd_sld_stream_ptr(tensor_cmd_sld_stream_ptr),
     .cmd_sld_stream_req(tensor_cmd_sld_stream_req),
+    .cmd_wsld_circular_config(tensor_cmd_wsld_circular_config),
     .cmd_wsld_circular_req(tensor_cmd_wsld_circular_req),
     .cmd_wsld_circular_transpose(tensor_cmd_wsld_circular_transpose),
     .cmd_sld_circular_req(tensor_cmd_sld_circular_req),
@@ -2250,6 +2263,11 @@ module edge_core_base #(
     .tensor_cmd_wld_reuse(tensor_unit_cmd_wld_reuse),
     .tensor_cmd_sld_ptr(tensor_unit_cmd_sld_ptr[15:0]),
     .tensor_cmd_sld_req(tensor_unit_cmd_sld_req),
+    .tensor_wsld_slot_active(tensor_wsld_slot_active),
+    .tensor_wsld_slot_start(tensor_wsld_slot_start),
+    .tensor_wsld_slot_addr(tensor_wsld_slot_addr),
+    .tensor_wsld_slot_config(tensor_wsld_slot_config),
+
     .tensor_cmd_sld_reuse(tensor_unit_cmd_sld_reuse),
     .tensor_cmd_sld_stream(tensor_unit_cmd_sld_stream),
     .tensor_cmd_sld_stream_setup_ptr(tensor_cmd_sld_stream_ptr),

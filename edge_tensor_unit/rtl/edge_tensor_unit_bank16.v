@@ -14,6 +14,8 @@ module edge_tensor_unit_bank16 #(
   input  wire                         clk,
   input  wire                         cpurst_b,
 
+  input wire wsld_active,
+  input wire [3:0] wsld_wtype,
   input  wire [3:0]                   cmd_setcsr_dtype,
   input  wire                         cmd_setcsr_req,
   input  wire [3:0]                   cmd_setcsr_wtype,
@@ -97,6 +99,7 @@ localparam PAIR_WIDTH = DATA_WIDTH * 2;
 
 reg  [3:0]                    cfg_dtype_q [0:1];
 reg  [3:0]                    cfg_wtype_q [0:1];
+wire [3:0] load_wtype = wsld_active ? wsld_wtype : cfg_wtype_q[cfg_write_sel_q];
 reg  [ADDR_WIDTH-1:0]         cfg_in_ptr_q [0:1];
 reg  [ADDR_WIDTH-1:0]         cfg_out_ptr_q [0:1];
 reg  [ADDR_WIDTH-1:0]         cfg_psum_ptr_q [0:1];
@@ -578,7 +581,7 @@ assign wld_cmd_launch_transpose =
                            : cmd_wld_trans_req;
 assign wld_cmd_launch_wtype =
     wld_cmd_pending_launch ? wld_cmd_pending_wtype_q
-                           : cfg_wtype_q[cfg_write_sel_q];
+                           : load_wtype;
 assign wld_req_addr[ADDR_WIDTH-1:0] =
     wld_base_q[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-4{1'b0}},
                                   wld_issue_idx_q[2:0], 1'b0};
@@ -1024,20 +1027,20 @@ always @(posedge clk or negedge cpurst_b) begin
         wld_cmd_pending_next_q <= 1'b1;
         wld_cmd_pending_next_transpose_q <= cmd_wld_trans_req;
         wld_cmd_pending_next_wtype_q <=
-            cfg_wtype_q[cfg_write_sel_q];
+            load_wtype;
         wld_cmd_pending_next_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
       end else if (wld_cmd_pending_q && wld_cmd_pending_launch
                    && wld_cmd_pending_next_q) begin
         wld_cmd_pending_next_q <= 1'b1;
         wld_cmd_pending_next_transpose_q <= cmd_wld_trans_req;
         wld_cmd_pending_next_wtype_q <=
-            cfg_wtype_q[cfg_write_sel_q];
+            load_wtype;
         wld_cmd_pending_next_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
       end else begin
         wld_cmd_pending_q <= 1'b1;
         wld_cmd_pending_transpose_q <= cmd_wld_trans_req;
         wld_cmd_pending_wtype_q <=
-            cfg_wtype_q[cfg_write_sel_q];
+            load_wtype;
         wld_cmd_pending_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
       end
     end
