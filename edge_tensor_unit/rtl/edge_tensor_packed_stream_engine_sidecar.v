@@ -14,7 +14,7 @@ module edge_tensor_packed_stream_engine_sidecar(
 input clk, rst_b;
 input weight_start_i;
 output weight_start_ready_o;
-input [1:0] weight_format_i;
+input [2:0] weight_format_i;
 input weight_transpose_i, weight_load_valid_i;
 output weight_load_ready_o;
 input [127:0] weight_load_data_i;

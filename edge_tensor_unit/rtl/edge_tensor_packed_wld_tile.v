@@ -33,11 +33,11 @@ output dot_ready_o;
 output output_valid;
 output [127:0] output_bf16_o;
 
-localparam WEIGHT_BF16 = 2'd0;
-localparam WEIGHT_I8   = 2'd1;
+localparam WEIGHT_BF16 = 3'd0;
+localparam WEIGHT_I8   = 3'd1;
 
-wire [1:0] weight_format = start_wtype==4'd1 ? WEIGHT_BF16 : start_wtype==4'd4 ? 2'd3 :
-                           start_wtype==4'd3 ? 2'd2 : WEIGHT_I8;
+wire [2:0] weight_format = start_wtype==4'd1 ? WEIGHT_BF16 : start_wtype==4'd4 ? 3'd3 :
+                           start_wtype==4'd3 ? 3'd2 : start_wtype==4'd5 ? 3'd4 : WEIGHT_I8;
 
 // load_idx remains at this compatibility boundary for protocol parity.  The
 // selected ingress consumes accepted beats in order, as guaranteed by the WLD client.

@@ -1,7 +1,7 @@
 // Packed staging terminates at dot-local ingress; final banks shift in-dot.
 module edge_tensor_dot_relay_weights(
  input wire clk,input wire rst_b,input wire weight_start_i,
- output wire weight_start_ready_o,input wire [1:0] weight_format_i,input wire weight_transpose_i,
+ output wire weight_start_ready_o,input wire [2:0] weight_format_i,input wire weight_transpose_i,
  input wire weight_load_valid_i,output wire weight_load_ready_o,input wire [127:0] weight_load_data_i,
  input wire weight_drain_ready_i,output wire weight_done_o,output wire busy_o,
  input wire weight_fill_bank_i,input wire weight_activate_i,input wire weight_activate_bank_i,
@@ -10,8 +10,8 @@ module edge_tensor_dot_relay_weights(
 wire [3:0] group_valid;
 wire [7:0] group_lane;
 wire [127:0] raw_weights;
-wire [1:0] ingress_wtype;
-edge_wld_fixed_group_buffer #(.DOTS(8),.LANES(2)) buffer(
+wire [2:0] ingress_wtype;
+edge_wld_fixed_group_buffer #(.DOTS(8),.LANES(2),.WTYPE_BITS(3)) buffer(
  .clk(clk),.rst_b(rst_b),.start_i(weight_start_i),.start_ready_o(weight_start_ready_o),
  // Transport type stays intact until dot-local promotion to BF16.
  .wtype_i(weight_format_i),.transpose_i(weight_transpose_i),
@@ -28,7 +28,7 @@ for(dot=0;dot<8;dot=dot+1)begin : GEN_DOT
 end
 `ifndef SYNTHESIS
 always @(posedge clk)
- if(rst_b&&weight_start_i&&weight_start_ready_o&&weight_format_i==2)
-  $fatal(1,"E3 dot relay supports BF16/I8/FP4; FP8 encoding is not defined");
+ if(rst_b&&weight_start_i&&weight_start_ready_o&&weight_format_i>4)
+  $fatal(1,"invalid E3 weight transport type");
 `endif
 endmodule

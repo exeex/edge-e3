@@ -3,7 +3,7 @@
 // Two interleaved 16-bit rails move toward cell 0 within the same dot.
 module edge_dot8_weight_bank_relay #(parameter STEP=1)(
  input wire clk,input wire rst_b,input wire shift_valid_i,input wire [STEP*16-1:0] weight_i,
- input wire [1:0] format_i,input wire fill_bank_i,
+ input wire [2:0] format_i,input wire fill_bank_i,
  input wire activate_i,input wire activate_bank_i,
  output wire [127:0] active_weight_o
 );
@@ -12,10 +12,48 @@ wire [15:0] relay[0:7];
 wire [15:0] decoded[0:STEP-1];
 genvar pair;
 for(pair=0;pair<STEP;pair=pair+1)begin : DECODE
- assign decoded[pair]=format_i==0?weight_i[pair*16+:16]:format_i==3?fp4_to_bf16(weight_i[pair*16+:4]):int8_to_bf16(weight_i[pair*16+:8]);
+ wire [31:0] fp8_value=format_i==4?fp8_e5m2_to_fp32(weight_i[pair*16+:8]):fp8_e4m3fn_to_fp32(weight_i[pair*16+:8]);
+ assign decoded[pair]=format_i==0?weight_i[pair*16+:16]:format_i==3?fp4_to_bf16(weight_i[pair*16+:4]):format_i==2||format_i==4?fp8_value[31:16]:int8_to_bf16(weight_i[pair*16+:8]);
 end
 always @(posedge clk or negedge rst_b)
  if(!rst_b)active_bank_q<=0;else if(activate_i)active_bank_q<=activate_bank_i;
+// Matches scalar FP8 load conversion; all finite FP8 values fit BF16 exactly.
+  function [31:0] fp8_e5m2_to_fp32;
+    input [7:0] value;
+    begin
+      if(value[6:2]==0) begin
+        case(value[1:0])
+          0: fp8_e5m2_to_fp32={value[7],31'b0};
+          1: fp8_e5m2_to_fp32={value[7],8'd111,23'b0};
+          2: fp8_e5m2_to_fp32={value[7],8'd112,23'b0};
+          default: fp8_e5m2_to_fp32={value[7],8'd112,2'b10,21'b0};
+        endcase
+      end else if(value[6:2]==5'h1f)
+        fp8_e5m2_to_fp32=value[1:0]==0?{value[7],8'hff,23'b0}:32'h7fc00000;
+      else fp8_e5m2_to_fp32={value[7],value[6:2]+8'd112,value[1:0],21'b0};
+    end
+  endfunction
+
+  function [31:0] fp8_e4m3fn_to_fp32;
+    input [7:0] value;
+    begin
+      if(value[6:3]==0) begin
+        case(value[2:0])
+          0: fp8_e4m3fn_to_fp32={value[7],31'b0};
+          1: fp8_e4m3fn_to_fp32={value[7],8'd118,23'b0};
+          2: fp8_e4m3fn_to_fp32={value[7],8'd119,23'b0};
+          3: fp8_e4m3fn_to_fp32={value[7],8'd119,1'b1,22'b0};
+          4: fp8_e4m3fn_to_fp32={value[7],8'd120,23'b0};
+          5: fp8_e4m3fn_to_fp32={value[7],8'd120,2'b01,21'b0};
+          6: fp8_e4m3fn_to_fp32={value[7],8'd120,2'b10,21'b0};
+          default: fp8_e4m3fn_to_fp32={value[7],8'd120,2'b11,21'b0};
+        endcase
+      end else if(value[6:3]==4'hf&&value[2:0]==3'b111)
+        fp8_e4m3fn_to_fp32=32'h7fc00000;
+      else fp8_e4m3fn_to_fp32={value[7],value[6:3]+8'd120,value[2:0],20'b0};
+    end
+  endfunction
+
 // E2M1: +/-{0, .5, 1, 1.5, 2, 3, 4, 6}; exact BF16 promotion.
 function [15:0] fp4_to_bf16;
  input [3:0] value;
