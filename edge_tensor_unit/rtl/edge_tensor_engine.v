@@ -31,6 +31,8 @@ module edge_tensor_engine(
 );
 
 parameter LOWER_SIX = 0;
+// Opt-in wide H4 backend. fabric_phase carries {wide_phase[2:0],1'b0}.
+parameter WIDE_H4 = 0;
 parameter ADDR_WIDTH = 16;
 parameter SRAM_ADDR_WIDTH = 10;
 parameter DATA_WIDTH = 64;
@@ -39,6 +41,11 @@ parameter BANK_INDEX_WIDTH = 4;
 parameter VECTOR_COUNT_WIDTH = 16;
 parameter PACKED_WEIGHT = 0;
 parameter READ_LATENCY = 1;
+
+`ifndef SYNTHESIS
+initial if (WIDE_H4 && (!LOWER_SIX || READ_LATENCY != 4 || BANK_NUM != 16 || DATA_WIDTH != 64))
+  $fatal(1,"wide H4 tensor requires LOWER_SIX, latency 4 and sixteen 64-bit banks");
+`endif
 
 localparam BYTE_WIDTH = DATA_WIDTH / 8;
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
@@ -215,11 +222,15 @@ wire [BANK_NUM-1:0] psum_req_mask;
 wire [BANK_NUM-1:0] out_req_mask;
 wire [BANK_NUM-1:0] lower_owned_mask;
 wire [BANK_NUM-1:0] input_owned_mask, psum_owned_mask, output_owned_mask;
-wire [3:0] psum_channel_bank = 2 * 3'(fabric_phase[3:1] + 3'd1);
-wire [3:0] psum_other_channel_bank = 2 * 3'(fabric_phase[3:1] + 3'd5);
-wire [3:0] output_channel_bank = 2 * 3'(fabric_phase[3:1] +
-    (LOWER_SIX ? 3'd2 : 3'd3));
-wire [3:0] output_other_channel_bank = 2 * 3'(fabric_phase[3:1] + 3'd6);
+wire [3:0] psum_channel_bank = WIDE_H4 ? {fabric_phase[2:1],2'b00}
+    : 2 * 3'(fabric_phase[3:1] + 3'd1);
+wire [3:0] psum_other_channel_bank = WIDE_H4 ? psum_channel_bank+4'd2
+    : 2 * 3'(fabric_phase[3:1] + 3'd5);
+wire [3:0] output_channel_bank = WIDE_H4 ? {2'(fabric_phase[2:1]+2'd1),2'b00}
+    : 2 * 3'(fabric_phase[3:1] + (LOWER_SIX ? 3'd2 : 3'd3));
+wire [3:0] output_other_channel_bank = WIDE_H4 ? output_channel_bank+4'd2
+    : 2 * 3'(fabric_phase[3:1] + 3'd6);
+wire [3:0] wide_input_bank = {2'(fabric_phase[2:1]+2'd2),fabric_phase[3],1'b0};
 wire i_req_owned;
 wire psum_req_owned;
 wire out_req_owned;
@@ -378,7 +389,8 @@ function [ADDR_WIDTH-1:0] striped_low_addr;
   input [ADDR_WIDTH-1:0] base;
   input [VECTOR_COUNT_WIDTH-1:0] index;
 begin
-  striped_low_addr = base + ((index >> 2) << 4) + ((index & 3) << 1);
+  striped_low_addr = WIDE_H4 ? base + (index << 2)
+      : base + ((index >> 2) << 4) + ((index & 3) << 1);
 end
 endfunction
 
@@ -600,7 +612,7 @@ assign psum_req_addr = start_accept ? psum_base_addr
                          ? {psum_issue_count_q[ADDR_WIDTH-3:0], 2'b00}
                          : {psum_issue_count_q[ADDR_WIDTH-2:0], 1'b0});
 assign psum_req_hi_addr = psum_req_addr +
-    ((start_accept ? start_mode[7] : tile_mode_q) ? ADDR_WIDTH'(8) : ADDR_WIDTH'(2));
+    (!WIDE_H4 && (start_accept ? start_mode[7] : tile_mode_q) ? ADDR_WIDTH'(8) : ADDR_WIDTH'(2));
 assign input_psum_addr = tile_mode_q
     ? striped_low_addr(psum_base_q, input_consume_count_q)
     : psum_base_q + (psum_fp32_q
@@ -617,7 +629,7 @@ assign output_skew_valid = output_fifo_count_q != 0;
 assign output_skew_payload = output_fifo_q[output_fifo_head_q];
 assign output_skew_tile = output_skew_payload[273];
 assign output_skew_hi_addr = output_skew_addr +
-    (output_skew_tile ? ADDR_WIDTH'(8) : ADDR_WIDTH'(2));
+    (!WIDE_H4 && output_skew_tile ? ADDR_WIDTH'(8) : ADDR_WIDTH'(2));
 assign output_skew_addr = output_skew_payload[272:257];
 assign output_skew_fp32 = output_skew_payload[256];
 assign output_skew_data = output_skew_payload[255:0];
@@ -628,15 +640,16 @@ assign out_req_mask = output_skew_valid ?
           : quad_mask(output_skew_addr))
       : pair_mask(output_skew_addr)) : {BANK_NUM{1'b0}};
 assign lower_owned_mask = fabric_phase[1] ? 16'hcccc : 16'h3333;
-assign input_owned_mask = LOWER_SIX ? (16'h0003 << fabric_phase) : lower_owned_mask;
-assign psum_owned_mask = LOWER_SIX ?
+assign input_owned_mask = WIDE_H4 ? (16'h0003 << wide_input_bank)
+    : LOWER_SIX ? (16'h0003 << fabric_phase) : lower_owned_mask;
+assign psum_owned_mask = WIDE_H4 ? (16'h000f << psum_channel_bank) : LOWER_SIX ?
     ((start_accept ? start_mode[7] : tile_mode_q)
        ? ((16'h0003 << psum_channel_bank) |
           (16'h0003 << psum_other_channel_bank))
        : (start_accept ? start_dtype != 4'd0 : psum_fp32_q)
        ? ((16'h000f << psum_channel_bank) | (16'h000f >> (16-psum_channel_bank)))
        : (16'h0003 << psum_channel_bank)) : lower_owned_mask;
-assign output_owned_mask = LOWER_SIX ?
+assign output_owned_mask = WIDE_H4 ? (16'h000f << output_channel_bank) : LOWER_SIX ?
     (output_skew_tile
        ? ((16'h0003 << output_channel_bank) |
           (output_skew_fp32 ? (16'h0003 << output_other_channel_bank) : 16'h0000))
@@ -1189,6 +1202,11 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
+    if (WIDE_H4 && start_accept &&
+        (((start_mode[7] || start_dtype != 0) && !start_mode[2] && !start_mode[4]
+          && psum_base_addr[1:0]!=0) ||
+         ((start_mode[7] ? start_mode[6] : start_dtype==2) && out_base_addr[1:0]!=0)))
+      $fatal(1,"wide H4 P/O requires 32-byte alignment");
     if (LOWER_SIX && start_accept &&
         (((start_mode[7] || start_dtype != 4'd0) && !start_mode[2] && !start_mode[4]
           && psum_base_addr[0]) ||
