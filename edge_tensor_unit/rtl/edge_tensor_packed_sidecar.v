@@ -10,9 +10,13 @@ module edge_tensor_packed_sidecar #(parameter RELAY_WEIGHT=2)(
   late_psum_mode_i, late_psum_valid_i,
   scale_enable_i, scale_bf16_i,
   rsum_enable_i, rsum_first_i, rsum_last_i,
-  dot_ready_o, output_valid_o, output_bf16_o
+  dot_ready_o, output_valid_o, output_bf16_o,
+  wide_enable_i, psum_fp32_i, output_fp32_o
 );
 
+input wide_enable_i;
+input [255:0] psum_fp32_i;
+output [255:0] output_fp32_o;
 input clk, rst_b;
 input weight_start_i;
 output weight_start_ready_o;
@@ -41,6 +45,7 @@ wire [1:0] width_code;
 wire [2:0] relay_mode={weight_format_i,weight_transpose_i};
 wire [7:0] dot_valid;
 wire [127:0] dot_bf16;
+wire [255:0] dot_fp32;
 
 edge_wld_relay_router #(.DOTS(8)) x_weight_ingress (
   .clk(clk), .rst_b(rst_b), .start_i(weight_start_i),
@@ -67,13 +72,14 @@ for (dot=0;dot<8;dot=dot+1) begin : GEN_DOT
     .weight_exp_vec_i(64'b0), .external_product_vec_i(128'b0),
     .external_product_sign_i(8'b0), .rsum_enable_i(rsum_enable_i),
     .rsum_first_i(rsum_first_i), .rsum_last_i(rsum_last_i),
-    .out_valid(dot_valid[dot]), .bf22_o(), .bf16_o(dot_bf16[dot*16 +: 16])
+    .out_valid(dot_valid[dot]), .bf22_o(dot_fp32[dot*32+:32]), .bf16_o(dot_bf16[dot*16 +: 16])
   );
 end
 edge_tensor_scale_psum8 x_post (
-  .clk(clk), .rst_b(rst_b), .dot_valid(dot_valid[0]), .dot_bf16(dot_bf16),
+  .clk(clk), .rst_b(rst_b), .dot_valid(dot_valid[0]), .dot_bf16(dot_bf16), .dot_fp32_i(dot_fp32),
   .late_psum_mode_i(late_psum_mode_i), .late_psum_valid_i(late_psum_valid_i),
-  .psum_bf16_i(psum_bf16_i), .scale_enable_i(scale_enable_i),
+  .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
+      .psum_bf16_i(psum_bf16_i), .scale_enable_i(scale_enable_i),
   .scale_bf16_i(scale_bf16_i), .rsum_enable_i(rsum_enable_i),
   .dot_ready_o(dot_ready_o), .out_valid(output_valid_o), .output_bf16_o(output_bf16_o)
 );
@@ -86,6 +92,7 @@ end else if (RELAY_WEIGHT==2) begin : GEN_DOT_RELAY
 wire [1023:0] active_weights;
 wire [7:0] dot_valid;
 wire [127:0] dot_bf16;
+wire [255:0] dot_fp32;
 edge_tensor_dot_relay_weights x_weights(
  .clk(clk),.rst_b(rst_b),.weight_start_i(weight_start_i),.weight_start_ready_o(weight_start_ready_o),
  .weight_format_i(weight_format_i),.weight_transpose_i(weight_transpose_i),
@@ -101,12 +108,13 @@ for(dot=0;dot<8;dot=dot+1)begin : GEN_DOT
   .weight_bf16_mode_i(1'b1),.bf16_weight_vec_i(active_weights[dot*128+:128]),.weight_exp_vec_i(64'b0),
   .external_product_vec_i(128'b0),.external_product_sign_i(8'b0),
   .rsum_enable_i(rsum_enable_i),.rsum_first_i(rsum_first_i),.rsum_last_i(rsum_last_i),
-  .out_valid(dot_valid[dot]),.bf22_o(),.bf16_o(dot_bf16[dot*16+:16]));
+  .out_valid(dot_valid[dot]),.bf22_o(dot_fp32[dot*32+:32]),.bf16_o(dot_bf16[dot*16+:16]));
 end
 edge_tensor_scale_psum8 x_post(
- .clk(clk),.rst_b(rst_b),.dot_valid(dot_valid[0]),.dot_bf16(dot_bf16),
+ .clk(clk),.rst_b(rst_b),.dot_valid(dot_valid[0]),.dot_bf16(dot_bf16), .dot_fp32_i(dot_fp32),
  .late_psum_mode_i(late_psum_mode_i),.late_psum_valid_i(late_psum_valid_i),
- .psum_bf16_i(psum_bf16_i),.scale_enable_i(scale_enable_i),.scale_bf16_i(scale_bf16_i),
+ .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
+      .psum_bf16_i(psum_bf16_i),.scale_enable_i(scale_enable_i),.scale_bf16_i(scale_bf16_i),
  .rsum_enable_i(rsum_enable_i),.dot_ready_o(dot_ready_o),.out_valid(output_valid_o),.output_bf16_o(output_bf16_o));
 end else begin : GEN_CIRCULAR
 wire [127:0] drain_data;
@@ -143,7 +151,8 @@ edge_tile8x8_packed32_scale_psum_sidecar x_tile (
   .in_valid(compute_valid_i), .input_bf16_i(input_bf16_i),
   .late_psum_mode_i(late_psum_mode_i),
   .late_psum_valid_i(late_psum_valid_i),
-  .psum_bf16_i(psum_bf16_i),
+  .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
+      .psum_bf16_i(psum_bf16_i),
   .scale_enable_i(scale_enable_i), .scale_bf16_i(scale_bf16_i),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
   .rsum_last_i(rsum_last_i), .dot_ready_o(dot_ready_o),

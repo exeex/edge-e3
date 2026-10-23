@@ -263,7 +263,7 @@ endmodule
 // both values to BF16. BF16 fill consumes one BF16 value per row on each of
 // eight sequential beats. Both modes populate the same 8x8 BF16 buffers.
 
-module edge_tile8x8_unit(
+module edge_tile8x8_unit #(parameter WIDE_PSUM=0)(
   clk,
   rst_b,
   compute_valid,
@@ -291,9 +291,14 @@ module edge_tile8x8_unit(
   weight_pending_valid,
   dot_ready_o,
   output_valid,
-  output_bf16_o
+  output_bf16_o,
+  wide_enable_i, psum_fp32_i, output_fp32_o
 );
 
+input wide_enable_i;
+input [255:0] psum_fp32_i;
+output [255:0] output_fp32_o;
+wire [255:0] dot_fp32;
 input          clk;
 input          rst_b;
 input          compute_valid;
@@ -397,9 +402,9 @@ assign weight_activate_ready = weight_pending_valid_q || weight_fill_complete;
 assign weight_fill_busy = weight_fill_busy_q;
 assign weight_active_valid = weight_active_valid_q;
 assign weight_pending_valid = weight_pending_valid_q;
-assign dot_ready_o = dot_valid[0];
-assign output_valid = output_valid_q;
-assign output_bf16_o[127:0] = output_reg[127:0];
+
+
+
 assign weight_fill_buf_sel = weight_fill_start_accept ? !weight_active_buf_q
                                                       : weight_fill_buf_q;
 assign weight_fill_bf16_mode = weight_fill_start_accept
@@ -522,7 +527,7 @@ generate
       .rsum_first_i(rsum_first_i),
       .rsum_last_i(rsum_last_i),
       .out_valid  (dot_valid[lane]),
-      .bf16_o     (dot_bf16[lane][15:0])
+      .bf16_o     (dot_bf16[lane][15:0]), .bf22_o(dot_fp32[lane*32+:32])
     );
 
     edge_psum x_psum_add (
@@ -728,4 +733,22 @@ always @(posedge clk or negedge rst_b) begin
   end
 end
 
+// Preserve standalone legacy compositions without adding a source dependency.
+generate if(WIDE_PSUM)begin: GEN_WIDE_POST
+edge_tensor_scale_psum8 x_post_shared(
+ .clk(clk),.rst_b(rst_b),.dot_valid(dot_valid[0]),
+ .dot_bf16({dot_bf16[7],dot_bf16[6],dot_bf16[5],dot_bf16[4],dot_bf16[3],dot_bf16[2],dot_bf16[1],dot_bf16[0]}),
+ .dot_fp32_i(dot_fp32),.wide_enable_i(wide_enable_i),.psum_fp32_i(psum_fp32_i),
+ .late_psum_mode_i(late_psum_mode_i),.late_psum_valid_i(late_psum_valid_i),
+ .psum_bf16_i(psum_bf16_i),.scale_enable_i(scale_enable_i),.scale_bf16_i(scale_bf16_i),
+ .rsum_enable_i(rsum_enable_i),.dot_ready_o(dot_ready_o),.out_valid(output_valid),
+ .output_bf16_o(output_bf16_o),.output_fp32_o(output_fp32_o));
+end else begin: GEN_LEGACY_POST
+ assign output_valid=output_valid_q;
+ assign output_bf16_o=output_reg;
+ assign dot_ready_o=dot_valid[0];
+ for(genvar ol=0;ol<8;ol=ol+1)begin
+  assign output_fp32_o[ol*32+:32]={output_reg[ol*16+:16],16'b0};
+ end
+end endgenerate
 endmodule

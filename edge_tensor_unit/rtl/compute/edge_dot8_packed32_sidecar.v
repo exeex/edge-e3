@@ -5,7 +5,7 @@ module edge_dot8_packed32_sidecar(
   weight_fill_data_i, weight_fill_bank_i,
   weight_activate_i, weight_activate_bank_i,
   in_valid, input_bf16_i, rsum_enable_i, rsum_first_i, rsum_last_i,
-  out_valid, result_bf16_o
+  out_valid, result_bf16_o, result_fp32_o
 );
 
 input          clk;
@@ -24,7 +24,7 @@ output         out_valid;
 output [15:0]  result_bf16_o;
 
 wire [127:0] active_weight;
-wire [31:0] unused_bf22;
+output [31:0] result_fp32_o;
 
 edge_dot8_weight_bank_packed32 x_weight_bank (
   .clk(clk), .rst_b(rst_b),
@@ -43,7 +43,7 @@ edge_dot_kernel x_kernel (
   .external_product_vec_i(128'b0), .external_product_sign_i(8'b0),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
   .rsum_last_i(rsum_last_i),
-  .out_valid(out_valid), .bf22_o(unused_bf22), .bf16_o(result_bf16_o)
+  .out_valid(out_valid), .bf22_o(result_fp32_o), .bf16_o(result_bf16_o)
 );
 
 endmodule

@@ -168,7 +168,7 @@ wire [BANK_INDEX_WIDTH-1:0] psum_rsp_bank1_q;
 wire [VECTOR_COUNT_WIDTH-1:0] i_rsp_index_q;
 wire i_rsp_next_input_q;
 reg [VECTOR_COUNT_WIDTH-1:0] next_input_issue_count_q;
-reg [PAIR_WIDTH-1:0] psum_data_fifo [0:PSUM_FIFO_DEPTH-1];
+reg [2*PAIR_WIDTH-1:0] psum_data_fifo [0:PSUM_FIFO_DEPTH-1];
 reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_head_q;
 reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_tail_q;
 reg [PSUM_FIFO_INDEX_WIDTH:0] psum_count_q;
@@ -205,7 +205,7 @@ reg output_fp32_q;
 reg psum_fp32_q;
 reg tile_mode_q;
 reg psum_once_valid_q;
-reg [PAIR_WIDTH-1:0] psum_once_data_q;
+reg [2*PAIR_WIDTH-1:0] psum_once_data_q;
 
 wire [ADDR_WIDTH-1:0] i_req_addr;
 wire [ADDR_WIDTH-1:0] psum_req_addr;
@@ -267,7 +267,7 @@ wire [ADDR_WIDTH-1:0] output_skew_addr;
 wire [2*PAIR_WIDTH-1:0] output_skew_data;
 wire output_skew_fp32;
 wire [2*PAIR_WIDTH-1:0] fp32_output_data;
-wire [PAIR_WIDTH-1:0] converted_psum_data;
+wire [2*PAIR_WIDTH-1:0] converted_psum_data;
 wire psum_fifo_push;
 wire psum_fifo_pop;
 wire psum_fifo_credit;
@@ -289,15 +289,18 @@ wire [INPUT_FIFO_DEPTH-1:0] next_input_slot_issued_q;
 wire [INPUT_FIFO_DEPTH-1:0] next_input_slot_valid_q;
 wire [ADDR_WIDTH-1:0] input_compute_out_addr;
 wire aligned_psum_valid;
-wire [PAIR_WIDTH-1:0] aligned_psum_data;
+wire [2*PAIR_WIDTH-1:0] aligned_psum_data;
 wire compute_psum_valid;
-wire [PAIR_WIDTH-1:0] compute_psum_data;
+wire [2*PAIR_WIDTH-1:0] compute_psum_data;
 wire [VECTOR_COUNT_WIDTH-1:0] psum_target_count;
 wire psum_stream_mode;
 wire dot_ready;
 wire dot_needs_psum;
 wire tensor_core_output_valid;
 wire [PAIR_WIDTH-1:0] tensor_core_output_data;
+wire [255:0] tensor_core_output_fp32;
+reg [255:0] rsum_drain_fp32_q;
+wire [127:0] compute_psum_bf16;
 wire tensor_output_valid;
 wire [PAIR_WIDTH-1:0] tensor_output_data;
 wire start_accept;
@@ -726,7 +729,7 @@ assign output_write_fire = output_candidate
 assign output_queue_push_valid = tensor_output_valid;
 for (genvar lane=0; lane<8; lane=lane+1) begin: FP32_OUTPUT_PACK
   assign fp32_output_data[lane*32 +: 32] =
-      {tensor_output_data[lane*16 +: 16], 16'b0};
+      (rsum_mode_q ? rsum_drain_fp32_q[lane*32+:32] : tensor_core_output_fp32[lane*32+:32]);
 end
 assign output_queue_push_payload = {meta_tile_fifo[meta_head_q],
     meta_addr_fifo[meta_head_q],
@@ -787,8 +790,9 @@ assign scale_stream_ready = input_compute_fire && scale_stream_enable_q;
 assign aligned_psum_valid = (psum_count_q != 0) || psum_rsp_valid_q;
 for (genvar lane=0; lane<8; lane=lane+1) begin: FP32_PSUM_UNPACK
   wire [255:0] raw_data = {psum_pair_extra_rdata, psum_pair_rdata};
-  assign converted_psum_data[lane*16 +: 16] = psum_fp32_q
-      ? raw_data[lane*32+16 +: 16] : psum_pair_rdata[lane*16 +: 16];
+  assign converted_psum_data[lane*32 +: 32] = psum_fp32_q
+      ? raw_data[lane*32 +: 32] : {psum_pair_rdata[lane*16 +: 16],16'b0};
+  assign compute_psum_bf16[lane*16+:16] = compute_psum_data[lane*32+16+:16];
 end
 assign aligned_psum_data = (psum_count_q != 0)
                          ? psum_data_fifo[psum_head_q] : converted_psum_data;
@@ -801,7 +805,7 @@ assign dot_needs_psum = psum_stream_mode_pipe_q[6];
 assign compute_psum_valid = psum_none_mode_q ? 1'b1
                           : psum_once_mode_q ? psum_once_valid_q
                           : aligned_psum_valid;
-assign compute_psum_data = psum_none_mode_q ? {PAIR_WIDTH{1'b0}}
+assign compute_psum_data = psum_none_mode_q ? {2*PAIR_WIDTH{1'b0}}
                          : psum_once_mode_q ? psum_once_data_q
                          : aligned_psum_data;
 
@@ -949,7 +953,9 @@ edge_tensor_tile_backend #(.PACKED_WEIGHT(PACKED_WEIGHT)) x_tile8x8 (
   .clk(clk), .rst_b(cpurst_b), .compute_valid(compute_valid_q),
   .late_psum_mode_i(dot_needs_psum),
   .late_psum_valid_i(dot_needs_psum ? aligned_psum_valid : 1'b1),
-  .input_bf16_i(input_compute_data), .psum_bf16_i(compute_psum_data),
+  .input_bf16_i(input_compute_data), .psum_bf16_i(compute_psum_bf16),
+  .psum_fp32_i(compute_psum_data), .wide_enable_i(psum_fp32_q || output_fp32_q),
+  .output_fp32_o(tensor_core_output_fp32),
   .scale_enable_i(scale_enable_q),
   .scale_bf16_i(scale_stream_enable_q ? scale_stream_data : scale_bf16_q),
   .rsum_enable_i(rsum_mode_q),
@@ -1021,7 +1027,7 @@ always @(posedge clk or negedge cpurst_b) begin
     end
     psum_stream_mode_pipe_q <= 7'b0;
     rsum_drain_pending_q <= 1'b0;
-    rsum_drain_data_q <= 0;
+    rsum_drain_data_q <= 0; rsum_drain_fp32_q <= 0;
     scale_enable_q <= 1'b0;
     scale_stream_enable_q <= 1'b0;
     scale_bf16_q <= 0;
@@ -1054,7 +1060,7 @@ always @(posedge clk or negedge cpurst_b) begin
     if (rsum_mode_q) begin
       rsum_drain_pending_q <= tensor_core_output_valid;
       if (tensor_core_output_valid)
-        rsum_drain_data_q <= tensor_core_output_data;
+        begin rsum_drain_data_q <= tensor_core_output_data; rsum_drain_fp32_q <= tensor_core_output_fp32; end
     end else begin
       rsum_drain_pending_q <= 1'b0;
     end

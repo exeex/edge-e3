@@ -119,6 +119,9 @@ module edge_lite_accel_platform #(
   wire [3:0] tensor_io_lease2_delay,tensor_wld_lease_delay;
   wire tensor_io_lease1_valid,tensor_io_lease2_valid,tensor_io_lease_valid;
   wire tensor_wld_lease_valid;
+  // The registered hint alone is insufficient: a new START mode can require
+  // a scale token that the preceding command did not require. Qualify the
+  // dispatch handshake with current readiness so the unit cannot drop START.
   reg tensor_start_ready_q,actu_start_ready_q,cmpu_start_ready_q;
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
     if(!cpurst_b) begin
@@ -139,7 +142,7 @@ module edge_lite_accel_platform #(
     .resp_error(dispatch_resp_error),.resp_value(dispatch_resp_value),.dma_start_ready(dma_start_ready),
     .dma_start_circular_ready(dma_start_circular_ready),
     .dma_sync_done(dma_sync_done),.tensor_cmd_ready(tensor_cmd_ready),
-    .tensor_start_ready(tensor_start_ready_q),.tensor_wld_cmd_ready(tensor_wld_cmd_ready),
+    .tensor_start_ready(tensor_start_ready_q && tensor_start_ready),.tensor_wld_cmd_ready(tensor_wld_cmd_ready),
     .tensor_sld_cmd_ready(tensor_sld_cmd_ready),
     .tensor_wld_circular_ready(tensor_wld_circular_ready),
     .tensor_wsld_circular_ready(tensor_wsld_circular_ready),

@@ -14,7 +14,7 @@ module edge_dot8_unit #(
   rsum_first_i,
   rsum_last_i,
   out_valid,
-  bf16_o
+  bf16_o, bf22_o
 );
 
 input          clk;
@@ -31,7 +31,7 @@ input          rsum_last_i;
 output         out_valid;
 output [15:0]  bf16_o;
 
-wire [31:0] unused_bf22;
+output [31:0] bf22_o;
 
 edge_dot_kernel #(.EXTERNAL_WEIGHT_EXP(EXTERNAL_WEIGHT_EXP)) x_kernel (
   .clk                 (clk),
@@ -48,7 +48,7 @@ edge_dot_kernel #(.EXTERNAL_WEIGHT_EXP(EXTERNAL_WEIGHT_EXP)) x_kernel (
   .rsum_first_i        (rsum_first_i),
   .rsum_last_i         (rsum_last_i),
   .out_valid           (out_valid),
-  .bf22_o              (unused_bf22),
+  .bf22_o              (bf22_o),
   .bf16_o              (bf16_o)
 );
 

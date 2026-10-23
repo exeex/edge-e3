@@ -9,9 +9,13 @@ module edge_tensor_packed_wld_tile #(parameter RELAY_WEIGHT=2)(
   compute_valid, late_psum_mode_i, late_psum_valid_i,
   input_bf16_i, psum_bf16_i,
   scale_enable_i, scale_bf16_i, rsum_enable_i, rsum_first_i, rsum_last_i,
-  dot_ready_o, output_valid, output_bf16_o
+  dot_ready_o, output_valid, output_bf16_o,
+  wide_enable_i, psum_fp32_i, output_fp32_o
 );
 
+input wide_enable_i;
+input [255:0] psum_fp32_i;
+output [255:0] output_fp32_o;
 input clk, rst_b;
 input start, start_transpose;
 input [3:0] start_wtype;
@@ -57,7 +61,8 @@ edge_tensor_packed_bank_sidecar #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_packed_bank (
   .weight_active_valid_o(weight_active_valid),
   .weight_pending_valid_o(weight_pending_valid),
   .compute_valid_i(compute_valid), .input_bf16_i(input_bf16_i),
-  .psum_bf16_i(psum_bf16_i), .late_psum_mode_i(late_psum_mode_i),
+  .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
+      .psum_bf16_i(psum_bf16_i), .late_psum_mode_i(late_psum_mode_i),
   .late_psum_valid_i(late_psum_valid_i), .scale_enable_i(scale_enable_i),
   .scale_bf16_i(scale_bf16_i),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),

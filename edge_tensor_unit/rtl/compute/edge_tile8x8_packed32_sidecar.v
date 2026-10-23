@@ -6,7 +6,7 @@ module edge_tile8x8_packed32_sidecar(
   weight_fill_target_dot_i, weight_fill_slot_i, weight_fill_bank_i,
   weight_activate_i, weight_activate_bank_i,
   in_valid, input_bf16_i, rsum_enable_i, rsum_first_i, rsum_last_i,
-  out_valid, output_bf16_o
+  out_valid, output_bf16_o, output_fp32_o
 );
 
 input          clk;
@@ -25,6 +25,7 @@ input  [127:0] input_bf16_i;
 input          rsum_enable_i, rsum_first_i, rsum_last_i;
 output         out_valid;
 output [127:0] output_bf16_o;
+output [255:0] output_fp32_o;
 
 wire [7:0] dot_valid;
 reg [7:0] dot_fill_valid;
@@ -71,7 +72,8 @@ generate
       .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
       .rsum_last_i(rsum_last_i),
       .out_valid(dot_valid[row_g]),
-      .result_bf16_o(output_bf16_o[row_g*16 +: 16])
+      .result_bf16_o(output_bf16_o[row_g*16 +: 16]),
+      .result_fp32_o(output_fp32_o[row_g*32 +: 32])
     );
   end
 endgenerate

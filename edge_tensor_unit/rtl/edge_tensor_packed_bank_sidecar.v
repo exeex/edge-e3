@@ -11,9 +11,13 @@ module edge_tensor_packed_bank_sidecar #(parameter RELAY_WEIGHT=2)(
   late_psum_mode_i, late_psum_valid_i,
   scale_enable_i, scale_bf16_i,
   rsum_enable_i, rsum_first_i, rsum_last_i,
-  dot_ready_o, output_valid_o, output_bf16_o
+  dot_ready_o, output_valid_o, output_bf16_o,
+  wide_enable_i, psum_fp32_i, output_fp32_o
 );
 
+input wide_enable_i;
+input [255:0] psum_fp32_i;
+output [255:0] output_fp32_o;
 input clk, rst_b;
 input weight_start_i;
 output weight_start_ready_o;
@@ -70,7 +74,8 @@ edge_tensor_packed_sidecar #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_packed (
   .weight_activate_i(activate_accept),
   .weight_activate_bank_i(inner_done ? fill_bank_q : pending_bank_q),
   .compute_valid_i(compute_valid_i), .input_bf16_i(input_bf16_i),
-  .psum_bf16_i(psum_bf16_i), .late_psum_mode_i(late_psum_mode_i),
+  .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
+      .psum_bf16_i(psum_bf16_i), .late_psum_mode_i(late_psum_mode_i),
   .late_psum_valid_i(late_psum_valid_i), .scale_enable_i(scale_enable_i),
   .scale_bf16_i(scale_bf16_i),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),

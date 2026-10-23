@@ -8,9 +8,13 @@ module edge_tile8x8_packed32_scale_psum_sidecar(
   in_valid, late_psum_mode_i, late_psum_valid_i,
   input_bf16_i, psum_bf16_i, scale_enable_i, scale_bf16_i,
   rsum_enable_i, rsum_first_i, rsum_last_i,
-  dot_ready_o, out_valid, output_bf16_o
+  dot_ready_o, out_valid, output_bf16_o,
+  wide_enable_i, psum_fp32_i, output_fp32_o
 );
 
+input wide_enable_i;
+input [255:0] psum_fp32_i;
+output [255:0] output_fp32_o;
 input clk, rst_b, weight_fill_valid_i;
 input [3:0] weight_fill_lane_valid_i;
 input [1:0] weight_fill_format_i;
@@ -30,6 +34,7 @@ output [127:0] output_bf16_o;
 
 wire dot_valid;
 wire [127:0] dot_bf16;
+wire [255:0] dot_fp32;
 edge_tile8x8_packed32_sidecar x_dot_tile (
   .clk(clk), .rst_b(rst_b),
   .weight_fill_valid_i(weight_fill_valid_i),
@@ -44,13 +49,14 @@ edge_tile8x8_packed32_sidecar x_dot_tile (
   .in_valid(in_valid), .input_bf16_i(input_bf16_i),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
   .rsum_last_i(rsum_last_i),
-  .out_valid(dot_valid), .output_bf16_o(dot_bf16)
+  .out_valid(dot_valid), .output_bf16_o(dot_bf16), .output_fp32_o(dot_fp32)
 );
 
 edge_tensor_scale_psum8 x_post (
-  .clk(clk), .rst_b(rst_b), .dot_valid(dot_valid), .dot_bf16(dot_bf16),
+  .clk(clk), .rst_b(rst_b), .dot_valid(dot_valid), .dot_bf16(dot_bf16), .dot_fp32_i(dot_fp32),
   .late_psum_mode_i(late_psum_mode_i), .late_psum_valid_i(late_psum_valid_i),
-  .psum_bf16_i(psum_bf16_i), .scale_enable_i(scale_enable_i),
+  .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
+      .psum_bf16_i(psum_bf16_i), .scale_enable_i(scale_enable_i),
   .scale_bf16_i(scale_bf16_i), .rsum_enable_i(rsum_enable_i),
   .dot_ready_o(dot_ready_o), .out_valid(out_valid), .output_bf16_o(output_bf16_o)
 );

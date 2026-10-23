@@ -16,9 +16,13 @@ module edge_tensor_tile_backend #(
   packed_load_data_i,
   weight_activate_i, weight_activate_ready_o,
   weight_fill_busy_o, weight_active_valid_o, weight_pending_valid_o,
-  dot_ready_o, output_valid_o, output_bf16_o
+  dot_ready_o, output_valid_o, output_bf16_o,
+  wide_enable_i, psum_fp32_i, output_fp32_o
 );
 
+input wide_enable_i;
+input [255:0] psum_fp32_i;
+output [255:0] output_fp32_o;
 input clk, rst_b;
 input compute_valid, late_psum_mode_i, late_psum_valid_i;
 input [127:0] input_bf16_i, psum_bf16_i;
@@ -60,6 +64,7 @@ generate
       .weight_pending_valid(packed_pending_valid),
       .compute_valid(compute_valid), .late_psum_mode_i(late_psum_mode_i),
       .late_psum_valid_i(late_psum_valid_i), .input_bf16_i(input_bf16_i),
+      .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
       .psum_bf16_i(psum_bf16_i), .scale_enable_i(scale_enable_i),
       .scale_bf16_i(scale_bf16_i), .rsum_enable_i(rsum_enable_i),
       .rsum_first_i(rsum_first_i), .rsum_last_i(rsum_last_i),
@@ -72,11 +77,12 @@ generate
     assign weight_active_valid_o = packed_active_valid;
     assign weight_pending_valid_o = packed_pending_valid;
   end else begin : GEN_LEGACY
-    edge_tile8x8_unit x_tile (
+    edge_tile8x8_unit #(.WIDE_PSUM(1)) x_tile (
       .clk(clk), .rst_b(rst_b), .compute_valid(compute_valid),
       .late_psum_mode_i(late_psum_mode_i),
       .late_psum_valid_i(late_psum_valid_i),
-      .input_bf16_i(input_bf16_i), .psum_bf16_i(psum_bf16_i),
+      .input_bf16_i(input_bf16_i), .wide_enable_i(wide_enable_i), .psum_fp32_i(psum_fp32_i), .output_fp32_o(output_fp32_o),
+      .psum_bf16_i(psum_bf16_i),
       .scale_enable_i(scale_enable_i), .scale_bf16_i(scale_bf16_i),
       .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
       .rsum_last_i(rsum_last_i),
