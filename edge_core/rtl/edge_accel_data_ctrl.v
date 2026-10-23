@@ -266,7 +266,11 @@ module edge_accel_data_ctrl #(
   assign wsld_sld_launch = wsld_group_active_q && (wsld_sld_issued_q < {1'b0,wsld_tiles}) &&
                            (wsld_sld_issued_q <= wsld_start_done_q) &&
                            tensor_sld_unit_cmd_ready;
-  assign wsld_wld_launch = wsld_group_active_q && wsld_sld_done_q &&
+  // The slot reader enforces scale-before-weight at the byte boundary.
+  // Prepare the first WLD while its scale response is still in flight;
+  // tensor start continues to require the completed scale token.
+  assign wsld_wld_launch = wsld_group_active_q &&
+                           (WSLD_SLOT_CONFIG || wsld_sld_done_q) &&
                            (wsld_wld_issued_q < {1'b0,wsld_tiles}) &&
                            (wsld_wld_issued_q < wsld_sld_issued_q) &&
                            (wsld_wld_issued_q <= wsld_start_done_q) &&
