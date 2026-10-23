@@ -68,7 +68,7 @@ module edge_dtcm_h4_wrapper (
             bank_wdata[source_word*64+source_byte*8 +: 8];
       end
       edge_sram_h4_tile32k x_tile (
-        .clk(clk), .rst_b(cpurst_b),
+        .clk(clk), .rst_b(cpurst_b), .swap_i(1'b0),
         .phase_h1_i(h1_link[tile]), .phase_h2_i(h2_link[tile]),
         .phase_h4_i(h4_link[tile]), .phase_h1_o(h1_link[tile+1]),
         .phase_h2_o(h2_link[tile+1]), .phase_h4_o(h4_link[tile+1]),
