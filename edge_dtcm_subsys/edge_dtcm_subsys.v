@@ -9,10 +9,12 @@ module edge_dtcm_subsys #(
   parameter LSU_DATA_WIDTH = 64,
   parameter SRAM_ADDR_WIDTH = 10,
   parameter SRAM_H4 = 1,
-`ifdef EDGE_DTCM_WIDE_H4
-  parameter WIDE_H4 = 1,
-`else
+// Product default: native wide P/O and locally reordered narrow clients.
+// Inferred-SRAM standalone users remain legacy; explicit overrides are legal.
+`ifdef EDGE_DTCM_LEGACY_H4
   parameter WIDE_H4 = 0,
+`else
+  parameter WIDE_H4 = SRAM_H4,
 `endif
   parameter SEGMENT_NUM = 1
 ) (

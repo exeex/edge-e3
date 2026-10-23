@@ -68,3 +68,23 @@ require a separate written commercial license.
 
 See [LICENSE.md](LICENSE.md) for the complete terms. This is a source-available
 hardware license, not an OSI-approved open-source license.
+
+### Tensor/DTCM product layout
+
+The public `edge_dtcm_subsys` boundary defaults to wide H4 when `SRAM_H4=1`.
+P and O use native 256-bit group rotation; I, WSLD, shared LSU/ACTU/CMPU,
+and DMA use locally exchanged 128-bit halves. WSLD and DMA restore contiguous
+order in client buffers. Circular DMA releases beats in input order only
+after physical SRAM commit.
+
+Private BF22-in-FP32 P/O vectors are eight contiguous 32-bit words with
+32-byte-aligned bases. BF16 public inputs/outputs and DTCM address mapping
+are unchanged. The composed SDK's `edge_e3_tensor_layout.hpp` selects this
+layout by default. Historical comparison builds must define
+`EDGE_DTCM_LEGACY_H4` for both RTL and software; the composed CMake option
+`EDGE_E3_WIDE_H4=OFF` does this together. It is a build-time ABI choice, not
+a runtime mode. Existing binaries that access the old FP32 stripe layout
+must be rebuilt. Single-vector NNC FP4 scratch already satisfies both layouts.
+
+Standalone inferred-SRAM core tests retain their explicit legacy configuration.
+This promotion does not change E4 or claim physical timing/routing closure.
