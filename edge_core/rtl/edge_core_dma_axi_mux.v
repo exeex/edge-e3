@@ -120,10 +120,12 @@ module edge_core_dma_axi_mux #(
   reg read_owner_stream_q;
   reg stream_yield_q;
   reg read_inflight_q;
+  reg ar_locked_q, ar_owner_dtcm_q;
   reg write_owner_dtcm_q;
   wire stream_defer_to_core = dtcm_read_is_stream && stream_yield_q
                             && bringup_arvalid;
-  wire select_dtcm_read = dtcm_arvalid && !stream_defer_to_core;
+  wire select_dtcm_read = ar_locked_q ? ar_owner_dtcm_q :
+                          dtcm_arvalid && !stream_defer_to_core;
   wire select_dtcm_write = dtcm_write_select_enable && dtcm_awvalid;
   wire ar_fire = dma_arvalid && dma_arready;
   wire r_done = dma_rvalid && dma_rready && dma_rlast;
@@ -179,6 +181,16 @@ module edge_core_dma_axi_mux #(
   assign bringup_bid = dma_bid;
   assign bringup_bresp = dma_bresp;
   assign bringup_bvalid = !write_owner_dtcm_q && dma_bvalid;
+
+  // Hold the selected requester while AR is backpressured. A newly arriving
+  // DMA request must not replace a CPU address already visible on AXI.
+  always @(posedge forever_cpuclk or negedge cpurst_b) begin
+    if (!cpurst_b) begin ar_locked_q <= 0; ar_owner_dtcm_q <= 0; end
+    else if (ar_fire) ar_locked_q <= 0;
+    else if (dma_arvalid && !dma_arready && !ar_locked_q) begin
+      ar_locked_q <= 1; ar_owner_dtcm_q <= select_dtcm_read;
+    end
+  end
 
   always @(posedge forever_cpuclk or negedge cpurst_b) begin
     if (!cpurst_b) begin

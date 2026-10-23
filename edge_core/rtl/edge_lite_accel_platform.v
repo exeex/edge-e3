@@ -30,7 +30,8 @@ module edge_lite_accel_platform #(
   output wire [(AXI_DATA_WIDTH/8)-1:0] dma_axi_wstrb,output wire dma_axi_wvalid,
   output wire tensor_busy,output wire actu_busy,output wire cmpu_busy,output wire dma_busy,
   output wire asic_power_enable_o,input wire asic_power_ready_i,
-  output wire asic_ready_o
+  output wire asic_ready_o,
+  output wire dma_read_is_stream_o
 );
   localparam [6:0] ASIC_POWER=7'h09;
   wire [6:0] req_subop=req_inst[31:25];
@@ -109,6 +110,7 @@ module edge_lite_accel_platform #(
   wire [7:0] tensor_start_retire_seq_id; wire [3:0] tensor_start_retire_epoch;
   wire [4:0] tensor_wld_tile_words; wire cmpu_result_update;
   wire dma_stream_cmd_ready,dma_stream_beat_done,dma_stream_busy;
+  assign dma_read_is_stream_o = dma_stream_busy || dma_stream_cmd_valid;
   wire [7:0] tensor_io_lease_channel_mask,tensor_io_lease1_channel_mask;
   wire [7:0] tensor_io_lease2_channel_mask,tensor_wld_lease_channel_mask;
   wire [8:0] tensor_io_lease_cycles,tensor_io_lease1_cycles;

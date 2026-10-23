@@ -800,7 +800,8 @@ edge_dtcm_arb #(
 edge_dma_a2d_stream #(
   .AXI_ADDR_WIDTH(40),
   .DTCM_ADDR_WIDTH(ADDR_WIDTH),
-  .FIFO_DEPTH(16)
+  .FIFO_DEPTH(16),
+  .BURST_MAX_BEATS(16)
 ) x_edge_dma_a2d_stream (
   .clk(clk),
   .reset_b(cpurst_b),

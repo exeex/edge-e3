@@ -103,6 +103,7 @@ module edge_core_edge32_top #(
 
   assign accel_req_inst=scalar_accel_req_inst;
 
+  wire dma_read_is_stream;
   edge_lite_accel_platform #(.AXI_ADDR_WIDTH(ADDR_WIDTH),.AXI_DATA_WIDTH(DATA_WIDTH),
     .AXI_ID_WIDTH(ID_WIDTH),.AXI_LEN_WIDTH(LEN_WIDTH),
     .DTCM_ADDR_WIDTH(DTCM_ADDR_WIDTH),.DTCM_SRAM_ADDR_WIDTH(DTCM_SRAM_ADDR_WIDTH),
@@ -129,13 +130,13 @@ module edge_core_edge32_top #(
     .dma_axi_wstrb(dtcm_wstrb),.dma_axi_wvalid(dtcm_wvalid),.tensor_busy(tensor_busy),
     .actu_busy(actu_busy),.cmpu_busy(cmpu_busy),.dma_busy(accel_dma_busy),
     .asic_power_enable_o(asic_power_enable),.asic_power_ready_i(asic_power_ready),
-    .asic_ready_o(asic_ready));
+    .asic_ready_o(asic_ready),.dma_read_is_stream_o(dma_read_is_stream));
 
   assign accel_req_ready=platform_req_ready;
 
   edge_core_dma_axi_mux #(.ADDR_WIDTH(ADDR_WIDTH),.DATA_WIDTH(DATA_WIDTH),
     .ID_WIDTH(ID_WIDTH),.LEN_WIDTH(LEN_WIDTH)) axi_mux(
       .forever_cpuclk(forever_cpuclk),.cpurst_b(cpurst_b),
-      .dtcm_write_select_enable(1'b1),.dtcm_read_is_stream(1'b0),
-      .dtcm_stream_busy(1'b0),.*);
+      .dtcm_write_select_enable(1'b1),.dtcm_read_is_stream(dma_read_is_stream),
+      .dtcm_stream_busy(dma_read_is_stream),.*);
 endmodule
