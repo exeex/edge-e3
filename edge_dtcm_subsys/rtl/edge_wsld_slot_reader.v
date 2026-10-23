@@ -1,7 +1,8 @@
 // Scale-first slot byte stream. Addresses are in 64-bit DTCM words.
 module edge_wsld_slot_reader #(
   parameter ADDR_WIDTH = 16,
-  parameter READ_LATENCY = 1
+  parameter READ_LATENCY = 1,
+  parameter PREFETCH_BEATS = READ_LATENCY + 2
 )(
   input wire clk, cpurst_b,
   input wire start, active,
@@ -18,7 +19,7 @@ module edge_wsld_slot_reader #(
 );
   reg [255:0] bytes_q, bytes_next;
   reg [5:0] count_q, count_next;
-  reg waiting_q, scale_q, scalar_q;
+  reg scale_q, scalar_q;
   reg [15:0] beats_left_q;
   reg [ADDR_WIDTH-1:0] addr_q;
   wire [15:0] weight_bytes = config_i[19:16] == 1 ?
@@ -29,8 +30,17 @@ module edge_wsld_slot_reader #(
   wire take_scale = sld_req && sld_ready;
   wire take_weight = wld_req && wld_ready;
   wire take = take_scale || take_weight;
-  // One outstanding physical read; its entire response has reserved space.
-  assign rd_req = active && !start && !waiting_q && count_q <= 16 && beats_left_q != 0;
+  // Each accepted read reserves a FIFO entry until the aligner pops it.
+  // Responses never need backpressure, even if the consumer stops abruptly.
+  localparam PTR_WIDTH = $clog2(PREFETCH_BEATS) > 0 ? $clog2(PREFETCH_BEATS) : 1;
+  localparam CREDIT_WIDTH = $clog2(PREFETCH_BEATS + 1);
+  reg [127:0] fifo_q [0:PREFETCH_BEATS-1];
+  reg [PTR_WIDTH-1:0] head_q, tail_q;
+  reg [CREDIT_WIDTH-1:0] reserved_q, available_q, outstanding_q;
+  wire pop = available_q != 0 && (count_q - (take ? take_bytes : 6'd0)) <= 16;
+  wire read_fire = rd_req && rd_ready;
+  assign rd_req = active && !start && beats_left_q != 0 &&
+      (reserved_q < PREFETCH_BEATS || pop);
   assign rd_addr = addr_q;
   assign sld_ready = active && !start && scale_q && count_q >= take_bytes;
   assign wld_ready = active && !start && !scale_q && count_q >= 16;
@@ -48,14 +58,15 @@ module edge_wsld_slot_reader #(
       bytes_next = bytes_q >> (take_bytes * 8);
       count_next = count_q - take_bytes;
     end
-    if (rd_rvalid) begin
-      bytes_next = bytes_next | ({128'd0,rd_rdata} << (count_next * 8));
+    if (pop) begin
+      bytes_next = bytes_next | ({128'd0,fifo_q[head_q]} << (count_next * 8));
       count_next = count_next + 6'd16;
     end
   end
   always @(posedge clk or negedge cpurst_b) begin
     if (!cpurst_b) begin
-      bytes_q <= 0; count_q <= 0; waiting_q <= 0;
+      bytes_q <= 0; count_q <= 0;
+      head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
       scale_q <= 1; scalar_q <= 0; beats_left_q <= 0; addr_q <= 0;
       scale_valid_q <= 0; weight_valid_q <= 0;
       for (i=0;i<READ_LATENCY;i=i+1) data_q[i] <= 0;
@@ -69,26 +80,49 @@ module edge_wsld_slot_reader #(
         data_q[i] <= data_q[i-1];
       end
       if (start) begin
-        bytes_q <= 0; count_q <= 0; waiting_q <= 0;
+        bytes_q <= 0; count_q <= 0;
+        head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
         scale_q <= 1; scalar_q <= config_i[11:8] == 1;
         beats_left_q <= (payload_bytes + 16'd15) >> 4;
         addr_q <= base_addr;
       end else begin
         bytes_q <= bytes_next; count_q <= count_next;
         if (take_scale) scale_q <= 0;
-        if (rd_req && rd_ready) begin
-          waiting_q <= 1; addr_q <= addr_q + 2;
+        if (read_fire) begin
+          addr_q <= addr_q + 2;
           beats_left_q <= beats_left_q - 1'b1;
         end
-        if (rd_rvalid) waiting_q <= 0;
+        if (rd_rvalid) begin
+          fifo_q[tail_q] <= rd_rdata;
+          tail_q <= tail_q == PREFETCH_BEATS-1 ? 0 : tail_q + 1'b1;
+        end
+        if (pop) head_q <= head_q == PREFETCH_BEATS-1 ? 0 : head_q + 1'b1;
+        case ({read_fire,pop})
+          2'b10: reserved_q <= reserved_q + 1'b1;
+          2'b01: reserved_q <= reserved_q - 1'b1;
+          default: ;
+        endcase
+        case ({rd_rvalid,pop})
+          2'b10: available_q <= available_q + 1'b1;
+          2'b01: available_q <= available_q - 1'b1;
+          default: ;
+        endcase
+        case ({read_fire,rd_rvalid})
+          2'b10: outstanding_q <= outstanding_q + 1'b1;
+          2'b01: outstanding_q <= outstanding_q - 1'b1;
+          default: ;
+        endcase
       end
     end
   end
 `ifndef SYNTHESIS
+  initial if (PREFETCH_BEATS < 1) $fatal(1,"WSLD needs at least one response credit");
   always @(posedge clk) if (cpurst_b) begin
-    if (rd_rvalid && (!waiting_q || count_next > 32))
+    if (reserved_q != available_q + outstanding_q || reserved_q > PREFETCH_BEATS || count_next > 32)
+      $fatal(1,"WSLD credit conservation failure");
+    if (rd_rvalid && (outstanding_q == 0 || (available_q == PREFETCH_BEATS && !pop)))
       $fatal(1,"WSLD response without reserved byte capacity");
-    if (start && (waiting_q || base_addr[0]))
+    if (start && (outstanding_q != 0 || base_addr[0]))
       $fatal(1,"WSLD slot overlap or unaligned slot base");
   end
 `endif
