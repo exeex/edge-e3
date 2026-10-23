@@ -92,7 +92,11 @@ module edge_dtcm_h4_wide_bank_direct (
         assign req_addr[(tile*32+lane)*9+:9]=row[source_pair][8:0];
         assign req_data[(tile*32+lane)*8+:8]=bank_wdata[source_word*64+source_byte*8+:8];
       end
+`ifdef EDGE_SRAM_H4_WIDE_HARDENED
+      edge_sram_h4_wide_tile32k x_tile (
+`else
       edge_sram_h4_tile32k #(.EXPLICIT_SWAP(1)) x_tile (
+`endif
         .clk(clk), .rst_b(cpurst_b), .swap_i(swap),
         .phase_h1_i(h1_link[tile]), .phase_h2_i(h2_link[tile]),
         .phase_h4_i(h4_link[tile]), .phase_h1_o(h1_link[tile+1]),
