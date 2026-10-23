@@ -10,7 +10,7 @@ module edge_tensor_tile_backend #(
   legacy_fill_bf16_mode_i, legacy_fill_start_i,
   legacy_fill_start_ready_o, legacy_fill_valid_i, legacy_fill_ready_o,
   legacy_fill_pair_idx_i, legacy_fill_data_i, legacy_fill_last_i,
-  packed_start_i, packed_start_ready_o, packed_bf16_mode_i,
+  packed_start_i, packed_start_ready_o, packed_wtype_i,
   packed_transpose_i, packed_busy_o, packed_done_o,
   packed_load_valid_i, packed_load_ready_o, packed_load_idx_i,
   packed_load_data_i,
@@ -30,7 +30,8 @@ output legacy_fill_start_ready_o, legacy_fill_ready_o;
 input [1:0] legacy_fill_pair_idx_i;
 input [127:0] legacy_fill_data_i;
 input legacy_fill_last_i;
-input packed_start_i, packed_bf16_mode_i, packed_transpose_i;
+input packed_start_i, packed_transpose_i;
+input [3:0] packed_wtype_i;
 output packed_start_ready_o, packed_busy_o, packed_done_o;
 input packed_load_valid_i;
 output packed_load_ready_o;
@@ -48,7 +49,7 @@ generate
     edge_tensor_packed_wld_tile #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_tile (
       .clk(clk), .rst_b(rst_b),
       .start(packed_start_i), .start_ready(packed_start_ready_o),
-      .start_bf16_mode(packed_bf16_mode_i),
+      .start_wtype(packed_wtype_i),
       .start_transpose(packed_transpose_i),
       .busy(packed_busy_o), .done(packed_done_o),
       .load_valid(packed_load_valid_i), .load_ready(packed_load_ready_o),

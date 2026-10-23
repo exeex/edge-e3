@@ -7,7 +7,7 @@ module edge_tensor_engine(
   weight_fill_data, weight_fill_last, weight_pending_valid,
   weight_active_valid, weight_preactivate, start_use_active, weight_idle,
   packed_weight_start, packed_weight_start_ready,
-  packed_weight_bf16_mode, packed_weight_transpose,
+  packed_weight_wtype, packed_weight_transpose,
   packed_weight_busy, packed_weight_done,
   packed_weight_load_valid, packed_weight_load_ready,
   packed_weight_load_idx, packed_weight_load_data,
@@ -81,7 +81,8 @@ input start_use_active;
 output weight_idle;
 input packed_weight_start;
 output packed_weight_start_ready;
-input packed_weight_bf16_mode, packed_weight_transpose;
+input [3:0] packed_weight_wtype;
+input packed_weight_transpose;
 output packed_weight_busy, packed_weight_done;
 input packed_weight_load_valid;
 output packed_weight_load_ready;
@@ -966,7 +967,7 @@ edge_tensor_tile_backend #(.PACKED_WEIGHT(PACKED_WEIGHT)) x_tile8x8 (
   .legacy_fill_data_i(weight_fill_data), .legacy_fill_last_i(weight_fill_last),
   .packed_start_i(packed_weight_start),
   .packed_start_ready_o(packed_weight_start_ready),
-  .packed_bf16_mode_i(packed_weight_bf16_mode),
+  .packed_wtype_i(packed_weight_wtype),
   .packed_transpose_i(packed_weight_transpose),
   .packed_busy_o(packed_weight_busy), .packed_done_o(packed_weight_done),
   .packed_load_valid_i(packed_weight_load_valid),

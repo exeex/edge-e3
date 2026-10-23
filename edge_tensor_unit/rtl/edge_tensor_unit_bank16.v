@@ -130,14 +130,14 @@ reg  [SEQ_ID_WIDTH-1:0]       start_pending_seq_id_q;
 reg  [EPOCH_WIDTH-1:0]        start_pending_epoch_q;
 reg                           wld_cmd_pending_q;
 reg                           wld_cmd_pending_transpose_q;
-reg                           wld_cmd_pending_bf16_q;
+reg [3:0]                     wld_cmd_pending_wtype_q;
 reg  [ADDR_WIDTH-1:0]         wld_cmd_pending_ptr_q;
 reg                           wld_cmd_pending_next_q;
 reg                           wld_cmd_pending_next_transpose_q;
-reg                           wld_cmd_pending_next_bf16_q;
+reg [3:0]                     wld_cmd_pending_next_wtype_q;
 reg  [ADDR_WIDTH-1:0]         wld_cmd_pending_next_ptr_q;
 reg                           wld_active_q;
-reg                           wld_active_bf16_q;
+reg [3:0]                     wld_active_wtype_q;
 reg  [ADDR_WIDTH-1:0]         wld_base_q;
 reg  [2:0]                    wld_issue_idx_q;
 reg  [3:0]                    wld_read_count_q;
@@ -216,7 +216,7 @@ wire                          wld_cmd_pending_launch;
 wire                          wld_cmd_launch;
 wire [ADDR_WIDTH-1:0]         wld_cmd_launch_ptr;
 wire                          wld_cmd_launch_transpose;
-wire                          wld_cmd_launch_bf16;
+wire [3:0]                    wld_cmd_launch_wtype;
 wire                          wld_fill_start_ready;
 wire                          wld_fill_done;
 wire                          wld_read_fire;
@@ -384,7 +384,8 @@ assign tensor_sld_fill_done = tensor_sld_rvalid && sld_wait_q;
 assign scale_stream_push = tensor_sld_rvalid && sld_wait_q && sld_stream_q;
 assign tensor_wld_fill_done = wld_fill_done;
 assign tensor_wld_tile_words[4:0] =
-    (cfg_wtype_q[cfg_write_sel_q][3:0] == 4'd1) ? 5'd16 : 5'd8;
+    (cfg_wtype_q[cfg_write_sel_q] == 4'd1) ? 5'd16 :
+    (cfg_wtype_q[cfg_write_sel_q] == 4'd4) ? 5'd4 : 5'd8;
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
     for (wld_stage=0; wld_stage<READ_LATENCY; wld_stage=wld_stage+1)
@@ -575,16 +576,16 @@ assign wld_cmd_launch_ptr[ADDR_WIDTH-1:0] =
 assign wld_cmd_launch_transpose =
     wld_cmd_pending_launch ? wld_cmd_pending_transpose_q
                            : cmd_wld_trans_req;
-assign wld_cmd_launch_bf16 =
-    wld_cmd_pending_launch ? wld_cmd_pending_bf16_q
-                           : (cfg_wtype_q[cfg_write_sel_q][3:0] == 4'd1);
+assign wld_cmd_launch_wtype =
+    wld_cmd_pending_launch ? wld_cmd_pending_wtype_q
+                           : cfg_wtype_q[cfg_write_sel_q];
 assign wld_req_addr[ADDR_WIDTH-1:0] =
     wld_base_q[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-4{1'b0}},
                                   wld_issue_idx_q[2:0], 1'b0};
 assign tensor_wld_addr[ADDR_WIDTH-1:0] = wld_req_addr[ADDR_WIDTH-1:0];
 assign tensor_wld_req = wld_active_q
                      && (wld_read_count_q[3:0]
-                         < (wld_active_bf16_q ? 4'd8 : 4'd4));
+                         < (wld_active_wtype_q==4'd1 ? 4'd8 : wld_active_wtype_q==4'd4 ? 4'd2 : 4'd4));
 assign wld_read_fire = tensor_wld_req && tensor_wld_ready;
 assign wld_load_data[PAIR_WIDTH-1:0] = tensor_wld_rdata[PAIR_WIDTH-1:0];
 assign engine_host_bank_rdata[DATA_WIDTH-1:0] =
@@ -657,7 +658,7 @@ edge_tensor_engine #(
   .weight_idle(engine_weight_idle),
   .packed_weight_start(PACKED_WEIGHT ? wld_cmd_launch : 1'b0),
   .packed_weight_start_ready(packed_weight_start_ready),
-  .packed_weight_bf16_mode(wld_cmd_launch_bf16),
+  .packed_weight_wtype(wld_cmd_launch_wtype),
   .packed_weight_transpose(wld_cmd_launch_transpose),
   .packed_weight_busy(packed_weight_busy),
   .packed_weight_done(packed_weight_done),
@@ -742,7 +743,7 @@ generate
     ) x_edge_tensor_wld8x8_fill (
       .clk(clk), .rst_b(cpurst_b), .start(wld_cmd_launch),
       .start_ready(wld_fill_start_ready),
-      .start_bf16_mode(wld_cmd_launch_bf16),
+      .start_bf16_mode(wld_cmd_launch_wtype==4'd1),
       .start_transpose(wld_cmd_launch_transpose), .busy(),
       .done(wld_fill_done), .load_valid(tensor_wld_rvalid),
       .load_idx(wld_rsp_idx_q[2:0]),
@@ -884,14 +885,14 @@ always @(posedge clk or negedge cpurst_b) begin
     start_pending_epoch_q <= {EPOCH_WIDTH{1'b0}};
     wld_cmd_pending_q <= 1'b0;
     wld_cmd_pending_transpose_q <= 1'b0;
-    wld_cmd_pending_bf16_q <= 1'b0;
+    wld_cmd_pending_wtype_q <= 4'b0;
     wld_cmd_pending_ptr_q <= {ADDR_WIDTH{1'b0}};
     wld_cmd_pending_next_q <= 1'b0;
     wld_cmd_pending_next_transpose_q <= 1'b0;
-    wld_cmd_pending_next_bf16_q <= 1'b0;
+    wld_cmd_pending_next_wtype_q <= 4'b0;
     wld_cmd_pending_next_ptr_q <= {ADDR_WIDTH{1'b0}};
     wld_active_q <= 1'b0;
-    wld_active_bf16_q <= 1'b0;
+    wld_active_wtype_q <= 4'b0;
     wld_base_q <= {ADDR_WIDTH{1'b0}};
     wld_issue_idx_q <= 3'b0;
     wld_read_count_q <= 4'b0;
@@ -1012,7 +1013,7 @@ always @(posedge clk or negedge cpurst_b) begin
     if (wld_cmd_pending_launch) begin
       wld_cmd_pending_q <= wld_cmd_pending_next_q;
       wld_cmd_pending_transpose_q <= wld_cmd_pending_next_transpose_q;
-      wld_cmd_pending_bf16_q <= wld_cmd_pending_next_bf16_q;
+      wld_cmd_pending_wtype_q <= wld_cmd_pending_next_wtype_q;
       wld_cmd_pending_ptr_q <= wld_cmd_pending_next_ptr_q[ADDR_WIDTH-1:0];
       wld_cmd_pending_next_q <= 1'b0;
       start_pending_wld_pending_q <= 1'b0;
@@ -1022,21 +1023,21 @@ always @(posedge clk or negedge cpurst_b) begin
       if (wld_cmd_pending_q && !wld_cmd_pending_launch) begin
         wld_cmd_pending_next_q <= 1'b1;
         wld_cmd_pending_next_transpose_q <= cmd_wld_trans_req;
-        wld_cmd_pending_next_bf16_q <=
-            cfg_wtype_q[cfg_write_sel_q][3:0] == 4'd1;
+        wld_cmd_pending_next_wtype_q <=
+            cfg_wtype_q[cfg_write_sel_q];
         wld_cmd_pending_next_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
       end else if (wld_cmd_pending_q && wld_cmd_pending_launch
                    && wld_cmd_pending_next_q) begin
         wld_cmd_pending_next_q <= 1'b1;
         wld_cmd_pending_next_transpose_q <= cmd_wld_trans_req;
-        wld_cmd_pending_next_bf16_q <=
-            cfg_wtype_q[cfg_write_sel_q][3:0] == 4'd1;
+        wld_cmd_pending_next_wtype_q <=
+            cfg_wtype_q[cfg_write_sel_q];
         wld_cmd_pending_next_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
       end else begin
         wld_cmd_pending_q <= 1'b1;
         wld_cmd_pending_transpose_q <= cmd_wld_trans_req;
-        wld_cmd_pending_bf16_q <=
-            cfg_wtype_q[cfg_write_sel_q][3:0] == 4'd1;
+        wld_cmd_pending_wtype_q <=
+            cfg_wtype_q[cfg_write_sel_q];
         wld_cmd_pending_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
       end
     end
@@ -1044,7 +1045,7 @@ always @(posedge clk or negedge cpurst_b) begin
     if (wld_cmd_launch) begin
       weight_loaded_q <= 1'b0;
       wld_active_q <= 1'b1;
-      wld_active_bf16_q <= wld_cmd_launch_bf16;
+      wld_active_wtype_q <= wld_cmd_launch_wtype;
       wld_base_q <= wld_cmd_launch_ptr[ADDR_WIDTH-1:0];
       wld_issue_idx_q <= 3'b0;
       wld_read_count_q <= 4'b0;

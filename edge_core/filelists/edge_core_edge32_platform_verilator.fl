@@ -38,6 +38,8 @@ edge_tensor_unit/rtl/ref/wld8x8/edge_tensor_wld8x8_fill.v
 edge_tensor_unit/rtl/compute/edge_dot8_unit.v
 ../edge-asic/rtl/tensor/edge_psum.v
 edge_tensor_unit/rtl/compute/edge_tile8x8_unit.v
+../edge-asic/rtl/tensor/edge_wld_banked_buffer.v
+../edge-asic/rtl/tensor/edge_wld_fixed_group_buffer.v
 ../edge-asic/rtl/tensor/edge_wld_packed_router.v
 edge_tensor_unit/rtl/weight/edge_weight_circular4_mux6.v
 edge_tensor_unit/rtl/compute/edge_dot8_weight_bank_packed32.v

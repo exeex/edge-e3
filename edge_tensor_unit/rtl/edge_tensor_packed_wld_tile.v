@@ -1,7 +1,7 @@
 // Formal-WLD-compatible boundary with selectable local relay / circular weight routing.
 module edge_tensor_packed_wld_tile #(parameter RELAY_WEIGHT=2)(
   clk, rst_b,
-  start, start_ready, start_bf16_mode, start_transpose,
+  start, start_ready, start_wtype, start_transpose,
   busy, done,
   load_valid, load_ready, load_idx, load_data,
   weight_activate, weight_activate_ready,
@@ -13,7 +13,8 @@ module edge_tensor_packed_wld_tile #(parameter RELAY_WEIGHT=2)(
 );
 
 input clk, rst_b;
-input start, start_bf16_mode, start_transpose;
+input start, start_transpose;
+input [3:0] start_wtype;
 output start_ready, busy, done;
 input load_valid;
 output load_ready;
@@ -35,7 +36,8 @@ output [127:0] output_bf16_o;
 localparam WEIGHT_BF16 = 2'd0;
 localparam WEIGHT_I8   = 2'd1;
 
-wire [1:0] weight_format = start_bf16_mode ? WEIGHT_BF16 : WEIGHT_I8;
+wire [1:0] weight_format = start_wtype==4'd1 ? WEIGHT_BF16 : start_wtype==4'd4 ? 2'd3 :
+                           start_wtype==4'd3 ? 2'd2 : WEIGHT_I8;
 
 // load_idx remains at this compatibility boundary for protocol parity.  The
 // selected ingress consumes accepted beats in order, as guaranteed by the WLD client.
