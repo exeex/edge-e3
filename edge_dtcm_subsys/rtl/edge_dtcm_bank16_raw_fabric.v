@@ -86,11 +86,11 @@ end endgenerate
 
 generate
   if (WIDE_H4) begin: WIDE_STORAGE
-    edge_dtcm_h4_wide_bank_bridge x_bridge (
-      .clk(clk), .rst_b(cpurst_b), .ready_o(phase_ready), .phase_o(phase),
-      .req_i(selected_req), .write_i(selected_we), .addr_i(selected_addr),
-      .data_i(selected_data), .strb_i(selected_strb),
-      .valid_o(bank_rvalid), .data_o(bank_rdata));
+    edge_dtcm_h4_wide_bank_direct x_direct (
+      .clk(clk), .cpurst_b(cpurst_b), .phase_ready(phase_ready), .phase(phase),
+      .bank_req(selected_req), .bank_we(selected_we), .bank_addr(selected_addr),
+      .bank_wdata(selected_data), .bank_wstrb(selected_strb),
+      .bank_rvalid(bank_rvalid), .bank_rdata(bank_rdata));
   end else if (SRAM_H4 != 0) begin: H4_STORAGE
     edge_dtcm_h4_wrapper x_wrapper (
       .clk(clk), .cpurst_b(cpurst_b), .pair_phase(phase[3:1]),
