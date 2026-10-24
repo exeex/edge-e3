@@ -164,6 +164,15 @@ reg done_q;
 reg handoff_ready_q;
 reg stream_started_q;
 reg psum_stream_started_q;
+// Unscaled dot output arrives eight edges after launch. At READ_LATENCY=4,
+// queued I may issue through last-MAC+3, then return by +7 so the I pipe is
+// empty on the +8 weight-release edge. Do not change other mode latencies.
+reg [1:0] next_input_tail_q;
+wire next_input_deadline_mode = WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
+    && !scale_enable_q && !scale_stream_enable_q && !rsum_mode_q
+    && !psum_once_mode_q && !psum_none_mode_q;
+wire next_input_before_deadline = !next_input_deadline_mode
+    || input_consume_count_q != target_count_q || next_input_tail_q != 0;
 reg [4:0] stream_cycle_q;
 reg [3:0] psum_offset_q;
 reg [VECTOR_COUNT_WIDTH-1:0] target_count_q;
@@ -684,7 +693,8 @@ assign active_input_select = input_select_valid;
 // input window. Do not issue another prefetch on the handoff edge.
 assign next_input_select = !active_input_select
                         && next_input_select_valid
-                        && !handoff_ready_next;
+                        && !handoff_ready_next
+                        && next_input_before_deadline;
 assign i_req_addr = active_input_select ? input_select_addr
                                         : next_input_select_addr;
 assign psum_req_addr = WIDE_H4 ? psum_select_addr : start_accept ? psum_base_addr
@@ -1118,6 +1128,7 @@ always @(posedge clk or negedge cpurst_b) begin
     handoff_ready_q <= 1'b0;
     stream_started_q <= 1'b0;
     psum_stream_started_q <= 1'b0;
+    next_input_tail_q <= 0;
     stream_cycle_q <= 5'b0;
     psum_offset_q <= 4'b0;
     input_keep_q <= INPUT_KEEP_WIDTH'(INPUT_FIFO_DEPTH);
@@ -1199,7 +1210,13 @@ always @(posedge clk or negedge cpurst_b) begin
       compute_busy_q <= 1'b1;
       stream_started_q <= next_input_prefetch_valid
                        && (next_input_issue_count_q != 0);
-      psum_stream_started_q <= 1'b0;
+      // A queued I window already started its stream. The legacy phase
+      // offset must not restart P warmup after the window-bank swap; bank
+      // ownership, indexed credit and older-output RAW checks still apply.
+      psum_stream_started_q <= WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
+          && !(|start_mode[4:0]) && next_input_prefetch_valid
+          && next_input_issue_count_q != 0;
+      next_input_tail_q <= 0;
       stream_cycle_q <= 0;
       psum_offset_q <= start_psum_offset;
       input_keep_q <= start_input_keep;
@@ -1240,7 +1257,11 @@ always @(posedge clk or negedge cpurst_b) begin
       end
     end
 
+    if (!start_accept && next_input_tail_q != 0)
+      next_input_tail_q <= next_input_tail_q - 1'b1;
     if (input_compute_fire) begin
+      if (input_consume_count_q + 1'b1 == target_count_q)
+        next_input_tail_q <= 2'd3;
       input_consume_count_q <= input_consume_count_q + 1'b1;
     end
 
