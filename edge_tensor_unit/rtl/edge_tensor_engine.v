@@ -196,12 +196,46 @@ reg [META_FIFO_INDEX_WIDTH-1:0] meta_head_q;
 reg [META_FIFO_INDEX_WIDTH-1:0] meta_tail_q;
 reg [META_FIFO_INDEX_WIDTH:0] meta_count_q;
 reg [META_FIFO_INDEX_WIDTH:0] scaled_inflight_count_q;
-reg [3:0] output_skew_inflight_q;
+reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_skew_inflight_q;
 reg [273:0] output_fifo_q [0:OUTPUT_FIFO_DEPTH-1];
 reg output_old_fifo [0:OUTPUT_FIFO_DEPTH-1];
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_head_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_tail_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_fifo_count_q;
+// Sparse age-ordered ring: writes may leave holes; retirement remains in order.
+reg [OUTPUT_FIFO_DEPTH-1:0] output_live_q;
+reg output_select_valid;
+reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_select_slot;
+reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_scan_slot;
+integer output_scan_i;
+wire output_ring_retire;
+function output_overlap;
+  input [ADDR_WIDTH-1:0] a, b;
+  input a_wide, b_wide;
+  begin
+    output_overlap = a == b || (a_wide && a + ADDR_WIDTH'(2) == b)
+                           || (b_wide && b + ADDR_WIDTH'(2) == a);
+  end
+endfunction
+always @* begin
+  output_select_valid=0;
+  output_select_slot=output_fifo_head_q;
+  output_scan_slot=0;
+  // All aligned overlapping writes share a 256-bit group. Oldest eligible
+  // in that group preserves WAW order without an all-pairs address CAM.
+  for (output_scan_i=0;output_scan_i<OUTPUT_FIFO_DEPTH;output_scan_i=output_scan_i+1) begin
+    output_scan_slot=output_fifo_head_q+OUTPUT_FIFO_INDEX_WIDTH'(output_scan_i);
+    if (!output_select_valid && output_scan_i<output_fifo_count_q
+        && output_live_q[output_scan_slot]
+        && output_fifo_q[output_scan_slot][260:259]==output_channel_bank[3:2]) begin
+      output_select_valid=1;
+      output_select_slot=output_scan_slot;
+    end
+  end
+end
+assign output_ring_retire = output_fifo_count_q!=0 &&
+    (WIDE_H4 ? (!output_live_q[output_fifo_head_q] ||
+       (output_write_fire && output_select_slot==output_fifo_head_q)) : output_write_fire);
 reg [6:0] psum_stream_mode_pipe_q;
 wire host_rvalid_q;
 wire [BANK_INDEX_WIDTH-1:0] host_rsp_bank_q;
@@ -632,8 +666,8 @@ assign psum_req_mask = (start_accept ? start_mode[7] : tile_mode_q)
     : ((start_accept ? start_dtype != 4'd0 : psum_fp32_q)
        ? quad_mask(psum_req_addr) : pair_mask(psum_req_addr));
 assign output_pending = output_skew_inflight_q != 0;
-assign output_skew_valid = output_fifo_count_q != 0;
-assign output_skew_payload = output_fifo_q[output_fifo_head_q];
+assign output_skew_valid = WIDE_H4 ? output_select_valid : output_fifo_count_q != 0;
+assign output_skew_payload = output_fifo_q[WIDE_H4 ? output_select_slot : output_fifo_head_q];
 assign output_skew_tile = output_skew_payload[273];
 assign output_skew_hi_addr = output_skew_addr +
     (!WIDE_H4 && output_skew_tile ? ADDR_WIDTH'(8) : ADDR_WIDTH'(2));
@@ -687,10 +721,15 @@ always @* begin
                         + psum_meta_scan_i[META_FIFO_INDEX_WIDTH-1:0];
     if (psum_meta_scan_i < meta_count_q) begin
       if ((start_accept || meta_old_fifo[psum_meta_scan_slot])
-          && meta_addr_fifo[psum_meta_scan_slot] == psum_req_addr)
+          && (WIDE_H4 ? output_overlap(meta_addr_fifo[psum_meta_scan_slot], psum_req_addr,
+               meta_fp32_fifo[psum_meta_scan_slot],
+               start_accept ? (start_mode[7] || start_dtype!=0) : (tile_mode_q || psum_fp32_q))
+              : meta_addr_fifo[psum_meta_scan_slot] == psum_req_addr))
         psum_req_addr_pending = 1'b1;
       if (meta_old_fifo[psum_meta_scan_slot]
-          && meta_addr_fifo[psum_meta_scan_slot] == input_psum_addr)
+          && (WIDE_H4 ? output_overlap(meta_addr_fifo[psum_meta_scan_slot], input_psum_addr,
+               meta_fp32_fifo[psum_meta_scan_slot], tile_mode_q || psum_fp32_q)
+              : meta_addr_fifo[psum_meta_scan_slot] == input_psum_addr))
         input_psum_addr_pending = 1'b1;
     end
   end
@@ -698,13 +737,18 @@ always @* begin
        psum_output_scan_i = psum_output_scan_i + 1) begin
     psum_output_scan_slot = output_fifo_head_q
                            + psum_output_scan_i[OUTPUT_FIFO_INDEX_WIDTH-1:0];
-    if (psum_output_scan_i < output_fifo_count_q) begin
+    if (psum_output_scan_i < output_fifo_count_q
+        && (!WIDE_H4 || output_live_q[psum_output_scan_slot])) begin
       if ((start_accept || output_old_fifo[psum_output_scan_slot])
-          && output_fifo_q[psum_output_scan_slot][272:257] == psum_req_addr)
+          && (WIDE_H4 ? output_overlap(output_fifo_q[psum_output_scan_slot][272:257], psum_req_addr,
+               output_fifo_q[psum_output_scan_slot][256],
+               start_accept ? (start_mode[7] || start_dtype!=0) : (tile_mode_q || psum_fp32_q))
+              : output_fifo_q[psum_output_scan_slot][272:257] == psum_req_addr))
         psum_req_addr_pending = 1'b1;
       if (output_old_fifo[psum_output_scan_slot]
-          && output_fifo_q[psum_output_scan_slot][272:257]
-                 == input_psum_addr)
+          && (WIDE_H4 ? output_overlap(output_fifo_q[psum_output_scan_slot][272:257], input_psum_addr,
+               output_fifo_q[psum_output_scan_slot][256], tile_mode_q || psum_fp32_q)
+              : output_fifo_q[psum_output_scan_slot][272:257] == input_psum_addr))
         input_psum_addr_pending = 1'b1;
     end
   end
@@ -758,7 +802,7 @@ assign output_queue_push_payload = {meta_tile_fifo[meta_head_q],
                                   {{PAIR_WIDTH{1'b0}}, tensor_output_data}};
 assign output_skew_fifo_push = output_queue_push_valid
                              && ((output_fifo_count_q < OUTPUT_FIFO_DEPTH)
-                                 || output_skew_fifo_pop);
+                                 || output_ring_retire);
 assign output_skew_fifo_pop = output_write_fire;
 assign output_skew_pop = output_skew_fifo_pop;
 assign psum_read_fire = psum_candidate
@@ -779,7 +823,7 @@ assign input_head_valid = input_slot_valid_q[input_head_slot]
 wire output_launch_credit = !WIDE_H4
     || (rsum_mode_q && input_consume_count_q != 0)
     || ({1'b0,meta_count_q} + {2'b0,output_fifo_count_q} < OUTPUT_FIFO_DEPTH)
-    || output_write_fire;
+    || output_ring_retire;
 assign input_compute_fire = compute_busy_q
                          && output_launch_credit
                          && (input_consume_count_q < target_count_q)
@@ -872,6 +916,7 @@ assign handoff_ready_next = compute_busy_q
                          && (!rsum_mode_q || tensor_output_valid);
 assign drain_done_next = busy_q && !compute_busy_q && !output_pending
                       && (meta_count_q == 0) && (psum_count_q == 0)
+                      && (output_fifo_count_q == 0)
                       && !output_skew_push && !start_accept
                       && !(|write_pipe);
 
@@ -1049,6 +1094,7 @@ always @(posedge clk or negedge cpurst_b) begin
     output_fifo_head_q <= 0;
     output_fifo_tail_q <= 0;
     output_fifo_count_q <= 0;
+    output_live_q <= 0;
     for (output_fifo_i = 0; output_fifo_i < OUTPUT_FIFO_DEPTH;
          output_fifo_i = output_fifo_i + 1) begin
       output_fifo_q[output_fifo_i] <= 0;
@@ -1197,15 +1243,20 @@ always @(posedge clk or negedge cpurst_b) begin
       default: begin end
     endcase
 
+    if (output_skew_fifo_pop)
+      output_live_q[WIDE_H4 ? output_select_slot : output_fifo_head_q] <= 0;
+    if (output_ring_retire)
+      output_live_q[output_fifo_head_q] <= 0;
     if (output_skew_fifo_push) begin
+      output_live_q[output_fifo_tail_q] <= 1;
       output_fifo_q[output_fifo_tail_q] <= output_queue_push_payload;
       output_old_fifo[output_fifo_tail_q] <=
           meta_old_fifo[meta_head_q] || start_accept;
       output_fifo_tail_q <= output_fifo_tail_q + 1'b1;
     end
-    if (output_skew_fifo_pop)
+    if (output_ring_retire)
       output_fifo_head_q <= output_fifo_head_q + 1'b1;
-    case ({output_skew_fifo_push, output_skew_fifo_pop})
+    case ({output_skew_fifo_push, output_ring_retire})
       2'b10: output_fifo_count_q <= output_fifo_count_q + 1'b1;
       2'b01: output_fifo_count_q <= output_fifo_count_q - 1'b1;
       default: begin end
@@ -1218,6 +1269,26 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
+    // Reordering is permitted only across disjoint destinations. The
+    // group selector should imply this; keep an independent address check.
+    if (WIDE_H4 && output_write_fire) begin
+      for (integer age=0;age<OUTPUT_FIFO_DEPTH;age=age+1) begin
+        if (age<output_fifo_count_q &&
+            age<int'(OUTPUT_FIFO_INDEX_WIDTH'(output_select_slot-output_fifo_head_q)) &&
+            output_live_q[OUTPUT_FIFO_INDEX_WIDTH'(output_fifo_head_q+age)] &&
+            output_overlap(output_fifo_q[OUTPUT_FIFO_INDEX_WIDTH'(output_fifo_head_q+age)][272:257],
+                           output_skew_addr,
+                           output_fifo_q[OUTPUT_FIFO_INDEX_WIDTH'(output_fifo_head_q+age)][256],
+                           output_skew_fp32))
+          $fatal(1,"wide output reordered overlapping writes");
+      end
+    end
+    if (WIDE_H4 && output_skew_fifo_push &&
+        (output_queue_push_payload[257] ||
+         (output_queue_push_payload[256] && output_queue_push_payload[258])))
+      $fatal(1,"wide output queue requires vector-aligned addresses");
+    if (WIDE_H4 && output_skew_fifo_pop && !output_live_q[output_select_slot])
+      $fatal(1,"wide output selected a retired slot");
     if (WIDE_H4 && start_accept &&
         (((start_mode[7] || start_dtype != 0) && !start_mode[2] && !start_mode[4]
           && psum_base_addr[1:0]!=0) ||
