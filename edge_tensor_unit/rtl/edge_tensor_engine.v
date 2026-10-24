@@ -49,8 +49,8 @@ initial if (WIDE_H4 && (!LOWER_SIX || READ_LATENCY != 4 || BANK_NUM != 16 || DAT
 
 localparam BYTE_WIDTH = DATA_WIDTH / 8;
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
-localparam PSUM_FIFO_DEPTH = 8;
-localparam PSUM_FIFO_INDEX_WIDTH = 3;
+localparam PSUM_FIFO_DEPTH = WIDE_H4 ? 16 : 8;
+localparam PSUM_FIFO_INDEX_WIDTH = $clog2(PSUM_FIFO_DEPTH);
 // Wide I visits eight bank pairs in permuted order. Keep a complete tour
 // ahead of the consumer plus the four in-flight read edges; four entries
 // repeatedly miss owned banks even though the raw lane has one beat/cycle.
@@ -197,6 +197,43 @@ reg [META_FIFO_INDEX_WIDTH-1:0] meta_tail_q;
 reg [META_FIFO_INDEX_WIDTH:0] meta_count_q;
 reg [META_FIFO_INDEX_WIDTH:0] scaled_inflight_count_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_skew_inflight_q;
+// Wide P is issued by bank phase and joined by absolute vector index.
+reg [PSUM_FIFO_DEPTH-1:0] psum_slot_issued_q, psum_slot_valid_q;
+reg [VECTOR_COUNT_WIDTH-1:0] psum_consume_count_q;
+reg [VECTOR_COUNT_WIDTH-1:0] p_index_pipe [0:READ_LATENCY-1];
+wire [VECTOR_COUNT_WIDTH-1:0] psum_rsp_index=p_index_pipe[READ_LATENCY-1];
+reg psum_select_valid;
+reg [VECTOR_COUNT_WIDTH-1:0] psum_select_index, psum_try_index;
+reg [ADDR_WIDTH-1:0] psum_select_addr, psum_try_addr;
+integer psum_select_offset;
+wire psum_input_issued = psum_slot_issued_q[input_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]];
+wire psum_input_issuing = psum_read_fire && psum_select_index==input_consume_count_q;
+wire psum_head_from_rsp=psum_rsp_valid_q && psum_rsp_index==psum_consume_count_q;
+// The ring is anchored at P consumption (the late dot join), not I issue.
+// Issued bits reserve slots while responses are still in flight.
+always @* begin
+  psum_select_valid=0;
+  psum_select_index=psum_consume_count_q;
+  psum_select_addr=psum_base_q;
+  psum_try_index=0; psum_try_addr=0;
+  for(psum_select_offset=0;psum_select_offset<PSUM_FIFO_DEPTH;psum_select_offset=psum_select_offset+1) begin
+    psum_try_index=psum_consume_count_q+VECTOR_COUNT_WIDTH'(psum_select_offset);
+    psum_try_addr=psum_base_q+(ADDR_WIDTH'(psum_try_index) << (psum_fp32_q ? 2 : 1));
+    if(!psum_select_valid && psum_consume_count_q<psum_target_count
+        && VECTOR_COUNT_WIDTH'(psum_select_offset)<psum_target_count-psum_consume_count_q
+        && !psum_slot_issued_q[psum_try_index[PSUM_FIFO_INDEX_WIDTH-1:0]]
+        && psum_try_addr[3:2]==psum_channel_bank[3:2]) begin
+      psum_select_valid=1;
+      psum_select_index=psum_try_index;
+      psum_select_addr=psum_try_addr;
+    end
+  end
+  if(start_accept) begin
+    psum_select_valid=1;
+    psum_select_index=0;
+    psum_select_addr=psum_base_addr;
+  end
+end
 reg [273:0] output_fifo_q [0:OUTPUT_FIFO_DEPTH-1];
 reg output_old_fifo [0:OUTPUT_FIFO_DEPTH-1];
 reg [OUTPUT_FIFO_INDEX_WIDTH-1:0] output_fifo_head_q;
@@ -519,6 +556,7 @@ always @(posedge clk or negedge cpurst_b) begin
     for (response_stage=0; response_stage<READ_LATENCY; response_stage=response_stage+1) begin
       i_tag_pipe[response_stage] <= 0;
       p_tag_pipe[response_stage] <= 0;
+      p_index_pipe[response_stage] <= 0;
       host_tag_pipe[response_stage] <= 0;
     end
   end else begin
@@ -528,6 +566,7 @@ always @(posedge clk or negedge cpurst_b) begin
     write_pipe[0] <= output_write_fire || (host_bank_req && host_we);
     i_tag_pipe[0] <= {i_req_addr[BANK_INDEX_WIDTH-1:0], next_bank(i_req_addr),
         (next_input_select ? next_input_select_index : input_select_index), next_input_select};
+    p_index_pipe[0] <= psum_select_index;
     p_tag_pipe[0] <= {psum_pair_bank0, psum_pair_bank1,
                       psum_pair_bank2, psum_pair_bank3};
     host_tag_pipe[0] <= host_addr[BANK_INDEX_WIDTH-1:0];
@@ -538,6 +577,7 @@ always @(posedge clk or negedge cpurst_b) begin
       write_pipe[response_stage] <= write_pipe[response_stage-1];
       i_tag_pipe[response_stage] <= i_tag_pipe[response_stage-1];
       p_tag_pipe[response_stage] <= p_tag_pipe[response_stage-1];
+      p_index_pipe[response_stage] <= p_index_pipe[response_stage-1];
       host_tag_pipe[response_stage] <= host_tag_pipe[response_stage-1];
     end
   end
@@ -647,7 +687,7 @@ assign next_input_select = !active_input_select
                         && !handoff_ready_next;
 assign i_req_addr = active_input_select ? input_select_addr
                                         : next_input_select_addr;
-assign psum_req_addr = start_accept ? psum_base_addr
+assign psum_req_addr = WIDE_H4 ? psum_select_addr : start_accept ? psum_base_addr
                      : tile_mode_q ? striped_low_addr(psum_base_q, psum_issue_count_q)
                      : psum_base_q + (psum_fp32_q
                          ? {psum_issue_count_q[ADDR_WIDTH-3:0], 2'b00}
@@ -770,6 +810,7 @@ assign psum_candidate = ((compute_busy_q && stream_started_q
                            || (stream_cycle_q >= {1'b0, psum_offset_q}))
                        && (psum_issue_count_q < psum_target_count))
                        || psum_start_prefetch)
+                     && (!WIDE_H4 || psum_select_valid)
                      && psum_req_owned && psum_fifo_credit
                      && !psum_req_addr_pending;
 assign psum_urgent = psum_stream_mode && compute_busy_q
@@ -834,15 +875,16 @@ assign input_compute_fire = compute_busy_q
                          // compute. Four memory edges then fit before the
                          // seven-cycle dot join even through bank conflicts.
                          && (!psum_stream_mode
-                             || ((READ_LATENCY > 1)
+                             || (WIDE_H4 ? (psum_input_issued || psum_input_issuing)
+                                 : ((READ_LATENCY > 1)
                                  ? (psum_issue_count_q > input_consume_count_q)
                                  : ({1'b0, psum_issue_count_q} + INPUT_PSUM_LEAD
-                                    > {1'b0, input_consume_count_q}))
-                             || psum_read_fire)
+                                    > {1'b0, input_consume_count_q})))
+                             || (!WIDE_H4 && psum_read_fire))
                          && (!psum_stream_mode
-                             || (psum_issue_count_q > input_consume_count_q)
-                             || (!input_psum_addr_pending
-                                 && !psum_req_addr_pending))
+                             || (WIDE_H4 ? (psum_input_issued || psum_input_issuing)
+                                 : ((psum_issue_count_q > input_consume_count_q)
+                                    || (!input_psum_addr_pending && !psum_req_addr_pending))))
                          && !((input_consume_count_q == 0)
                               && !scale_enable_q
                               && (scaled_inflight_count_q != 0));
@@ -860,15 +902,19 @@ assign input_fifo_rsp_store = iop_rsp_valid_q
 assign next_input_fifo_rsp_store = iop_rsp_valid_q && i_rsp_next_input_q;
 assign compute_valid_q = input_compute_fire;
 assign scale_stream_ready = input_compute_fire && scale_stream_enable_q;
-assign aligned_psum_valid = (psum_count_q != 0) || psum_rsp_valid_q;
+assign aligned_psum_valid = WIDE_H4
+    ? (psum_slot_valid_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] || psum_head_from_rsp)
+    : ((psum_count_q != 0) || psum_rsp_valid_q);
 for (genvar lane=0; lane<8; lane=lane+1) begin: FP32_PSUM_UNPACK
   wire [255:0] raw_data = {psum_pair_extra_rdata, psum_pair_rdata};
   assign converted_psum_data[lane*32 +: 32] = psum_fp32_q
       ? raw_data[lane*32 +: 32] : {psum_pair_rdata[lane*16 +: 16],16'b0};
   assign compute_psum_bf16[lane*16+:16] = compute_psum_data[lane*32+16+:16];
 end
-assign aligned_psum_data = (psum_count_q != 0)
-                         ? psum_data_fifo[psum_head_q] : converted_psum_data;
+assign aligned_psum_data = WIDE_H4
+    ? (psum_slot_valid_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]]
+       ? psum_data_fifo[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] : converted_psum_data)
+    : ((psum_count_q != 0) ? psum_data_fifo[psum_head_q] : converted_psum_data);
 assign psum_target_count = psum_none_mode_q ? {VECTOR_COUNT_WIDTH{1'b0}}
                          : psum_once_mode_q
                            ? {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1}
@@ -1086,6 +1132,8 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_head_q <= 0;
     psum_tail_q <= 0;
     psum_count_q <= 0;
+    psum_slot_issued_q <= 0; psum_slot_valid_q <= 0;
+    psum_consume_count_q <= 0;
     meta_head_q <= 0;
     meta_tail_q <= 0;
     meta_count_q <= 0;
@@ -1231,8 +1279,23 @@ always @(posedge clk or negedge cpurst_b) begin
       default: begin end
     endcase
 
+    if (WIDE_H4) begin
+      if (start_accept) begin
+        psum_slot_issued_q <= psum_read_fire ? {{(PSUM_FIFO_DEPTH-1){1'b0}},1'b1} : 0;
+        psum_slot_valid_q <= 0;
+        psum_consume_count_q <= 0;
+      end else if (psum_read_fire)
+        psum_slot_issued_q[psum_select_index[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 1;
+      if (psum_fifo_push)
+        psum_slot_valid_q[psum_rsp_index[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 1;
+      if (psum_fifo_pop) begin
+        psum_slot_issued_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 0;
+        psum_slot_valid_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 0;
+        psum_consume_count_q <= psum_consume_count_q + 1'b1;
+      end
+    end
     if (psum_fifo_push) begin
-      psum_data_fifo[psum_tail_q] <= converted_psum_data;
+      psum_data_fifo[WIDE_H4 ? psum_rsp_index[PSUM_FIFO_INDEX_WIDTH-1:0] : psum_tail_q] <= converted_psum_data;
       psum_tail_q <= psum_tail_q + 1'b1;
     end
     if (psum_fifo_pop)
@@ -1269,6 +1332,18 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
+    if (WIDE_H4 && start_accept && (psum_count_q!=0 || (|p_valid_pipe)))
+      $fatal(1,"P descriptor handoff before old responses drained");
+    if (WIDE_H4 && psum_read_fire && !start_accept &&
+        psum_slot_issued_q[psum_select_index[PSUM_FIFO_INDEX_WIDTH-1:0]])
+      $fatal(1,"P issued a reserved vector slot twice");
+    if (WIDE_H4 && psum_fifo_push &&
+        (!psum_slot_issued_q[psum_rsp_index[PSUM_FIFO_INDEX_WIDTH-1:0]] ||
+         psum_slot_valid_q[psum_rsp_index[PSUM_FIFO_INDEX_WIDTH-1:0]]))
+      $fatal(1,"P response without reserved empty slot");
+    if (WIDE_H4 && psum_fifo_pop &&
+        !psum_slot_issued_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]])
+      $fatal(1,"P join consumed an unissued vector");
     // Reordering is permitted only across disjoint destinations. The
     // group selector should imply this; keep an independent address check.
     if (WIDE_H4 && output_write_fire) begin
