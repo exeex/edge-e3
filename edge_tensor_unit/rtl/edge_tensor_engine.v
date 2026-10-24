@@ -51,12 +51,19 @@ localparam BYTE_WIDTH = DATA_WIDTH / 8;
 localparam PAIR_WIDTH = DATA_WIDTH * 2;
 localparam PSUM_FIFO_DEPTH = 8;
 localparam PSUM_FIFO_INDEX_WIDTH = 3;
-localparam INPUT_FIFO_DEPTH = 4;
-localparam INPUT_FIFO_INDEX_WIDTH = 2;
+// Wide I visits eight bank pairs in permuted order. Keep a complete tour
+// ahead of the consumer plus the four in-flight read edges; four entries
+// repeatedly miss owned banks even though the raw lane has one beat/cycle.
+localparam INPUT_FIFO_DEPTH = WIDE_H4 ? 16 : 4;
+localparam INPUT_FIFO_INDEX_WIDTH = $clog2(INPUT_FIFO_DEPTH);
+localparam INPUT_KEEP_WIDTH = INPUT_FIFO_INDEX_WIDTH + 1;
 localparam META_FIFO_DEPTH = 16;
 localparam META_FIFO_INDEX_WIDTH = 4;
-localparam OUTPUT_FIFO_DEPTH = 8;
-localparam OUTPUT_FIFO_INDEX_WIDTH = 3;
+// Launch credits reserve both pipeline results and queued output. Eight
+// total credits throttle a one-vector/cycle dot/scale/psum pipeline even
+// when wide O drains every cycle. Sixteen retain bounded backpressure.
+localparam OUTPUT_FIFO_DEPTH = WIDE_H4 ? 16 : 8;
+localparam OUTPUT_FIFO_INDEX_WIDTH = $clog2(OUTPUT_FIFO_DEPTH);
 localparam [VECTOR_COUNT_WIDTH:0] INPUT_PSUM_LEAD = 6;
 localparam [VECTOR_COUNT_WIDTH:0] PSUM_URGENT_BACKLOG = 2;
 
@@ -332,9 +339,9 @@ integer meta_fifo_i;
 integer output_fifo_i;
 integer input_select_offset;
 integer next_input_select_offset;
-reg [2:0] input_keep_q;
-wire [2:0] start_input_keep;
-wire [2:0] next_input_keep;
+reg [INPUT_KEEP_WIDTH-1:0] input_keep_q;
+wire [INPUT_KEEP_WIDTH-1:0] start_input_keep;
+wire [INPUT_KEEP_WIDTH-1:0] next_input_keep;
 
 reg input_select_valid;
 reg [VECTOR_COUNT_WIDTH-1:0] input_select_index;
@@ -422,16 +429,16 @@ begin
 end
 endfunction
 
-// Payload storage remains four entries per window. At descriptor start, cap
-// I lookahead at three on selected short-stream I/P pair layouts; other runs
-// retain all four entries to sustain the MAC through bank conflicts.
-function [2:0] choose_input_keep;
+// Preserve legacy short-stream tuning; wide H4 needs its full reorder window.
+function [INPUT_KEEP_WIDTH-1:0] choose_input_keep;
   input [ADDR_WIDTH-1:0] i_addr;
   input [ADDR_WIDTH-1:0] p_addr;
   input [7:0] mode;
   input [VECTOR_COUNT_WIDTH-1:0] count;
 begin
-  if (count <= 16'd8 && !mode[1] && !mode[2] && !mode[4]
+  if (WIDE_H4)
+    choose_input_keep = INPUT_KEEP_WIDTH'(INPUT_FIFO_DEPTH);
+  else if (count <= 16'd8 && !mode[1] && !mode[2] && !mode[4]
       && i_addr[3:1] != p_addr[3:1]
       && (i_addr[1] == p_addr[1]
           || p_addr[3:1] == i_addr[3:1] + 3'd1))
@@ -1022,7 +1029,7 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_stream_started_q <= 1'b0;
     stream_cycle_q <= 5'b0;
     psum_offset_q <= 4'b0;
-    input_keep_q <= 3'd4;
+    input_keep_q <= INPUT_KEEP_WIDTH'(INPUT_FIFO_DEPTH);
     target_count_q <= 0;
     read_issue_count_q <= 0;
     input_consume_count_q <= 0;
