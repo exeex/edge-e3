@@ -92,6 +92,7 @@ edge_dtcm_subsys/rtl/edge_dtcm_bank16_raw_fabric.v
 edge_dtcm_subsys/rtl/edge_dtcm_h4_wrapper.v
 edge_dtcm_subsys/rtl/edge_dtcm_h4_wide_bank_direct.v
 ../edge-asic/rtl/sram/edge_sram_h1_tile4k.v
+../edge-asic/rtl/sram/edge_sram_h1_tile32k.v
 ../edge-asic/rtl/sram/edge_sram_h2_tile8k.v
 ../edge-asic/rtl/sram/edge_sram_h4_tile32k.v
 ../../synth/openroad/tests/asap7_fakeram_functional_models.v
