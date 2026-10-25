@@ -483,6 +483,20 @@ assign start_data_run_count[15:0] =
                          cfg_run_count_q[cfg_write_sel_q][15:0];
 assign start_data_scale_sel = scale_pending_valid_q
                             ? scale_pending_sel_q : 1'b0;
+// The accepted descriptor is immutable while waiting for its weight. Use
+// that time to fill the younger I window; pending->queued preserves identity.
+// This does not activate weights or allow compute before weight readiness.
+wire input_prefetch_pending = WIDE_H4 && start_pending_q && !queued_start_valid_q;
+wire input_prefetch_valid = queued_start_valid_q || input_prefetch_pending;
+wire [ADDR_WIDTH-1:0] input_prefetch_base = input_prefetch_pending
+    ? start_pending_in_q : queued_in_q;
+wire [ADDR_WIDTH-1:0] input_prefetch_psum = input_prefetch_pending
+    ? start_pending_psum_q : queued_psum_q;
+wire [7:0] input_prefetch_mode = input_prefetch_pending
+    ? start_pending_mode_q : queued_start_mode_q;
+wire [VECTOR_COUNT_WIDTH-1:0] input_prefetch_count = input_prefetch_pending
+    ? start_pending_count_q : queued_count_q;
+
 assign start_queue_launch = queued_start_valid_q &&
                             (engine_handoff_ready ||
                              (!engine_busy && (queued_start_preactivated_q ||
@@ -674,12 +688,12 @@ edge_tensor_engine #(
   .packed_weight_load_ready(packed_weight_load_ready),
   .packed_weight_load_idx(wld_rsp_idx_q[2:0]),
   .packed_weight_load_data(wld_load_data[PAIR_WIDTH-1:0]),
-  .next_input_prefetch_valid(queued_start_valid_q),
-  .next_input_prefetch_base_addr(queued_in_q[ADDR_WIDTH-1:0]),
-  .next_input_prefetch_psum_base_addr(queued_psum_q[ADDR_WIDTH-1:0]),
-  .next_input_prefetch_mode(queued_start_mode_q[7:0]),
+  .next_input_prefetch_valid(input_prefetch_valid),
+  .next_input_prefetch_base_addr(input_prefetch_base),
+  .next_input_prefetch_psum_base_addr(input_prefetch_psum),
+  .next_input_prefetch_mode(input_prefetch_mode),
   .next_input_prefetch_vector_count(
-      queued_count_q[VECTOR_COUNT_WIDTH-1:0]),
+      input_prefetch_count),
   .handoff_ready(engine_handoff_ready),
   .busy(engine_busy),
   .done(engine_done),
@@ -1176,5 +1190,26 @@ always @(posedge clk or negedge cpurst_b) begin
     end
   end
 end
+
+`ifndef SYNTHESIS
+reg prefetch_previous_valid, prefetch_previous_start;
+reg [2*ADDR_WIDTH+VECTOR_COUNT_WIDTH+8-1:0] prefetch_previous_descriptor;
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b) begin
+    prefetch_previous_valid <= 1'b0;
+    prefetch_previous_start <= 1'b0;
+    prefetch_previous_descriptor <= 0;
+  end else begin
+    if (WIDE_H4 && prefetch_previous_valid && !prefetch_previous_start &&
+        (!input_prefetch_valid || prefetch_previous_descriptor !=
+         {input_prefetch_base,input_prefetch_psum,input_prefetch_mode,input_prefetch_count}))
+      $fatal(1,"younger I descriptor changed before engine START");
+    prefetch_previous_valid <= input_prefetch_valid;
+    prefetch_previous_start <= engine_start;
+    prefetch_previous_descriptor <=
+        {input_prefetch_base,input_prefetch_psum,input_prefetch_mode,input_prefetch_count};
+  end
+end
+`endif
 
 endmodule
