@@ -172,7 +172,7 @@ reg [1:0] next_input_tail_q;
 wire next_input_deadline_mode = WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
     && !scale_enable_q && !scale_stream_enable_q && !rsum_mode_q
     && !psum_once_mode_q && !psum_none_mode_q;
-wire next_input_before_deadline = !next_input_deadline_mode
+wire next_input_before_deadline = !(next_input_deadline_mode || early_p_handoff)
     || input_consume_count_q != target_count_q || next_input_tail_q != 0;
 reg [4:0] stream_cycle_q;
 reg [3:0] psum_offset_q;
@@ -224,7 +224,11 @@ wire [PSUM_FIFO_INDEX_WIDTH-1:0] psum_issue_slot = start_accept ? psum_next_orig
 wire [PSUM_FIFO_INDEX_WIDTH-1:0] psum_join_slot = p_join_slot_pipe[6];
 wire psum_old_owner_live = |(psum_slot_issued_q &
     (psum_slot_owner_q ^ {PSUM_FIFO_DEPTH{psum_owner_q}}));
-wire early_p_handoff = next_input_deadline_mode && next_input_prefetch_valid
+wire no_psum_overlap_mode = WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
+    && psum_none_mode_q && !scale_enable_q && !scale_stream_enable_q
+    && !rsum_mode_q && !psum_once_mode_q;
+wire early_p_handoff = (next_input_deadline_mode || no_psum_overlap_mode)
+    && next_input_prefetch_valid
     && next_input_weight_ready
     && !(|next_input_prefetch_mode[4:0]) && !psum_old_owner_live;
 reg early_p_handoff_q;
