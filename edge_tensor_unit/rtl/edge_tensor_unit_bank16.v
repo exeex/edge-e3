@@ -688,6 +688,7 @@ edge_tensor_engine #(
   .packed_weight_load_ready(packed_weight_load_ready),
   .packed_weight_load_idx(wld_rsp_idx_q[2:0]),
   .packed_weight_load_data(wld_load_data[PAIR_WIDTH-1:0]),
+  .next_input_weight_ready(queued_start_valid_q),
   .next_input_prefetch_valid(input_prefetch_valid),
   .next_input_prefetch_base_addr(input_prefetch_base),
   .next_input_prefetch_psum_base_addr(input_prefetch_psum),

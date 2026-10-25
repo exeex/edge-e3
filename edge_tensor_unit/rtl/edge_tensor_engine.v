@@ -11,7 +11,7 @@ module edge_tensor_engine(
   packed_weight_busy, packed_weight_done,
   packed_weight_load_valid, packed_weight_load_ready,
   packed_weight_load_idx, packed_weight_load_data,
-  next_input_prefetch_valid, next_input_prefetch_base_addr,
+  next_input_prefetch_valid, next_input_weight_ready, next_input_prefetch_base_addr,
   next_input_prefetch_psum_base_addr, next_input_prefetch_mode,
   next_input_prefetch_vector_count,
   handoff_ready, busy, done, host_req, host_we, host_addr, host_wdata,
@@ -103,6 +103,7 @@ output packed_weight_load_ready;
 input [2:0] packed_weight_load_idx;
 input [PAIR_WIDTH-1:0] packed_weight_load_data;
 input next_input_prefetch_valid;
+input next_input_weight_ready;
 input [ADDR_WIDTH-1:0] next_input_prefetch_base_addr;
 input [ADDR_WIDTH-1:0] next_input_prefetch_psum_base_addr;
 input [7:0] next_input_prefetch_mode;
@@ -165,8 +166,8 @@ reg handoff_ready_q;
 reg stream_started_q;
 reg psum_stream_started_q;
 // Unscaled dot output arrives eight edges after launch. At READ_LATENCY=4,
-// queued I may issue through last-MAC+3, then return by +7 so the I pipe is
-// empty on the +8 weight-release edge. Do not change other mode latencies.
+// queued I uses +1 with tagged P overlap, otherwise +3 for the +8 fence.
+// The I transport must still empty before swapping input window banks.
 reg [1:0] next_input_tail_q;
 wire next_input_deadline_mode = WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
     && !scale_enable_q && !scale_stream_enable_q && !rsum_mode_q
@@ -206,18 +207,37 @@ reg [META_FIFO_INDEX_WIDTH-1:0] meta_tail_q;
 reg [META_FIFO_INDEX_WIDTH:0] meta_count_q;
 reg [META_FIFO_INDEX_WIDTH:0] scaled_inflight_count_q;
 reg [OUTPUT_FIFO_INDEX_WIDTH:0] output_skew_inflight_q;
-// Wide P is issued by bank phase and joined by absolute vector index.
+// Wide P shares sixteen physical slots across descriptor origins. Response
+// format and late-join slot/owner tags survive an early START.
 reg [PSUM_FIFO_DEPTH-1:0] psum_slot_issued_q, psum_slot_valid_q;
 reg [VECTOR_COUNT_WIDTH-1:0] psum_consume_count_q;
+reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_origin_q;
+reg psum_owner_q;
+reg [PSUM_FIFO_DEPTH-1:0] psum_slot_owner_q;
+reg [PSUM_FIFO_INDEX_WIDTH-1:0] p_join_slot_pipe [0:6];
+reg [6:0] p_join_owner_pipe;
+reg [READ_LATENCY-1:0] p_wide_pipe;
+wire [PSUM_FIFO_INDEX_WIDTH-1:0] psum_next_origin = psum_origin_q + PSUM_FIFO_INDEX_WIDTH'(psum_target_count);
+wire [PSUM_FIFO_INDEX_WIDTH-1:0] psum_input_slot = psum_origin_q + PSUM_FIFO_INDEX_WIDTH'(input_consume_count_q);
+wire [PSUM_FIFO_INDEX_WIDTH-1:0] psum_issue_slot = start_accept ? psum_next_origin :
+    psum_origin_q + PSUM_FIFO_INDEX_WIDTH'(psum_select_index);
+wire [PSUM_FIFO_INDEX_WIDTH-1:0] psum_join_slot = p_join_slot_pipe[6];
+wire psum_old_owner_live = |(psum_slot_issued_q &
+    (psum_slot_owner_q ^ {PSUM_FIFO_DEPTH{psum_owner_q}}));
+wire early_p_handoff = next_input_deadline_mode && next_input_prefetch_valid
+    && next_input_weight_ready
+    && !(|next_input_prefetch_mode[4:0]) && !psum_old_owner_live;
+reg early_p_handoff_q;
+integer p_join_stage;
 reg [VECTOR_COUNT_WIDTH-1:0] p_index_pipe [0:READ_LATENCY-1];
 wire [VECTOR_COUNT_WIDTH-1:0] psum_rsp_index=p_index_pipe[READ_LATENCY-1];
 reg psum_select_valid;
 reg [VECTOR_COUNT_WIDTH-1:0] psum_select_index, psum_try_index;
 reg [ADDR_WIDTH-1:0] psum_select_addr, psum_try_addr;
 integer psum_select_offset;
-wire psum_input_issued = psum_slot_issued_q[input_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]];
+wire psum_input_issued = (psum_slot_issued_q[psum_input_slot] && psum_slot_owner_q[psum_input_slot]==psum_owner_q);
 wire psum_input_issuing = psum_read_fire && psum_select_index==input_consume_count_q;
-wire psum_head_from_rsp=psum_rsp_valid_q && psum_rsp_index==psum_consume_count_q;
+wire psum_head_from_rsp=psum_rsp_valid_q && PSUM_FIFO_INDEX_WIDTH'(psum_rsp_index)==psum_join_slot;
 // The ring is anchored at P consumption (the late dot join), not I issue.
 // Issued bits reserve slots while responses are still in flight.
 always @* begin
@@ -230,7 +250,7 @@ always @* begin
     psum_try_addr=psum_base_q+(ADDR_WIDTH'(psum_try_index) << (psum_fp32_q ? 2 : 1));
     if(!psum_select_valid && psum_consume_count_q<psum_target_count
         && VECTOR_COUNT_WIDTH'(psum_select_offset)<psum_target_count-psum_consume_count_q
-        && !psum_slot_issued_q[psum_try_index[PSUM_FIFO_INDEX_WIDTH-1:0]]
+        && !psum_slot_issued_q[PSUM_FIFO_INDEX_WIDTH'(psum_origin_q+psum_try_index)]
         && psum_try_addr[3:2]==psum_channel_bank[3:2]) begin
       psum_select_valid=1;
       psum_select_index=psum_try_index;
@@ -238,7 +258,7 @@ always @* begin
     end
   end
   if(start_accept) begin
-    psum_select_valid=1;
+    psum_select_valid=!psum_slot_issued_q[psum_next_origin];
     psum_select_index=0;
     psum_select_addr=psum_base_addr;
   end
@@ -561,7 +581,7 @@ assign {psum_rsp_bank0_q, psum_rsp_bank1_q,
 assign host_rsp_bank_q = host_tag_pipe[READ_LATENCY-1];
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
-    i_valid_pipe <= 0; p_valid_pipe <= 0; host_valid_pipe <= 0; write_pipe <= 0;
+    i_valid_pipe <= 0; p_valid_pipe <= 0; p_wide_pipe <= 0; host_valid_pipe <= 0; write_pipe <= 0;
     for (response_stage=0; response_stage<READ_LATENCY; response_stage=response_stage+1) begin
       i_tag_pipe[response_stage] <= 0;
       p_tag_pipe[response_stage] <= 0;
@@ -575,7 +595,8 @@ always @(posedge clk or negedge cpurst_b) begin
     write_pipe[0] <= output_write_fire || (host_bank_req && host_we);
     i_tag_pipe[0] <= {i_req_addr[BANK_INDEX_WIDTH-1:0], next_bank(i_req_addr),
         (next_input_select ? next_input_select_index : input_select_index), next_input_select};
-    p_index_pipe[0] <= psum_select_index;
+    p_index_pipe[0] <= VECTOR_COUNT_WIDTH'(psum_issue_slot);
+    p_wide_pipe[0] <= start_accept ? (start_mode[7] || start_dtype!=0) : psum_fp32_q;
     p_tag_pipe[0] <= {psum_pair_bank0, psum_pair_bank1,
                       psum_pair_bank2, psum_pair_bank3};
     host_tag_pipe[0] <= host_addr[BANK_INDEX_WIDTH-1:0];
@@ -587,6 +608,7 @@ always @(posedge clk or negedge cpurst_b) begin
       i_tag_pipe[response_stage] <= i_tag_pipe[response_stage-1];
       p_tag_pipe[response_stage] <= p_tag_pipe[response_stage-1];
       p_index_pipe[response_stage] <= p_index_pipe[response_stage-1];
+      p_wide_pipe[response_stage] <= p_wide_pipe[response_stage-1];
       host_tag_pipe[response_stage] <= host_tag_pipe[response_stage-1];
     end
   end
@@ -913,17 +935,17 @@ assign next_input_fifo_rsp_store = iop_rsp_valid_q && i_rsp_next_input_q;
 assign compute_valid_q = input_compute_fire;
 assign scale_stream_ready = input_compute_fire && scale_stream_enable_q;
 assign aligned_psum_valid = WIDE_H4
-    ? (psum_slot_valid_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] || psum_head_from_rsp)
+    ? (psum_slot_valid_q[psum_join_slot] || psum_head_from_rsp)
     : ((psum_count_q != 0) || psum_rsp_valid_q);
 for (genvar lane=0; lane<8; lane=lane+1) begin: FP32_PSUM_UNPACK
   wire [255:0] raw_data = {psum_pair_extra_rdata, psum_pair_rdata};
-  assign converted_psum_data[lane*32 +: 32] = psum_fp32_q
+  assign converted_psum_data[lane*32 +: 32] = (WIDE_H4 ? p_wide_pipe[READ_LATENCY-1] : psum_fp32_q)
       ? raw_data[lane*32 +: 32] : {psum_pair_rdata[lane*16 +: 16],16'b0};
   assign compute_psum_bf16[lane*16+:16] = compute_psum_data[lane*32+16+:16];
 end
 assign aligned_psum_data = WIDE_H4
-    ? (psum_slot_valid_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]]
-       ? psum_data_fifo[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] : converted_psum_data)
+    ? (psum_slot_valid_q[psum_join_slot]
+       ? psum_data_fifo[psum_join_slot] : converted_psum_data)
     : ((psum_count_q != 0) ? psum_data_fifo[psum_head_q] : converted_psum_data);
 assign psum_target_count = psum_none_mode_q ? {VECTOR_COUNT_WIDTH{1'b0}}
                          : psum_once_mode_q
@@ -958,12 +980,11 @@ assign handoff_ready_next = compute_busy_q
                          && (input_consume_count_q == target_count_q)
                          && (psum_issue_count_q == psum_target_count)
                          && !(|i_valid_pipe)
-                         && !(|p_valid_pipe)
-                         // Fixed I windows can finish a run while the dot
-                         // pipeline still uses the active weights. Do not
-                         // preactivate the next tile until the last result
-                         // has captured those weights; SRAM writes may drain.
-                         && (!LOWER_SIX || meta_count_q == 0
+                         && (early_p_handoff || !(|p_valid_pipe))
+                         // Ordinary unscaled descriptors retain old P ownership
+                         // and metadata across START. Other mode transitions
+                         // keep the full dot-output lifetime fence.
+                         && (early_p_handoff || !LOWER_SIX || meta_count_q == 0
                              || (meta_count_q == 1 && tensor_output_valid))
                          && (input_slot_valid_q == {INPUT_FIFO_DEPTH{1'b0}})
                          // Output addresses and data remain in the FIFO, so
@@ -1145,6 +1166,10 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_count_q <= 0;
     psum_slot_issued_q <= 0; psum_slot_valid_q <= 0;
     psum_consume_count_q <= 0;
+    psum_origin_q <= 0; psum_owner_q <= 0; psum_slot_owner_q <= 0;
+    p_join_owner_pipe <= 0; early_p_handoff_q <= 0;
+    for (p_join_stage=0;p_join_stage<7;p_join_stage=p_join_stage+1)
+      p_join_slot_pipe[p_join_stage] <= 0;
     meta_head_q <= 0;
     meta_tail_q <= 0;
     meta_count_q <= 0;
@@ -1188,6 +1213,10 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_stream_mode_pipe_q <=
         {psum_stream_mode_pipe_q[5:0],
          input_compute_fire && psum_stream_mode};
+    p_join_slot_pipe[0] <= psum_input_slot;
+    p_join_owner_pipe <= {p_join_owner_pipe[5:0],psum_owner_q};
+    for (p_join_stage=1;p_join_stage<7;p_join_stage=p_join_stage+1)
+      p_join_slot_pipe[p_join_stage] <= p_join_slot_pipe[p_join_stage-1];
     done_q <= 1'b0;
     handoff_ready_q <= 1'b0;
 
@@ -1261,7 +1290,7 @@ always @(posedge clk or negedge cpurst_b) begin
       next_input_tail_q <= next_input_tail_q - 1'b1;
     if (input_compute_fire) begin
       if (input_consume_count_q + 1'b1 == target_count_q)
-        next_input_tail_q <= 2'd3;
+        next_input_tail_q <= early_p_handoff ? 2'd1 : 2'd3;
       input_consume_count_q <= input_consume_count_q + 1'b1;
     end
 
@@ -1302,17 +1331,26 @@ always @(posedge clk or negedge cpurst_b) begin
 
     if (WIDE_H4) begin
       if (start_accept) begin
-        psum_slot_issued_q <= psum_read_fire ? {{(PSUM_FIFO_DEPTH-1){1'b0}},1'b1} : 0;
-        psum_slot_valid_q <= 0;
+        if (!early_p_handoff_q) begin
+          psum_slot_issued_q <= 0;
+          psum_slot_valid_q <= 0;
+        end
+        early_p_handoff_q <= 0;
+        psum_origin_q <= psum_next_origin;
+        psum_owner_q <= !psum_owner_q;
         psum_consume_count_q <= 0;
-      end else if (psum_read_fire)
-        psum_slot_issued_q[psum_select_index[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 1;
+      end
+      if (psum_read_fire) begin
+        psum_slot_issued_q[psum_issue_slot] <= 1;
+        psum_slot_owner_q[psum_issue_slot] <= start_accept ? !psum_owner_q : psum_owner_q;
+      end
       if (psum_fifo_push)
         psum_slot_valid_q[psum_rsp_index[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 1;
       if (psum_fifo_pop) begin
-        psum_slot_issued_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 0;
-        psum_slot_valid_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]] <= 0;
-        psum_consume_count_q <= psum_consume_count_q + 1'b1;
+        psum_slot_issued_q[psum_join_slot] <= 0;
+        psum_slot_valid_q[psum_join_slot] <= 0;
+        if (!start_accept && p_join_owner_pipe[6]==psum_owner_q)
+          psum_consume_count_q <= psum_consume_count_q + 1'b1;
       end
     end
     if (psum_fifo_push) begin
@@ -1353,18 +1391,23 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
-    if (WIDE_H4 && start_accept && (psum_count_q!=0 || (|p_valid_pipe)))
+    if (WIDE_H4 && start_accept && !early_p_handoff_q && (psum_count_q!=0 || (|p_valid_pipe)))
       $fatal(1,"P descriptor handoff before old responses drained");
-    if (WIDE_H4 && psum_read_fire && !start_accept &&
-        psum_slot_issued_q[psum_select_index[PSUM_FIFO_INDEX_WIDTH-1:0]])
+    if (WIDE_H4 && psum_read_fire &&
+        psum_slot_issued_q[psum_issue_slot])
       $fatal(1,"P issued a reserved vector slot twice");
     if (WIDE_H4 && psum_fifo_push &&
         (!psum_slot_issued_q[psum_rsp_index[PSUM_FIFO_INDEX_WIDTH-1:0]] ||
          psum_slot_valid_q[psum_rsp_index[PSUM_FIFO_INDEX_WIDTH-1:0]]))
       $fatal(1,"P response without reserved empty slot");
     if (WIDE_H4 && psum_fifo_pop &&
-        !psum_slot_issued_q[psum_consume_count_q[PSUM_FIFO_INDEX_WIDTH-1:0]])
+        !psum_slot_issued_q[psum_join_slot])
       $fatal(1,"P join consumed an unissued vector");
+    if (WIDE_H4 && psum_fifo_pop &&
+        psum_slot_owner_q[psum_join_slot]!=p_join_owner_pipe[6])
+      $fatal(1,"P join consumed another descriptor's slot");
+    if (WIDE_H4 && start_accept && psum_old_owner_live)
+      $fatal(1,"P owner reused before its late joins retired");
     // Reordering is permitted only across disjoint destinations. The
     // group selector should imply this; keep an independent address check.
     if (WIDE_H4 && output_write_fire) begin
@@ -1417,6 +1460,7 @@ always @(posedge clk or negedge cpurst_b) begin
 `endif
 
     if (handoff_ready_next) begin
+      early_p_handoff_q <= early_p_handoff;
       compute_busy_q <= 1'b0;
       handoff_ready_q <= 1'b1;
     end
