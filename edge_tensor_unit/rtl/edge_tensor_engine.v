@@ -191,6 +191,17 @@ wire [BANK_INDEX_WIDTH-1:0] psum_rsp_bank0_q;
 wire [BANK_INDEX_WIDTH-1:0] psum_rsp_bank1_q;
 wire [VECTOR_COUNT_WIDTH-1:0] i_rsp_index_q;
 wire i_rsp_next_input_q;
+// Wide requests retain a physical window-bank tag across START.
+wire i_rsp_bank_tag;
+reg input_bank_epoch_q;
+reg input_active_pending;
+always @* begin
+  input_active_pending=0;
+  for (integer tag_stage=0;tag_stage<READ_LATENCY;tag_stage=tag_stage+1)
+    if (i_valid_pipe[tag_stage] && i_tag_pipe[tag_stage][0]==input_bank_epoch_q)
+      input_active_pending=1;
+end
+assign i_rsp_next_input_q = WIDE_H4 ? (i_rsp_bank_tag ^ input_bank_epoch_q) : i_rsp_bank_tag;
 reg [VECTOR_COUNT_WIDTH-1:0] next_input_issue_count_q;
 reg [2*PAIR_WIDTH-1:0] psum_data_fifo [0:PSUM_FIFO_DEPTH-1];
 reg [PSUM_FIFO_INDEX_WIDTH-1:0] psum_head_q;
@@ -578,7 +589,7 @@ end
 assign iop_rsp_valid_q = i_valid_pipe[READ_LATENCY-1];
 assign psum_rsp_valid_q = p_valid_pipe[READ_LATENCY-1];
 assign host_rvalid_q = host_valid_pipe[READ_LATENCY-1];
-assign {i_rsp_bank0_q, i_rsp_bank1_q, i_rsp_index_q, i_rsp_next_input_q} =
+assign {i_rsp_bank0_q, i_rsp_bank1_q, i_rsp_index_q, i_rsp_bank_tag} =
     i_tag_pipe[READ_LATENCY-1];
 assign {psum_rsp_bank0_q, psum_rsp_bank1_q,
         psum_pair_rsp_bank2, psum_pair_rsp_bank3} = p_tag_pipe[READ_LATENCY-1];
@@ -598,7 +609,7 @@ always @(posedge clk or negedge cpurst_b) begin
     host_valid_pipe[0] <= host_bank_req && !host_we;
     write_pipe[0] <= output_write_fire || (host_bank_req && host_we);
     i_tag_pipe[0] <= {i_req_addr[BANK_INDEX_WIDTH-1:0], next_bank(i_req_addr),
-        (next_input_select ? next_input_select_index : input_select_index), next_input_select};
+        (next_input_select ? next_input_select_index : input_select_index), (WIDE_H4 ? input_bank_epoch_q ^ next_input_select : next_input_select)};
     p_index_pipe[0] <= VECTOR_COUNT_WIDTH'(psum_issue_slot);
     p_wide_pipe[0] <= start_accept ? (start_mode[7] || start_dtype!=0) : psum_fp32_q;
     p_tag_pipe[0] <= {psum_pair_bank0, psum_pair_bank1,
@@ -630,7 +641,8 @@ assign stream_i_prefetch_accept = read_fire;
 assign stream_psum_prefetch_accept = psum_read_fire;
 
 assign start_accept = start && !compute_busy_q
-                   && !(|i_valid_pipe) && !(|host_valid_pipe)
+                   && (!(|i_valid_pipe) || (WIDE_H4 && early_p_handoff_q && !input_active_pending))
+                   && !(|host_valid_pipe)
                    && (start_use_active ? tensor_weight_active_valid
                                         : tensor_weight_pending_valid);
 assign weight_fill_start_ready = tensor_weight_fill_start_ready;
@@ -715,8 +727,8 @@ always @* begin
 end
 
 assign active_input_select = input_select_valid;
-// Handoff waits for every outstanding response before changing the active
-// input window. Do not issue another prefetch on the handoff edge.
+// Stop issuing on the ready edge. Tagged younger responses may cross START;
+// active/legacy responses still require the original drain fence.
 assign next_input_select = !active_input_select
                         && next_input_select_valid
                         && !handoff_ready_next
@@ -983,7 +995,7 @@ assign handoff_ready_next = compute_busy_q
                          && (read_issue_count_q == target_count_q)
                          && (input_consume_count_q == target_count_q)
                          && (psum_issue_count_q == psum_target_count)
-                         && !(|i_valid_pipe)
+                         && (!(|i_valid_pipe) || (early_p_handoff && !input_active_pending))
                          && (early_p_handoff || !(|p_valid_pipe))
                          // Ordinary unscaled descriptors retain old P ownership
                          // and metadata across START. Other mode transitions
@@ -1165,6 +1177,7 @@ always @(posedge clk or negedge cpurst_b) begin
     psum_base_q <= 0;
     out_base_q <= 0;
     next_input_issue_count_q <= 0;
+    input_bank_epoch_q <= 0;
     psum_head_q <= 0;
     psum_tail_q <= 0;
     psum_count_q <= 0;
@@ -1233,6 +1246,7 @@ always @(posedge clk or negedge cpurst_b) begin
     end
 
     if (start_accept) begin
+      if (WIDE_H4 && next_input_prefetch_valid) input_bank_epoch_q <= !input_bank_epoch_q;
       for (meta_fifo_i = 0; meta_fifo_i < META_FIFO_DEPTH;
            meta_fifo_i = meta_fifo_i + 1)
         meta_old_fifo[meta_fifo_i] <= 1'b1;
@@ -1395,6 +1409,12 @@ always @(posedge clk or negedge cpurst_b) begin
     endcase
 
 `ifndef SYNTHESIS
+    if (WIDE_H4 && start_accept && input_active_pending)
+      $fatal(1,"I window switched with old active responses pending");
+    if (WIDE_H4 && iop_rsp_valid_q &&
+        !(i_rsp_next_input_q ? next_input_slot_issued_q[i_rsp_index_q[INPUT_FIFO_INDEX_WIDTH-1:0]]
+                            : input_slot_issued_q[i_rsp_index_q[INPUT_FIFO_INDEX_WIDTH-1:0]]))
+      $fatal(1,"I response arrived in an unreserved physical window slot");
     if (WIDE_H4 && start_accept && !early_p_handoff_q && (psum_count_q!=0 || (|p_valid_pipe)))
       $fatal(1,"P descriptor handoff before old responses drained");
     if (WIDE_H4 && psum_read_fire &&
