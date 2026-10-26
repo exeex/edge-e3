@@ -167,7 +167,7 @@ reg stream_started_q;
 reg psum_stream_started_q;
 // Unscaled dot output arrives eight edges after launch. At READ_LATENCY=4,
 // queued I uses +1 with tagged P overlap, otherwise +3 for the +8 fence.
-// The I transport must still empty before swapping input window banks.
+// Physical I tags permit younger responses across the window-bank swap.
 reg [1:0] next_input_tail_q;
 wire next_input_deadline_mode = WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
     && !scale_enable_q && !scale_stream_enable_q && !rsum_mode_q
@@ -238,10 +238,19 @@ wire psum_old_owner_live = |(psum_slot_issued_q &
 wire no_psum_overlap_mode = WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
     && psum_none_mode_q && !scale_enable_q && !scale_stream_enable_q
     && !rsum_mode_q && !psum_once_mode_q;
-wire early_p_handoff = (next_input_deadline_mode || no_psum_overlap_mode)
+// Fixed scales are captured at compute ingress. Equal-latency scaled streams
+// can retain old metadata/P owners just like unscaled streams; mode changes
+// and streamed scales retain their full fence.
+wire scaled_overlap_mode = WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
+    && scale_enable_q && !scale_stream_enable_q && !rsum_mode_q
+    && !psum_once_mode_q;
+wire early_p_handoff = ((next_input_deadline_mode || no_psum_overlap_mode)
+        && !(|next_input_prefetch_mode[4:0])
+      || (scaled_overlap_mode && next_input_prefetch_mode[0]
+        && !(|next_input_prefetch_mode[4:1])))
     && next_input_prefetch_valid
     && next_input_weight_ready
-    && !(|next_input_prefetch_mode[4:0]) && !psum_old_owner_live;
+    && !psum_old_owner_live;
 reg early_p_handoff_q;
 integer p_join_stage;
 reg [VECTOR_COUNT_WIDTH-1:0] p_index_pipe [0:READ_LATENCY-1];
@@ -997,7 +1006,7 @@ assign handoff_ready_next = compute_busy_q
                          && (psum_issue_count_q == psum_target_count)
                          && (!(|i_valid_pipe) || (early_p_handoff && !input_active_pending))
                          && (early_p_handoff || !(|p_valid_pipe))
-                         // Ordinary unscaled descriptors retain old P ownership
+                         // Equal-latency ordinary descriptors retain old P ownership
                          // and metadata across START. Other mode transitions
                          // keep the full dot-output lifetime fence.
                          && (early_p_handoff || !LOWER_SIX || meta_count_q == 0
@@ -1261,7 +1270,7 @@ always @(posedge clk or negedge cpurst_b) begin
       // offset must not restart P warmup after the window-bank swap; bank
       // ownership, indexed credit and older-output RAW checks still apply.
       psum_stream_started_q <= WIDE_H4 && LOWER_SIX && READ_LATENCY == 4
-          && !(|start_mode[4:0]) && next_input_prefetch_valid
+          && !(|start_mode[4:1]) && next_input_prefetch_valid
           && next_input_issue_count_q != 0;
       next_input_tail_q <= 0;
       stream_cycle_q <= 0;
