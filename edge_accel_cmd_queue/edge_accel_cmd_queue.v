@@ -83,7 +83,8 @@ module edge_accel_cmd_queue #(
         7'h2f: compact_imm8 = {3'b0, inst64[52], inst64[50:47]};
         7'h11,
         7'h18,
-        7'h1d: compact_imm8 = {6'b0, inst64[57], 1'b0};
+        7'h1d: compact_imm8 = {6'b0, inst64[57:56]};
+        7'h12, 7'h13, 7'h14, 7'h1a: compact_imm8 = {7'b0, inst64[56]};
         7'h15: compact_imm8 = inst64[63:56];
         7'h1e: compact_imm8 = {7'b0, inst64[56]};
         default: compact_imm8 = 8'b0;
@@ -114,7 +115,8 @@ module edge_accel_cmd_queue #(
         end
         7'h11,
         7'h18,
-        7'h1d: inst64[57] = imm8[1];
+        7'h1d: inst64[57:56] = imm8[1:0];
+        7'h12, 7'h13, 7'h14, 7'h1a: inst64[56] = imm8[0];
         7'h15: inst64[63:56] = imm8;
         7'h1e: inst64[56] = imm8[0];
         default: begin end
