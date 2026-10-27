@@ -339,7 +339,7 @@ path additionally supports `EDGE_TENSOR_WTYPE_FP4` (E2M1),
 currently use the numeric weight constants rather than typed CSR traits.
 `edge_tensor_setwtype` selects dtype=0 for BF16 ordinary I/O; tile start options
 select BF22 intermediate P/O in FP32 containers. Format support depends on the
-selected product RTL. See [runnable examples](https://github.com/exeex/edge-cores/blob/main/example/tensor_formats/README.md).
+selected product RTL. See [runnable examples](https://github.com/exeex/edge-cores/blob/main/docs/releases/v0.3.md#runnable-examples).
 
 ### Weight and scale loading
 
