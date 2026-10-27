@@ -28,9 +28,10 @@ module edge_wsld_h4 #(
   wire [15:0] weight_bytes = config_i[19:16]==1 ? {1'b0,config_i[7:0],7'b0}
       : config_i[19:16]==4 ? {3'b0,config_i[7:0],5'b0}
       : {2'b0,config_i[7:0],6'b0};
-  wire [15:0] payload_bytes = weight_bytes + {11'b0,config_i[11:8],1'b0};
+  wire [15:0] payload_bytes = weight_bytes + (config_i[15:12]==0 ?
+      {11'b0,config_i[11:8],1'b0} : {12'b0,config_i[11:8]});
   wire [13:0] beats = 14'((payload_bytes+16'd15)>>4);
-  wire descriptor_valid = config_i[7:0]!=0 && config_i[15:12]==0
+  wire descriptor_valid = config_i[7:0]!=0 && config_i[15:12]<=2 && config_i[31:20]==0
       && (config_i[11:8]==1 || config_i[11:8]==8)
       && config_i[19:16]>=1 && config_i[19:16]<=5
       && base_i[0]==0 && base_i[15:14]==0

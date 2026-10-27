@@ -20,13 +20,49 @@ module edge_wsld_slot_reader #(
   reg [255:0] bytes_q, bytes_next;
   reg [5:0] count_q, count_next;
   reg scale_q, scalar_q;
+  reg [3:0] stype_q;
   reg [15:0] beats_left_q;
   reg [ADDR_WIDTH-1:0] addr_q;
   wire [15:0] weight_bytes = config_i[19:16] == 1 ?
       {1'b0,config_i[7:0],7'b0} : config_i[19:16] == 4 ?
       {3'b0,config_i[7:0],5'b0} : {2'b0,config_i[7:0],6'b0};
-  wire [15:0] payload_bytes = weight_bytes + {11'd0,config_i[11:8],1'b0};
-  wire [5:0] take_bytes = scale_q && scalar_q ? 6'd2 : 6'd16;
+  wire [15:0] payload_bytes = weight_bytes +
+      (config_i[15:12] == 0 ? {11'd0,config_i[11:8],1'b0} : {12'd0,config_i[11:8]});
+  wire [5:0] take_bytes = !scale_q ? 6'd16 : stype_q == 0 ?
+      (scalar_q ? 6'd2 : 6'd16) : (scalar_q ? 6'd1 : 6'd8);
+  function [15:0] decode_scale8;
+    input [7:0] code;
+    input [3:0] stype;
+    reg [7:0] exponent;
+    reg [6:0] fraction;
+    integer leading;
+    begin
+      if (stype == 1)
+        decode_scale8 = code == 255 ? 16'h7fc0 :
+                        code == 0 ? 16'h0040 : {1'b0,code,7'b0};
+      else if (code[6:0] == 7'h7f)
+        decode_scale8 = 16'h7fc0;
+      else if (code[6:3] != 0) begin
+        exponent = {4'b0,code[6:3]} + 8'd120;
+        decode_scale8 = {code[7],exponent,code[2:0],4'b0};
+      end else if (code[2:0] == 0)
+        decode_scale8 = {code[7],15'b0};
+      else begin
+        leading = code[2] ? 2 : code[1] ? 1 : 0;
+        exponent = 8'(118 + leading);
+        fraction = 7'({4'b0,code[2:0]} << (7-leading));
+        decode_scale8 = {code[7],exponent,fraction};
+      end
+    end
+  endfunction
+  reg [127:0] scale_data;
+  integer lane;
+  always @* begin
+    scale_data = scalar_q ? {8{bytes_q[15:0]}} : bytes_q[127:0];
+    if (stype_q != 0)
+      for (lane=0;lane<8;lane=lane+1)
+        scale_data[lane*16+:16] = decode_scale8(bytes_q[(scalar_q ? 0 : lane*8)+:8],stype_q);
+  end
   wire take_scale = sld_req && sld_ready;
   wire take_weight = wld_req && wld_ready;
   wire take = take_scale || take_weight;
@@ -67,13 +103,13 @@ module edge_wsld_slot_reader #(
     if (!cpurst_b) begin
       bytes_q <= 0; count_q <= 0;
       head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
-      scale_q <= 1; scalar_q <= 0; beats_left_q <= 0; addr_q <= 0;
+      scale_q <= 1; scalar_q <= 0; stype_q <= 0; beats_left_q <= 0; addr_q <= 0;
       scale_valid_q <= 0; weight_valid_q <= 0;
       for (i=0;i<READ_LATENCY;i=i+1) data_q[i] <= 0;
     end else begin
       scale_valid_q[0] <= take_scale;
       weight_valid_q[0] <= take_weight;
-      data_q[0] <= scale_q && scalar_q ? {8{bytes_q[15:0]}} : bytes_q[127:0];
+      data_q[0] <= scale_q ? scale_data : bytes_q[127:0];
       for (i=1;i<READ_LATENCY;i=i+1) begin
         scale_valid_q[i] <= scale_valid_q[i-1];
         weight_valid_q[i] <= weight_valid_q[i-1];
@@ -83,6 +119,7 @@ module edge_wsld_slot_reader #(
         bytes_q <= 0; count_q <= 0;
         head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
         scale_q <= 1; scalar_q <= config_i[11:8] == 1;
+        stype_q <= config_i[15:12];
         beats_left_q <= (payload_bytes + 16'd15) >> 4;
         addr_q <= base_addr;
       end else begin

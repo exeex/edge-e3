@@ -378,8 +378,11 @@ edge_tensor_wsld_circular<transpose, tiles, wtype, scales, stype>();
 ```
 
 `tiles` is 1–255, `wtype` selects one of the five E3 weight formats, `scales`
-is 1 (broadcast) or 8 (per output lane), and `stype=0` selects BF16 scales.
-Eight-bit scales are reserved. A slot contains the scale bytes immediately
+is 1 (broadcast) or 8 (per output lane). `EdgeTensorScaleType` defines
+`EDGE_TENSOR_STYPE_BF16=0` (16-bit), `EDGE_TENSOR_STYPE_MXFP4=1` (8-bit E8M0),
+and `EDGE_TENSOR_STYPE_NVFP4=2` (8-bit E4M3FN). WSLD expands byte scales to
+the tensor's BF16 lane-scale interface; the NVFP4 FP32 global scale is separate.
+A slot contains the scale bytes immediately
 followed by `tiles` weight tiles, with 16-byte padding only at the slot end.
 Set circular DMA `entry_bytes` to that complete padded slot size. For
 output-major E3 weights, the shared scale group spans `8*tiles` K elements.
