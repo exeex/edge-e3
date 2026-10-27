@@ -1,0 +1,17 @@
+# Canonical tensor product sources; paths are relative to this file (-F).
+../rtl/edge_tensor_skew_buffer.v
+../rtl/edge_tensor_input_window.v
+../rtl/edge_tensor_engine.v
+../edge_tensor_unit.v
+../../../edge-asic/rtl/tensor/edge_bf16_sig_mul.v
+../../../edge-asic/rtl/tensor/edge_dot_kernel.v
+../../../edge-asic/rtl/tensor/edge_psum.v
+../../../edge-asic/rtl/tensor/edge_wld_fixed_group_buffer.v
+../rtl/compute/edge_bf16_mul8_pipe.v
+../rtl/compute/edge_tensor_scale_psum8.v
+../rtl/weight/edge_tensor_weights.v
+../rtl/compute/edge_dot8_weight_bank.v
+../rtl/edge_tensor_datapath.v
+../rtl/edge_tensor_weight_banks.v
+../rtl/edge_tensor_wld_tile.v
+../rtl/compute/edge_tensor_tile_backend.v

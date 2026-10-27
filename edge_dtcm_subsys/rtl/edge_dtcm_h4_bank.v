@@ -1,7 +1,7 @@
 // Wide-schedule bank doors. Four dual-port H1 tiles supply 128 KiB.
 // Two request cuts, the H1 SRAM edge, then the DTCM response edge.
 // The original H4 hierarchy remains available as a reference/physical branch.
-module edge_dtcm_h4_wide_bank_direct #(
+module edge_dtcm_h4_bank #(
 `ifdef EDGE_SRAM_H4_WIDE_HARDENED
   parameter H1_TILE32K = 0
 `else

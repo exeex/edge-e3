@@ -1,5 +1,5 @@
 // Packed staging terminates at dot-local ingress; final banks shift in-dot.
-module edge_tensor_dot_relay_weights(
+module edge_tensor_weights(
  input wire clk,input wire rst_b,input wire weight_start_i,
  output wire weight_start_ready_o,input wire [2:0] weight_format_i,input wire weight_transpose_i,
  input wire weight_load_valid_i,output wire weight_load_ready_o,input wire [127:0] weight_load_data_i,
@@ -20,7 +20,7 @@ edge_wld_fixed_group_buffer #(.DOTS(8),.LANES(2),.WTYPE_BITS(3)) buffer(
  .wtype_o(ingress_wtype),.drain_lane_o(group_lane),.busy_o(busy_o),.done_o(weight_done_o));
 genvar dot;
 for(dot=0;dot<8;dot=dot+1)begin : GEN_DOT
- edge_dot8_weight_bank_relay #(.STEP(2)) x_weight_bank(
+ edge_dot8_weight_bank #(.STEP(2)) x_weight_bank(
   .clk(clk),.rst_b(rst_b),.shift_valid_i(group_valid[dot/2]&&weight_drain_ready_i&&group_lane[(dot/2)*2+:2]==2'(dot%2)),
   .weight_i(raw_weights[(dot/2)*32+:32]),.format_i(ingress_wtype),
   .fill_bank_i(weight_fill_bank_i),.activate_i(weight_activate_i),.activate_bank_i(weight_activate_bank_i),

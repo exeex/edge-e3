@@ -1,5 +1,5 @@
 // Formal-WLD-compatible boundary with selectable local relay / circular weight routing.
-module edge_tensor_packed_wld_tile #(parameter RELAY_WEIGHT=2)(
+module edge_tensor_wld_tile_compare #(parameter RELAY_WEIGHT=2)(
   clk, rst_b,
   start, start_ready, start_wtype, start_transpose,
   busy, done,
@@ -49,7 +49,7 @@ wire unused_load_idx = &{1'b0, load_idx};
 
 assign busy = !start_ready;
 
-edge_tensor_packed_bank_sidecar #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_packed_bank (
+edge_tensor_weight_banks_compare #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_packed_bank (
   .clk(clk), .rst_b(rst_b),
   .weight_start_i(start), .weight_start_ready_o(start_ready),
   .weight_format_i(weight_format), .weight_transpose_i(start_transpose),

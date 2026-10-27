@@ -1,4 +1,4 @@
-module edge_tensor_unit(
+module edge_tensor_unit_legacy(
   clk,
   cmd_setcsr_dtype,
   cmd_setcsr_req,

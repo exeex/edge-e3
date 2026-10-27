@@ -1,5 +1,5 @@
 // E3 packed WLD relay ingress through final local banks and scale * dot + psum.
-module edge_tensor_packed_sidecar #(parameter RELAY_WEIGHT=2)(
+module edge_tensor_datapath_compare #(parameter RELAY_WEIGHT=2)(
   clk, rst_b,
   weight_start_i, weight_start_ready_o,
   weight_format_i, weight_transpose_i,
@@ -93,7 +93,7 @@ wire [1023:0] active_weights;
 wire [7:0] dot_valid;
 wire [127:0] dot_bf16;
 wire [255:0] dot_fp32;
-edge_tensor_dot_relay_weights x_weights(
+edge_tensor_weights x_weights(
  .clk(clk),.rst_b(rst_b),.weight_start_i(weight_start_i),.weight_start_ready_o(weight_start_ready_o),
  .weight_format_i(weight_format_i),.weight_transpose_i(weight_transpose_i),
  .weight_load_valid_i(weight_load_valid_i),.weight_load_ready_o(weight_load_ready_o),

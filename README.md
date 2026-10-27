@@ -72,11 +72,36 @@ hardware license, not an OSI-approved open-source license.
 ### Tensor/DTCM product layout
 
 The tensor product entry is `edge_tensor_unit/edge_tensor_unit.v`, containing
-module `edge_tensor_unit_bank16`. The maintained packed backend selects the
-dot-local relay (`RELAY_WEIGHT=2`) and supports FP4 weights together with
+module `edge_tensor_unit`. The maintained backend is fixed to packed WLD and
+the final dot-local relay, supporting FP4 weights together with
 BF22-in-FP32 psum. Earlier tensor, DTCM bridge and unused core-debug sources
 are retained in each owning block's `legacy/` directory. Production filelists
 exclude them; historical tests and synthesis comparisons opt in explicitly.
+
+Current tensor filenames describe ownership: `edge_tensor_datapath`,
+`edge_tensor_weight_banks`, `edge_tensor_wld_tile`, `edge_tensor_weights`, and
+`edge_dot8_weight_bank`. These replace development-era packed/sidecar/relay
+names. The current module at the tensor block entry is `edge_tensor_unit`;
+the archived wrapper uses `edge_tensor_unit_legacy` to avoid a module-name
+collision in comparison builds.
+
+Current H4 implementations are `edge_dtcm_h4`, `edge_dtcm_h4_bank`,
+`edge_wsld_h4`, and `edge_dma_h4`. H4, bank16 and narrow-client qualifiers
+remain where they describe actual topology or transfer width.
+
+The tensor unit and engine default to `WIDE_H4=1`, `LOWER_SIX=1`, and
+`READ_LATENCY=4`. Older memory-schedule fixtures explicitly override transport
+parameters. Product RTL has no `PACKED_WEIGHT` or `RELAY_WEIGHT` implementation
+selector; archived comparison modules retain historical choices.
+
+Canonical source manifests live in `edge_tensor_unit/filelists/edge_tensor.fl`
+and `edge_dtcm_subsys/filelists/edge_{dtcm,accel}.fl`. Entries are file-relative
+and included with `-F`. The product Verilator filelist, module CMake tests and
+DTCM synthesis manifest share these lists. CMake consumers use
+`cmake/EdgeSources.cmake`, which tracks nested manifests and RTL dependencies.
+Historical tests explicitly load
+`edge_tensor_unit/legacy/filelists/edge_tensor_legacy.fl` in addition to product
+sources; product tests compile without that legacy closure.
 
 The public `edge_dtcm_subsys` boundary defaults to wide H4 when `SRAM_H4=1`.
 P and O use native 256-bit group rotation; I, WSLD, shared LSU/ACTU/CMPU,

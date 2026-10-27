@@ -1,7 +1,7 @@
 // Final A/B cells are themselves the single-direction intra-dot relay.
 // Source order is element 0..7; STEP=2 injects low/high into cells 6/7.
 // Two interleaved 16-bit rails move toward cell 0 within the same dot.
-module edge_dot8_weight_bank_relay #(parameter STEP=1)(
+module edge_dot8_weight_bank #(parameter STEP=1)(
  input wire clk,input wire rst_b,input wire shift_valid_i,input wire [STEP*16-1:0] weight_i,
  input wire [2:0] format_i,input wire fill_bank_i,
  input wire activate_i,input wire activate_bank_i,

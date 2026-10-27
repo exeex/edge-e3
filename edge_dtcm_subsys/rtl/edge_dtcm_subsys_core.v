@@ -16,8 +16,7 @@ module edge_dtcm_subsys_core #(
   // Standalone legacy/proxy harnesses retain inferred SRAM. The product
   // edge_dtcm_subsys boundary explicitly selects H4 by default.
   parameter SRAM_H4 = 0,
-  parameter WIDE_H4 = 0,
-  parameter TENSOR_PACKED_WEIGHT = 1
+  parameter WIDE_H4 = 0
 )(
   clk,
   cpurst_b,
@@ -431,7 +430,7 @@ assign tensor_sld_ready = tensor_wsld_slot_active ? slot_sld_ready : physical_sl
 assign tensor_sld_rvalid = tensor_wsld_slot_active ? slot_sld_rvalid : physical_sld_rvalid;
 assign tensor_sld_rdata = tensor_wsld_slot_active ? slot_sld_rdata : physical_sld_rdata;
 generate if(WIDE_H4) begin: WIDE_SLOT
-  edge_wsld_h4_wide x_slot (
+  edge_wsld_h4 x_slot (
     .clk(clk),.rst_b(cpurst_b),.fabric_ready_i(memory_ready),.phase_i(tensor_native_phase[3:1]),
     .start_i(tensor_wsld_slot_start),.start_ready_o(),.base_i(tensor_wsld_slot_addr),
     .config_i(tensor_wsld_slot_config),.busy_o(),.done_o(),
@@ -557,7 +556,7 @@ assign actu_start_ready = actu_start_ready_raw && memory_ready && !accel_write_p
 assign cmpu_start_ready = cmpu_start_ready_raw && memory_ready && !accel_write_pending;
 assign dma_stream_busy = dma_stream_busy_raw || stream_queue_busy || (SRAM_H4 && (|stream_write_pipe));
 
-edge_tensor_unit_bank16 #(
+edge_tensor_unit #(
   .LOWER_SIX(SRAM_H4),
   .WIDE_H4(WIDE_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
@@ -566,8 +565,7 @@ edge_tensor_unit_bank16 #(
   .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
   .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),
   .DATA_WIDTH(DATA_WIDTH),
-  .VECTOR_COUNT_WIDTH(16),
-  .PACKED_WEIGHT(TENSOR_PACKED_WEIGHT)
+  .VECTOR_COUNT_WIDTH(16)
 ) x_edge_tensor_unit_bank16 (
   .clk(clk),
   .cpurst_b(cpurst_b),
@@ -882,7 +880,7 @@ assign legacy_dma_lease_channel=0;
 assign legacy_dma_lease_cycles=0;
 assign legacy_dma_lease_delay=0;
 assign legacy_dma_lease_valid=0;
-edge_dma_h4_wide x_dma (
+edge_dma_h4 x_dma (
  .clk(clk),.rst_b(cpurst_b),.fabric_ready_i(memory_ready),.phase_i(tensor_native_phase[3:1]),
  .start_i((dma_start_a2d || dma_start_d2a) && !legacy_dma_busy && !stream_select),
  .start_ready_o(),.dir_i(dma_start_d2a),.axi_addr_i(dma_start_axi_addr),

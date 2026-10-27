@@ -1,0 +1,23 @@
+# Canonical accel product sources; paths are relative to this file (-F).
+../../../edge-asic/rtl/accel_io/edge_accel_io_unit.v
+../../../edge-asic/rtl/accel_io/edge_accel_unit.v
+../../../edge-asic/rtl/accel_io/edge_accel_io.v
+../../../edge-asic/rtl/accel_io/edge_accel_core_mux.v
+../../../edge-asic/rtl/cmpu/edge_cmpu.v
+../../../edge-asic/rtl/cmpu/rtl/edge_cmpu_bf16_relation.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_bf16_stream.v
+../../../edge-asic/rtl/actu/edge_actu.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_exp2_split_mant_q14.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_exp2_pack_q28_bf22.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_rcp_one_to_two_q16.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_rcp_radix16_seed.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_rcp_rsqrt_seed_q16.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_rcp_rsqrt_pipe.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_exp_frontend.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_rcp_backend.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_mul14_comb.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_softmax_rsum.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_finalizer.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_exp_ingress.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_exp_range_bf22.v
+../../../edge-asic/rtl/actu/rtl/edge_actu_softmax_sub_bf16.v

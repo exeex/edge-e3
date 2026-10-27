@@ -51,7 +51,7 @@ assign weight_token_valid_o = pending_valid || reuse_token_q;
 assign weight_token_reuse_o = reuse_token_q;
 assign weight_active_valid_o = active_valid;
 
-edge_tensor_packed_bank_sidecar x_bank_owner (
+edge_tensor_weight_banks x_bank_owner (
   .clk(clk), .rst_b(rst_b),
   .weight_start_i(weight_start_i && weight_start_ready_o),
   .weight_start_ready_o(inner_start_ready),

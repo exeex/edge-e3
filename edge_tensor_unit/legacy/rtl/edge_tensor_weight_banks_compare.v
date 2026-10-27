@@ -1,5 +1,5 @@
 // Packed tensor sidecar with automatic double-bank ownership.
-module edge_tensor_packed_bank_sidecar #(parameter RELAY_WEIGHT=2)(
+module edge_tensor_weight_banks_compare #(parameter RELAY_WEIGHT=2)(
   clk, rst_b,
   weight_start_i, weight_start_ready_o,
   weight_format_i, weight_transpose_i,
@@ -60,7 +60,7 @@ assign weight_active_valid_o = active_valid_q;
 assign weight_pending_valid_o = pending_valid_q;
 assign weight_done_o = inner_done;
 
-edge_tensor_packed_sidecar #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_packed (
+edge_tensor_datapath_compare #(.RELAY_WEIGHT(RELAY_WEIGHT)) x_packed (
   .clk(clk), .rst_b(rst_b),
   .weight_start_i(weight_start_i && weight_start_ready_o),
   .weight_start_ready_o(inner_start_ready),

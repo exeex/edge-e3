@@ -1,6 +1,6 @@
 // Existing AXI DMA engine bound to one wide-schedule narrow lane.
 // Completion waits for both AXI retirement and physical SRAM transport drain.
-module edge_dma_h4_wide #(
+module edge_dma_h4 #(
   parameter AXI_ADDR_WIDTH=40,
   parameter PORT=3,
   parameter HALF=1

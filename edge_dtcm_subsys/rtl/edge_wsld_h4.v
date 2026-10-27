@@ -1,7 +1,7 @@
 // Scale-first WSLD slot bound to a wide-schedule narrow lane. The existing
 // byte aligner is unchanged; ordered transport beats are delivered with a
 // one-cycle acknowledged response after the slot reader requests them.
-module edge_wsld_h4_wide #(
+module edge_wsld_h4 #(
   parameter PORT = 2,
   parameter HALF = 1,
   parameter READ_LATENCY = 4

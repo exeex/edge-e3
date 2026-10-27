@@ -2,9 +2,7 @@ module edge_tensor_engine(
   clk, cpurst_b, start, in_base_addr, psum_base_addr, out_base_addr,
   vector_count, start_mode, start_dtype, scale_bf16,
   scale_stream_valid, scale_stream_data, scale_stream_ready,
-  weight_fill_bf16_mode, weight_fill_start, weight_fill_start_ready,
-  weight_fill_valid, weight_fill_ready, weight_fill_pair_idx,
-  weight_fill_data, weight_fill_last, weight_pending_valid,
+  weight_pending_valid,
   weight_active_valid, weight_preactivate, start_use_active, weight_idle,
   packed_weight_start, packed_weight_start_ready,
   packed_weight_wtype, packed_weight_transpose,
@@ -30,17 +28,16 @@ module edge_tensor_engine(
   stream_psum_prefetch_accept
 );
 
-parameter LOWER_SIX = 0;
-// Opt-in wide H4 backend. fabric_phase carries {wide_phase[2:0],1'b0}.
-parameter WIDE_H4 = 0;
+parameter LOWER_SIX = 1;
+// Product-default wide H4 backend. fabric_phase carries {wide_phase[2:0],1'b0}.
+parameter WIDE_H4 = 1;
 parameter ADDR_WIDTH = 16;
 parameter SRAM_ADDR_WIDTH = 10;
 parameter DATA_WIDTH = 64;
 parameter BANK_NUM = 16;
 parameter BANK_INDEX_WIDTH = 4;
 parameter VECTOR_COUNT_WIDTH = 16;
-parameter PACKED_WEIGHT = 0;
-parameter READ_LATENCY = 1;
+parameter READ_LATENCY = 4;
 
 `ifndef SYNTHESIS
 initial if (WIDE_H4 && (!LOWER_SIX || READ_LATENCY != 4 || BANK_NUM != 16 || DATA_WIDTH != 64))
@@ -80,14 +77,6 @@ input [127:0] scale_bf16;
 input scale_stream_valid;
 input [127:0] scale_stream_data;
 output scale_stream_ready;
-input weight_fill_bf16_mode;
-input weight_fill_start;
-output weight_fill_start_ready;
-input weight_fill_valid;
-output weight_fill_ready;
-input [1:0] weight_fill_pair_idx;
-input [PAIR_WIDTH-1:0] weight_fill_data;
-input weight_fill_last;
 output weight_pending_valid;
 output weight_active_valid;
 input weight_preactivate;
@@ -448,8 +437,6 @@ wire [PAIR_WIDTH-1:0] tensor_output_data;
 wire start_accept;
 wire handoff_ready_next;
 wire drain_done_next;
-wire tensor_weight_fill_start_ready;
-wire tensor_weight_fill_ready;
 wire tensor_weight_activate_ready;
 wire tensor_weight_fill_busy;
 wire tensor_weight_active_valid;
@@ -654,8 +641,6 @@ assign start_accept = start && !compute_busy_q
                    && !(|host_valid_pipe)
                    && (start_use_active ? tensor_weight_active_valid
                                         : tensor_weight_pending_valid);
-assign weight_fill_start_ready = tensor_weight_fill_start_ready;
-assign weight_fill_ready = tensor_weight_fill_ready;
 assign weight_pending_valid = tensor_weight_pending_valid;
 assign weight_active_valid = tensor_weight_active_valid;
 assign weight_idle = !compute_busy_q
@@ -1125,7 +1110,7 @@ edge_tensor_input_window #(
   .prefetch_valid(next_input_slot_valid_q)
 );
 
-edge_tensor_tile_backend #(.PACKED_WEIGHT(PACKED_WEIGHT)) x_tile8x8 (
+edge_tensor_tile_backend x_tile8x8 (
   .clk(clk), .rst_b(cpurst_b), .compute_valid(compute_valid_q),
   .late_psum_mode_i(dot_needs_psum),
   .late_psum_valid_i(dot_needs_psum ? aligned_psum_valid : 1'b1),
@@ -1140,13 +1125,6 @@ edge_tensor_tile_backend #(.PACKED_WEIGHT(PACKED_WEIGHT)) x_tile8x8 (
   .rsum_last_i(rsum_mode_q
                && (input_consume_count_q + {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1}
                    == target_count_q)),
-  .legacy_fill_bf16_mode_i(weight_fill_bf16_mode),
-  .legacy_fill_start_i(weight_fill_start),
-  .legacy_fill_start_ready_o(tensor_weight_fill_start_ready),
-  .legacy_fill_valid_i(weight_fill_valid),
-  .legacy_fill_ready_o(tensor_weight_fill_ready),
-  .legacy_fill_pair_idx_i(weight_fill_pair_idx),
-  .legacy_fill_data_i(weight_fill_data), .legacy_fill_last_i(weight_fill_last),
   .packed_start_i(packed_weight_start),
   .packed_start_ready_o(packed_weight_start_ready),
   .packed_wtype_i(packed_weight_wtype),

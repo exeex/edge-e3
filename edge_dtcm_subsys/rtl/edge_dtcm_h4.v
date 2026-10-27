@@ -1,7 +1,7 @@
 // E3 word address: {row[9:0], bank[3:0]}; each bank is 64 bits.
 // Four H4s supply 16 banks / eight 128-bit channels / 128 KiB.
 // H4 -> H2 -> H1/SRAM takes three edges; DTCM registers the fourth response edge.
-module edge_dtcm_h4_wrapper (
+module edge_dtcm_h4 (
   input wire clk, cpurst_b,
   input wire [2:0] pair_phase,
   output wire phase_ready,
