@@ -384,7 +384,7 @@ followed by `tiles` weight tiles, with 16-byte padding only at the slot end.
 Set circular DMA `entry_bytes` to that complete padded slot size. For
 output-major E3 weights, the shared scale group spans `8*tiles` K elements.
 The default arguments select non-transposed INT8, four tiles, eight BF16
-scales. See [the packed layout tutorial](https://github.com/exeex/edge-cores/blob/main/example/tensor_formats/README.md#parameterized-packed-wsld).
+scales. See [the packed layout tutorial](https://github.com/exeex/edge-cores/blob/main/docs/tensor-packed-wsld.md).
 
 ### Job descriptor and launch
 
