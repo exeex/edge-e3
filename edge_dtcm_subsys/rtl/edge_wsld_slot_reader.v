@@ -32,9 +32,9 @@ module edge_wsld_slot_reader #(
       {1'b0,config_i[7:0],7'b0} : config_i[19:16] == 4 ?
       {3'b0,config_i[7:0],5'b0} : {2'b0,config_i[7:0],6'b0};
   wire [15:0] group_payload_bytes = weight_bytes +
-      (config_i[15:12] == 0 ? {11'd0,config_i[11:8],1'b0} : {12'd0,config_i[11:8]});
+      ((config_i[15:12] == 0 || config_i[15:12] == 3) ? {11'd0,config_i[11:8],1'b0} : {12'd0,config_i[11:8]});
   wire [15:0] payload_bytes = config_i[20] ? group_payload_bytes << 1 : group_payload_bytes;
-  wire [5:0] take_bytes = !scale_q ? 6'd16 : stype_q == 0 ?
+  wire [5:0] take_bytes = !scale_q ? 6'd16 : (stype_q == 0 || stype_q == 3) ?
       (scalar_q ? 6'd2 : 6'd16) : (scalar_q ? 6'd1 : 6'd8);
   function [15:0] decode_scale8;
     input [7:0] code;
@@ -58,6 +58,30 @@ module edge_wsld_slot_reader #(
         exponent = 8'(118 + leading);
         fraction = 7'({4'b0,code[2:0]} << (7-leading));
         decode_scale8 = {code[7],exponent,fraction};
+      end
+    end
+  endfunction
+  // Every finite half value is a normal BF20 value except signed zero.
+  // Ten FP16 fraction bits occupy the high ten BF20 fraction bits exactly.
+  function [19:0] decode_scale16;
+    input [15:0] code;
+    reg [7:0] exponent;
+    reg [10:0] fraction;
+    integer leading,j;
+    begin
+      exponent=0;fraction=0;leading=0;
+      if(code[14:10]==31)
+        decode_scale16=code[9:0]!=0 ? 20'h7fc00 : {code[15],8'hff,11'b0};
+      else if(code[14:10]!=0) begin
+        exponent={3'b0,code[14:10]}+8'd112;
+        decode_scale16={code[15],exponent,code[9:0],1'b0};
+      end else if(code[9:0]==0)
+        decode_scale16={code[15],19'b0};
+      else begin
+        for(j=0;j<10;j=j+1)if(code[j])leading=j;
+        exponent=8'(103+leading);
+        fraction=11'({1'b0,code[9:0]} << (11-leading));
+        decode_scale16={code[15],exponent,fraction};
       end
     end
   endfunction
@@ -91,7 +115,8 @@ module edge_wsld_slot_reader #(
     scale_data = scalar_q ? {8{bytes_q[15:0]}} : bytes_q[127:0];
     if (stype_q != 0)
       for (lane=0;lane<8;lane=lane+1)begin
-        combined={decode_scale8(bytes_q[(scalar_q ? 0 : lane*8)+:8],stype_q),4'b0};
+        if(stype_q==3)combined=decode_scale16(bytes_q[(scalar_q ? 0 : lane*16)+:16]);
+        else combined={decode_scale8(bytes_q[(scalar_q ? 0 : lane*8)+:8],stype_q),4'b0};
         if(stype_q==2)combined=combine_nv_scale(global_q,combined[19:4]);
         scale_data[lane*16+:16]=combined[19:4];
         scale_extra[lane*4+:4]=combined[3:0];

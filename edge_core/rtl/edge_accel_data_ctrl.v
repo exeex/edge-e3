@@ -124,7 +124,7 @@ module edge_accel_data_ctrl #(
   wire [15:0] wsld_tile_offset = wsld_config_q[19:16] == 1 ?
       {wsld_wld_issued_q,7'b0} : wsld_config_q[19:16] == 4 ?
       {2'b0,wsld_wld_issued_q,5'b0} : {1'b0,wsld_wld_issued_q,6'b0};
-  wire [15:0] wsld_prefix_bytes = wsld_config_q[15:12]==0 ?
+  wire [15:0] wsld_prefix_bytes = (wsld_config_q[15:12] == 0 || wsld_config_q[15:12] == 3) ?
       {11'd0,wsld_config_q[11:8],1'b0} : {12'd0,wsld_config_q[11:8]};
   wire [15:0] wsld_weight_byte_offset =
       (wsld_config_q[20] && wsld_wld_issued_q >= {1'b0,wsld_config_q[7:0]} ?
@@ -138,14 +138,14 @@ module edge_accel_data_ctrl #(
       {1'b0,wsld_config_in[7:0],7'b0} : wsld_config_in[19:16] == 4 ?
       {3'b0,wsld_config_in[7:0],5'b0} : {2'b0,wsld_config_in[7:0],6'b0};
   wire [15:0] wsld_group_payload_bytes_in = wsld_weight_bytes_in +
-      (wsld_config_in[15:12]==0 ? {11'd0,wsld_config_in[11:8],1'b0} : {12'd0,wsld_config_in[11:8]});
+      ((wsld_config_in[15:12] == 0 || wsld_config_in[15:12] == 3) ? {11'd0,wsld_config_in[11:8],1'b0} : {12'd0,wsld_config_in[11:8]});
   wire [15:0] wsld_payload_bytes_in = wsld_config_in[20] ?
       wsld_group_payload_bytes_in << 1 : wsld_group_payload_bytes_in;
   wire [15:0] wsld_slot_words_in = ((wsld_payload_bytes_in + 16'd15) >> 4) << 1;
   wire wsld_config_valid = wsld_config_in[7:0] != 0 &&
       (wsld_config_in[11:8] == 1 || wsld_config_in[11:8] == 8) &&
-      wsld_config_in[15:12] <= 2 && wsld_config_in[31:21] == 0 &&
-      (!wsld_config_in[20] || (wsld_config_in[11:8]==8 && wsld_config_in[15:12]!=0)) &&
+      wsld_config_in[15:12] <= 3 && wsld_config_in[31:21] == 0 &&
+      (!wsld_config_in[20] || (wsld_config_in[11:8]==8 && (wsld_config_in[15:12]==1 || wsld_config_in[15:12]==2))) &&
       wsld_config_in[19:16] >= 1 && wsld_config_in[19:16] <= 5;
   assign tensor_wsld_slot_active = wsld_group_active_q;
   assign tensor_wsld_slot_start = wsld_group_claim;

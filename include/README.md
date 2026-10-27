@@ -380,7 +380,10 @@ edge_tensor_wsld_circular<transpose, tiles, wtype, scales, stype, groups>();
 `tiles` is 1–255, `wtype` selects one of the five E3 weight formats, `scales`
 is 1 (broadcast) or 8 (per output lane). `EdgeTensorScaleType` defines
 `EDGE_TENSOR_STYPE_BF16=0` (16-bit), `EDGE_TENSOR_STYPE_MXFP4=1` (8-bit E8M0),
-and `EDGE_TENSOR_STYPE_NVFP4=2` (8-bit E4M3FN). WSLD expands byte scales to
+`EDGE_TENSOR_STYPE_NVFP4=2` (8-bit E4M3FN), and `EDGE_TENSOR_STYPE_FP16=3`
+(16-bit IEEE half). WSLD expands FP16 exactly into BF20, including subnormals;
+its scale prefix consumes 2/16 bytes for scalar/vector scales, like BF16.
+WSLD expands byte scales to
 BF16 lane scales plus low4 fraction bits for BF20. Before an NVFP4 stream,
 call `edge_tensor_wsld_global(bf16_in_fp32_bits)`. Software RNE-rounds the
 global to BF16; hardware captures the high16 bits and ignores low16. WSLD
