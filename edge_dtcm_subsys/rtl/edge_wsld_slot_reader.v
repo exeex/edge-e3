@@ -21,13 +21,16 @@ module edge_wsld_slot_reader #(
   reg [5:0] count_q, count_next;
   reg scale_q, scalar_q;
   reg [3:0] stype_q;
+  reg second_group_q;
+  reg [11:0] group_weights_left_q;
   reg [15:0] beats_left_q;
   reg [ADDR_WIDTH-1:0] addr_q;
   wire [15:0] weight_bytes = config_i[19:16] == 1 ?
       {1'b0,config_i[7:0],7'b0} : config_i[19:16] == 4 ?
       {3'b0,config_i[7:0],5'b0} : {2'b0,config_i[7:0],6'b0};
-  wire [15:0] payload_bytes = weight_bytes +
+  wire [15:0] group_payload_bytes = weight_bytes +
       (config_i[15:12] == 0 ? {11'd0,config_i[11:8],1'b0} : {12'd0,config_i[11:8]});
+  wire [15:0] payload_bytes = config_i[20] ? group_payload_bytes << 1 : group_payload_bytes;
   wire [5:0] take_bytes = !scale_q ? 6'd16 : stype_q == 0 ?
       (scalar_q ? 6'd2 : 6'd16) : (scalar_q ? 6'd1 : 6'd8);
   function [15:0] decode_scale8;
@@ -79,7 +82,7 @@ module edge_wsld_slot_reader #(
       (reserved_q < PREFETCH_BEATS || pop);
   assign rd_addr = addr_q;
   assign sld_ready = active && !start && scale_q && count_q >= take_bytes;
-  assign wld_ready = active && !start && !scale_q && count_q >= 16;
+  assign wld_ready = active && !start && !scale_q && group_weights_left_q != 0 && count_q >= 16;
   reg [READ_LATENCY-1:0] scale_valid_q, weight_valid_q;
   reg [127:0] data_q [0:READ_LATENCY-1];
   integer i;
@@ -104,6 +107,7 @@ module edge_wsld_slot_reader #(
       bytes_q <= 0; count_q <= 0;
       head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
       scale_q <= 1; scalar_q <= 0; stype_q <= 0; beats_left_q <= 0; addr_q <= 0;
+      second_group_q <= 0; group_weights_left_q <= 0;
       scale_valid_q <= 0; weight_valid_q <= 0;
       for (i=0;i<READ_LATENCY;i=i+1) data_q[i] <= 0;
     end else begin
@@ -120,11 +124,23 @@ module edge_wsld_slot_reader #(
         head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
         scale_q <= 1; scalar_q <= config_i[11:8] == 1;
         stype_q <= config_i[15:12];
+        second_group_q <= config_i[20];
+        group_weights_left_q <= weight_bytes[15:4];
         beats_left_q <= (payload_bytes + 16'd15) >> 4;
         addr_q <= base_addr;
       end else begin
         bytes_q <= bytes_next; count_q <= count_next;
         if (take_scale) scale_q <= 0;
+        if (take_weight) begin
+          group_weights_left_q <= group_weights_left_q - 1'b1;
+          if (group_weights_left_q == 1 && second_group_q) begin
+            // Keep reservoir/FIFO credits and residual bytes across the
+            // unaligned quant-group boundary inside this physical DMA slot.
+            second_group_q <= 0;
+            group_weights_left_q <= weight_bytes[15:4];
+            scale_q <= 1;
+          end
+        end
         if (read_fire) begin
           addr_q <= addr_q + 2;
           beats_left_q <= beats_left_q - 1'b1;

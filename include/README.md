@@ -374,7 +374,7 @@ E3 uses the combined WSLD loader implementation; WLD and SLD remain
 software-facing operations. The circular packed API is:
 
 ```cpp
-edge_tensor_wsld_circular<transpose, tiles, wtype, scales, stype>();
+edge_tensor_wsld_circular<transpose, tiles, wtype, scales, stype, groups>();
 ```
 
 `tiles` is 1–255, `wtype` selects one of the five E3 weight formats, `scales`
@@ -382,6 +382,11 @@ is 1 (broadcast) or 8 (per output lane). `EdgeTensorScaleType` defines
 `EDGE_TENSOR_STYPE_BF16=0` (16-bit), `EDGE_TENSOR_STYPE_MXFP4=1` (8-bit E8M0),
 and `EDGE_TENSOR_STYPE_NVFP4=2` (8-bit E4M3FN). WSLD expands byte scales to
 the tensor's BF16 lane-scale interface; the NVFP4 FP32 global scale is separate.
+`groups` defaults to one; two requires eight byte scales and packs two quant
+groups without interior padding into one physical slot. Tiles are per group.
+`EdgeCircularDmaLayout<slot_bytes, slot_count>` checks that each slot and the
+whole ring wrap align to 128 bits (16 bytes) at compile time. DMA remains
+format-independent; WSLD reconstructs the unaligned middle boundary.
 A slot contains the scale bytes immediately
 followed by `tiles` weight tiles, with 16-byte padding only at the slot end.
 Set circular DMA `entry_bytes` to that complete padded slot size. For

@@ -28,10 +28,12 @@ module edge_wsld_h4 #(
   wire [15:0] weight_bytes = config_i[19:16]==1 ? {1'b0,config_i[7:0],7'b0}
       : config_i[19:16]==4 ? {3'b0,config_i[7:0],5'b0}
       : {2'b0,config_i[7:0],6'b0};
-  wire [15:0] payload_bytes = weight_bytes + (config_i[15:12]==0 ?
+  wire [15:0] group_payload_bytes = weight_bytes + (config_i[15:12]==0 ?
       {11'b0,config_i[11:8],1'b0} : {12'b0,config_i[11:8]});
+  wire [15:0] payload_bytes = config_i[20] ? group_payload_bytes << 1 : group_payload_bytes;
   wire [13:0] beats = 14'((payload_bytes+16'd15)>>4);
-  wire descriptor_valid = config_i[7:0]!=0 && config_i[15:12]<=2 && config_i[31:20]==0
+  wire descriptor_valid = config_i[7:0]!=0 && config_i[15:12]<=2 && config_i[31:21]==0
+      && (!config_i[20] || (config_i[11:8]==8 && config_i[15:12]!=0))
       && (config_i[11:8]==1 || config_i[11:8]==8)
       && config_i[19:16]>=1 && config_i[19:16]<=5
       && base_i[0]==0 && base_i[15:14]==0
@@ -60,7 +62,7 @@ module edge_wsld_h4 #(
       for(integer k=1;k<READ_LATENCY;k=k+1) last_q[k]<=last_q[k-1];
       if(fire) begin
         config_q<=config_i; busy_o<=1;
-        weights_left_q<=weight_bytes[15:4];
+        weights_left_q<=config_i[20] ? weight_bytes[15:4] << 1 : weight_bytes[15:4];
       end else if(wld_req && wld_ready) weights_left_q<=weights_left_q-1'b1;
       if(last_q[READ_LATENCY-1]) begin busy_o<=0; done_o<=1; end
     end
