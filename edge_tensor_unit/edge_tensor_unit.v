@@ -9,6 +9,7 @@ module edge_tensor_unit #(
   parameter EPOCH_WIDTH = 4,
   parameter READ_LATENCY = 4,
   parameter LOWER_SIX = 1,
+  parameter SCALE_BF20 = 0,
   parameter WIDE_H4 = 1
 ) (
   input  wire                         clk,
@@ -53,6 +54,7 @@ module edge_tensor_unit #(
   output wire                         tensor_sld_req,
   input  wire                         tensor_sld_ready,
   input  wire [127:0]                 tensor_sld_rdata,
+  input wire [31:0] tensor_sld_extra,
   input  wire                         tensor_sld_rvalid,
   output wire [ADDR_WIDTH-1:0]        tensor_wld_addr,
   output wire                         tensor_wld_req,
@@ -149,6 +151,7 @@ reg [2:0] wld_tag_pipe [0:READ_LATENCY-1];
 integer wld_stage;
 wire [BANK_INDEX_WIDTH-1:0] engine_host_rsp_bank;
 reg  [127:0]                  scale_buf_q [0:1];
+reg [31:0] scale_extra_buf_q[0:1];
 reg                           scale_active_sel_q;
 reg                           scale_active_valid_q;
 reg                           scale_pending_sel_q;
@@ -159,6 +162,7 @@ reg  [ADDR_WIDTH-1:0]         sld_ptr_q;
 reg                           sld_load_sel_q;
 reg                           sld_stream_q;
 reg  [127:0]                 scale_stream_fifo_q [0:7];
+reg [31:0] scale_stream_extra_q[0:7];
 reg  [2:0]                   scale_stream_head_q;
 reg  [2:0]                   scale_stream_tail_q;
 reg  [3:0]                   scale_stream_count_q;
@@ -632,6 +636,7 @@ assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
                       || engine_done;
 
 edge_tensor_engine #(
+  .SCALE_BF20(1),
   .LOWER_SIX(LOWER_SIX),
   .WIDE_H4(WIDE_H4),
   .READ_LATENCY(READ_LATENCY),
@@ -652,6 +657,8 @@ edge_tensor_engine #(
   .start_mode(engine_start_mode[7:0]),
   .start_dtype(engine_start_dtype),
   .scale_bf16(engine_start_scale[127:0]),
+  .scale_extra(scale_extra_buf_q[engine_start_scale_sel]),
+  .scale_stream_extra(scale_stream_extra_q[scale_stream_head_q]),
   .scale_stream_valid(scale_stream_count_q != 0),
   .scale_stream_data(scale_stream_fifo_q[scale_stream_head_q]),
   .scale_stream_ready(engine_scale_stream_ready),
@@ -872,8 +879,8 @@ always @(posedge clk or negedge cpurst_b) begin
     wld_base_q <= {ADDR_WIDTH{1'b0}};
     wld_issue_idx_q <= 3'b0;
     wld_read_count_q <= 4'b0;
-    scale_buf_q[0] <= 128'b0;
-    scale_buf_q[1] <= 128'b0;
+    scale_buf_q[0] <= 128'b0;scale_extra_buf_q[0]<=0;
+    scale_buf_q[1] <= 128'b0;scale_extra_buf_q[1]<=0;
     scale_active_sel_q <= 1'b0;
     scale_active_valid_q <= 1'b0;
     scale_pending_sel_q <= 1'b0;
@@ -950,6 +957,7 @@ always @(posedge clk or negedge cpurst_b) begin
     if (tensor_sld_rvalid && sld_wait_q) begin
       if (sld_stream_q) begin
         scale_stream_fifo_q[scale_stream_tail_q] <= tensor_sld_rdata[127:0];
+        scale_stream_extra_q[scale_stream_tail_q]<=SCALE_BF20?tensor_sld_extra:32'b0;
         scale_stream_tail_q <= scale_stream_tail_q + 1'b1;
         if (direct_sld_active_q) begin
           direct_sld_received_q <= direct_sld_received_q + 1'b1;
@@ -960,6 +968,7 @@ always @(posedge clk or negedge cpurst_b) begin
         end
       end else begin
         scale_buf_q[sld_load_sel_q] <= tensor_sld_rdata[127:0];
+        scale_extra_buf_q[sld_load_sel_q]<=SCALE_BF20?tensor_sld_extra:32'b0;
         scale_pending_sel_q <= sld_load_sel_q;
         scale_pending_valid_q <= 1'b1;
       end

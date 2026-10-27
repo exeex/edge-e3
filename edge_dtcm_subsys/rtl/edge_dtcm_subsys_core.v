@@ -79,6 +79,7 @@ module edge_dtcm_subsys_core #(
   tensor_wsld_slot_start,
   tensor_wsld_slot_addr,
   tensor_wsld_slot_config,
+  tensor_wsld_global_bf16,
   tensor_cmd_sld_stream,
   tensor_cmd_sld_stream_setup_ptr,
   tensor_cmd_sld_stream_setup_req,
@@ -208,6 +209,7 @@ input  tensor_wsld_slot_active;
 input  tensor_wsld_slot_start;
 input [15:0] tensor_wsld_slot_addr;
 input [31:0] tensor_wsld_slot_config;
+input [15:0] tensor_wsld_global_bf16;
 input                         tensor_cmd_sld_stream;
 input  [15:0]                 tensor_cmd_sld_stream_setup_ptr;
 input                         tensor_cmd_sld_stream_setup_req;
@@ -414,6 +416,7 @@ wire [15:0] slot_rd_addr;
 wire [127:0] slot_rd_rdata;
 wire slot_sld_ready, slot_wld_ready, slot_sld_rvalid, slot_wld_rvalid;
 wire [127:0] slot_sld_rdata, slot_wld_rdata;
+wire [31:0] slot_sld_extra;
 wire [12:0] wide_slot_addr;
 wire wide_slot_req;
 assign physical_wld_req = tensor_wsld_slot_active ? (WIDE_H4 ? wide_slot_req : slot_rd_req) : tensor_wld_req;
@@ -433,7 +436,8 @@ generate if(WIDE_H4) begin: WIDE_SLOT
   edge_wsld_h4 x_slot (
     .clk(clk),.rst_b(cpurst_b),.fabric_ready_i(memory_ready),.phase_i(tensor_native_phase[3:1]),
     .start_i(tensor_wsld_slot_start),.start_ready_o(),.base_i(tensor_wsld_slot_addr),
-    .config_i(tensor_wsld_slot_config),.busy_o(),.done_o(),
+    .config_i(tensor_wsld_slot_config),
+ .global_bf16_i(tensor_wsld_global_bf16),.sld_extra(slot_sld_extra),.busy_o(),.done_o(),
     .req_o(wide_slot_req),.addr_o(wide_slot_addr),.grant_i(physical_wld_ready),
     .rsp_valid_i(slot_rd_rvalid),.rsp_data_i(physical_wld_rdata),
     .sld_req(tensor_sld_req),.wld_req(tensor_wld_req),
@@ -448,7 +452,8 @@ end else begin: LEGACY_SLOT
 edge_wsld_slot_reader #(.ADDR_WIDTH(16),.READ_LATENCY(DTCM_READ_LATENCY)) x_wsld_slot_reader (
  .clk(clk),.cpurst_b(cpurst_b),.start(tensor_wsld_slot_start),
  .active(tensor_wsld_slot_active),.base_addr(tensor_wsld_slot_addr),
- .config_i(tensor_wsld_slot_config),.rd_req(slot_rd_req),.rd_addr(slot_rd_addr),
+ .config_i(tensor_wsld_slot_config),
+ .global_bf16_i(tensor_wsld_global_bf16),.sld_extra(slot_sld_extra),.rd_req(slot_rd_req),.rd_addr(slot_rd_addr),
  .rd_ready(slot_rd_ready),.rd_rvalid(slot_rd_rvalid),.rd_rdata(slot_rd_rdata),
  .sld_req(tensor_sld_req),.wld_req(tensor_wld_req),
  .sld_ready(slot_sld_ready),.wld_ready(slot_wld_ready),
@@ -557,6 +562,7 @@ assign cmpu_start_ready = cmpu_start_ready_raw && memory_ready && !accel_write_p
 assign dma_stream_busy = dma_stream_busy_raw || stream_queue_busy || (SRAM_H4 && (|stream_write_pipe));
 
 edge_tensor_unit #(
+  .SCALE_BF20(1),
   .LOWER_SIX(SRAM_H4),
   .WIDE_H4(WIDE_H4),
   .READ_LATENCY(DTCM_READ_LATENCY),
@@ -607,6 +613,7 @@ edge_tensor_unit #(
   .tensor_sld_req(tensor_sld_req),
   .tensor_sld_ready(tensor_sld_ready),
   .tensor_sld_rdata(tensor_sld_rdata[127:0]),
+  .tensor_sld_extra(tensor_wsld_slot_active?slot_sld_extra:32'b0),
   .tensor_sld_rvalid(tensor_sld_rvalid),
   .tensor_wld_addr(tensor_wld_addr[15:0]),
   .tensor_wld_req(tensor_wld_req),

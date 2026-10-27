@@ -8,6 +8,8 @@ module edge_wsld_slot_reader #(
   input wire start, active,
   input wire [ADDR_WIDTH-1:0] base_addr,
   input wire [31:0] config_i,
+  input wire [15:0] global_bf16_i,
+  output wire [31:0] sld_extra,
   output wire rd_req,
   output wire [ADDR_WIDTH-1:0] rd_addr,
   input wire rd_ready, rd_rvalid,
@@ -21,6 +23,7 @@ module edge_wsld_slot_reader #(
   reg [5:0] count_q, count_next;
   reg scale_q, scalar_q;
   reg [3:0] stype_q;
+  reg [15:0] global_q;
   reg second_group_q;
   reg [11:0] group_weights_left_q;
   reg [15:0] beats_left_q;
@@ -58,13 +61,41 @@ module edge_wsld_slot_reader #(
       end
     end
   endfunction
+  function [19:0] combine_nv_scale;
+    input [15:0] g,local_scale;
+    reg [11:0] product,normalized;
+    reg signed [12:0] exponent;
+    integer msb,j;
+    begin
+      product={g[14:7]!=0,g[6:0]} * {local_scale[14:7]!=0,local_scale[6:4]};
+      msb=0;
+      for(j=0;j<12;j=j+1)if(product[j])msb=j;
+      normalized=product << (11-msb);
+      exponent=(g[14:7]==0?-13'sd126:$signed({5'b0,g[14:7]})-13'sd127)
+              +(local_scale[14:7]==0?-13'sd126:$signed({5'b0,local_scale[14:7]})-13'sd127)
+              +13'(msb)-13'sd10+13'sd127;
+      combine_nv_scale={g[15]^local_scale[15],19'b0};
+      if(g[14:7]==255 || local_scale[14:7]==255)combine_nv_scale=20'h7fc00;
+      else if(product!=0 && exponent>0)begin
+        if(exponent>=255)combine_nv_scale={g[15]^local_scale[15],8'hff,11'b0};
+        else combine_nv_scale={g[15]^local_scale[15],exponent[7:0],normalized[10:0]};
+      end
+    end
+  endfunction
   reg [127:0] scale_data;
+  reg [31:0] scale_extra;
+  reg [19:0] combined;
   integer lane;
   always @* begin
+    scale_extra=0;combined=0;
     scale_data = scalar_q ? {8{bytes_q[15:0]}} : bytes_q[127:0];
     if (stype_q != 0)
-      for (lane=0;lane<8;lane=lane+1)
-        scale_data[lane*16+:16] = decode_scale8(bytes_q[(scalar_q ? 0 : lane*8)+:8],stype_q);
+      for (lane=0;lane<8;lane=lane+1)begin
+        combined={decode_scale8(bytes_q[(scalar_q ? 0 : lane*8)+:8],stype_q),4'b0};
+        if(stype_q==2)combined=combine_nv_scale(global_q,combined[19:4]);
+        scale_data[lane*16+:16]=combined[19:4];
+        scale_extra[lane*4+:4]=combined[3:0];
+      end
   end
   wire take_scale = sld_req && sld_ready;
   wire take_weight = wld_req && wld_ready;
@@ -85,6 +116,8 @@ module edge_wsld_slot_reader #(
   assign wld_ready = active && !start && !scale_q && group_weights_left_q != 0 && count_q >= 16;
   reg [READ_LATENCY-1:0] scale_valid_q, weight_valid_q;
   reg [127:0] data_q [0:READ_LATENCY-1];
+  reg [31:0] extra_q[0:READ_LATENCY-1];
+  assign sld_extra=extra_q[READ_LATENCY-1];
   integer i;
   assign sld_rvalid = scale_valid_q[READ_LATENCY-1];
   assign wld_rvalid = weight_valid_q[READ_LATENCY-1];
@@ -106,24 +139,25 @@ module edge_wsld_slot_reader #(
     if (!cpurst_b) begin
       bytes_q <= 0; count_q <= 0;
       head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
-      scale_q <= 1; scalar_q <= 0; stype_q <= 0; beats_left_q <= 0; addr_q <= 0;
+      scale_q <= 1; scalar_q <= 0; stype_q <= 0;global_q<=16'h3f80; beats_left_q <= 0; addr_q <= 0;
       second_group_q <= 0; group_weights_left_q <= 0;
       scale_valid_q <= 0; weight_valid_q <= 0;
-      for (i=0;i<READ_LATENCY;i=i+1) data_q[i] <= 0;
+      for (i=0;i<READ_LATENCY;i=i+1)begin data_q[i] <= 0;extra_q[i]<=0;end
     end else begin
       scale_valid_q[0] <= take_scale;
       weight_valid_q[0] <= take_weight;
       data_q[0] <= scale_q ? scale_data : bytes_q[127:0];
+      extra_q[0]<=scale_extra;
       for (i=1;i<READ_LATENCY;i=i+1) begin
         scale_valid_q[i] <= scale_valid_q[i-1];
         weight_valid_q[i] <= weight_valid_q[i-1];
-        data_q[i] <= data_q[i-1];
+        data_q[i] <= data_q[i-1];extra_q[i]<=extra_q[i-1];
       end
       if (start) begin
         bytes_q <= 0; count_q <= 0;
         head_q <= 0; tail_q <= 0; reserved_q <= 0; available_q <= 0; outstanding_q <= 0;
         scale_q <= 1; scalar_q <= config_i[11:8] == 1;
-        stype_q <= config_i[15:12];
+        stype_q <= config_i[15:12];global_q<=global_bf16_i;
         second_group_q <= config_i[20];
         group_weights_left_q <= weight_bytes[15:4];
         beats_left_q <= (payload_bytes + 16'd15) >> 4;

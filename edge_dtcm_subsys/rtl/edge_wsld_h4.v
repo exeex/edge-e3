@@ -13,6 +13,8 @@ module edge_wsld_h4 #(
   output wire start_ready_o,
   input wire [15:0] base_i,
   input wire [31:0] config_i,
+  input wire [15:0] global_bf16_i,
+  output wire [31:0] sld_extra,
   output reg busy_o,
   output reg done_o,
   output wire req_o,
@@ -48,12 +50,13 @@ module edge_wsld_h4 #(
   reg response_q;
   reg [127:0] response_data_q;
   reg [31:0] config_q;
+  reg [15:0] global_q;
   reg [11:0] weights_left_q;
   reg [READ_LATENCY-1:0] last_q;
   assign start_ready_o = !busy_o && transport_start_ready && !response_q && descriptor_valid;
   always @(posedge clk or negedge rst_b)
     if(!rst_b) begin
-      response_q<=0; busy_o<=0; done_o<=0; config_q<=0;
+      response_q<=0; busy_o<=0; done_o<=0; config_q<=0;global_q<=16'h3f80;
       weights_left_q<=0; last_q<=0;
     end else begin
       response_q<=transfer;
@@ -61,7 +64,7 @@ module edge_wsld_h4 #(
       last_q[0]<=wld_req && wld_ready && weights_left_q==1;
       for(integer k=1;k<READ_LATENCY;k=k+1) last_q[k]<=last_q[k-1];
       if(fire) begin
-        config_q<=config_i; busy_o<=1;
+        config_q<=config_i;global_q<=global_bf16_i; busy_o<=1;
         weights_left_q<=config_i[20] ? weight_bytes[15:4] << 1 : weight_bytes[15:4];
       end else if(wld_req && wld_ready) weights_left_q<=weights_left_q-1'b1;
       if(last_q[READ_LATENCY-1]) begin busy_o<=0; done_o<=1; end
@@ -77,6 +80,7 @@ module edge_wsld_h4 #(
   edge_wsld_slot_reader #(.READ_LATENCY(READ_LATENCY)) x_slot (
     .clk(clk),.cpurst_b(rst_b),.start(fire),.active(busy_o),
     .base_addr(base_i),.config_i(fire ? config_i : config_q),
+    .global_bf16_i(fire?global_bf16_i:global_q),.sld_extra(sld_extra),
     .rd_req(slot_req),.rd_addr(slot_addr),.rd_ready(slot_ready),
     .rd_rvalid(response_q),.rd_rdata(response_data_q),
     .sld_req(sld_req),.wld_req(wld_req),.sld_ready(sld_ready),.wld_ready(wld_ready),

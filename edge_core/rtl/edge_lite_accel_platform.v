@@ -62,6 +62,7 @@ module edge_lite_accel_platform #(
   wire  tensor_wsld_slot_start;
   wire [15:0] tensor_wsld_slot_addr;
   wire [31:0] tensor_wsld_slot_config;
+  wire [15:0] tensor_wsld_global_bf16;
   wire tensor_cmd_start_tile_req,tensor_cmd_sync_req,tensor_cmd_wld_req;
   wire tensor_cmd_wld_trans_req,tensor_cmd_wld_reuse,tensor_cmd_sld_req;
   wire tensor_cmd_sld_reuse,tensor_cmd_sld_stream_setup_req;
@@ -225,6 +226,7 @@ module edge_lite_accel_platform #(
     .tensor_wsld_slot_start(tensor_wsld_slot_start),
     .tensor_wsld_slot_addr(tensor_wsld_slot_addr),
     .tensor_wsld_slot_config(tensor_wsld_slot_config),
+    .tensor_wsld_global_bf16(tensor_wsld_global_bf16),
 
     .tensor_cmd_sld_circular_req(tensor_cmd_sld_circular_req),
     .tensor_cmd_sld_reuse(tensor_cmd_sld_reuse),.tensor_cmd_sld_ptr(tensor_cmd_sld_ptr),
@@ -276,6 +278,7 @@ module edge_lite_accel_platform #(
     .tensor_wsld_slot_start(tensor_wsld_slot_start),
     .tensor_wsld_slot_addr(tensor_wsld_slot_addr),
     .tensor_wsld_slot_config(tensor_wsld_slot_config),
+    .tensor_wsld_global_bf16(tensor_wsld_global_bf16),
 
     .tensor_cmd_sld_reuse(tensor_unit_cmd_sld_reuse),
     .tensor_cmd_sld_stream(tensor_unit_cmd_sld_stream),

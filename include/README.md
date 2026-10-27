@@ -381,7 +381,12 @@ edge_tensor_wsld_circular<transpose, tiles, wtype, scales, stype, groups>();
 is 1 (broadcast) or 8 (per output lane). `EdgeTensorScaleType` defines
 `EDGE_TENSOR_STYPE_BF16=0` (16-bit), `EDGE_TENSOR_STYPE_MXFP4=1` (8-bit E8M0),
 and `EDGE_TENSOR_STYPE_NVFP4=2` (8-bit E4M3FN). WSLD expands byte scales to
-the tensor's BF16 lane-scale interface; the NVFP4 FP32 global scale is separate.
+BF16 lane scales plus low4 fraction bits for BF20. Before an NVFP4 stream,
+call `edge_tensor_wsld_global(bf16_in_fp32_bits)`. Software RNE-rounds the
+global to BF16; hardware captures the high16 bits and ignores low16. WSLD
+combines that global with each E4M3 local scale into BF20, with no scale RNE.
+The operand resets to one, persists across slots and is ignored by other
+stypes. Post-scale uses BF22 x BF20; `linear_fp4` keeps BF16 block scales.
 `groups` defaults to one; two requires eight byte scales and packs two quant
 groups without interior padding into one physical slot. Tiles are per group.
 `EdgeCircularDmaLayout<slot_bytes, slot_count>` checks that each slot and the

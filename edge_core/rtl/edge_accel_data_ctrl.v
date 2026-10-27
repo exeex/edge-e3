@@ -76,6 +76,7 @@ module edge_accel_data_ctrl #(
   output wire  tensor_wsld_slot_start,
   output wire [15:0] tensor_wsld_slot_addr,
   output wire [31:0] tensor_wsld_slot_config,
+  output wire [15:0] tensor_wsld_global_bf16,
   output wire                   tensor_wld_cmd_ready,
   output wire                   tensor_sld_cmd_ready,
   output wire                   tensor_wld_circular_ready,
@@ -115,6 +116,9 @@ module edge_accel_data_ctrl #(
   reg [8:0] wsld_wld_done_q, wsld_start_done_q;
   reg [15:0] wsld_group_addr_q;
   reg [31:0] wsld_config_q;
+  reg [15:0] wsld_global_q;
+  wire wsld_global_write = WSLD_SLOT_CONFIG && tensor_cmd_wsld_circular_config[31];
+  assign tensor_wsld_global_bf16=wsld_global_q;
   wire wsld_second_scale = wsld_config_q[20] &&
       wsld_sld_issued_q == {1'b0,wsld_config_q[7:0]};
   wire [15:0] wsld_tile_offset = wsld_config_q[19:16] == 1 ?
@@ -257,10 +261,12 @@ module edge_accel_data_ctrl #(
   assign tensor_wld_circular_ready = tensor_wld_cmd_ready &&
     circular_config_valid && !circular_ring_empty &&
     (circular_entry_words_q == {9'b0, tensor_wld_tile_words});
-  assign tensor_wsld_circular_ready = circular_config_valid &&
+  assign tensor_wsld_circular_ready =
+    (wsld_global_write || circular_config_valid) &&
     !wsld_active_q && !sld_circular_active_q && !circular_wld_active_q && !tensor_unit_sync_stall &&
     tensor_wld_unit_cmd_ready && tensor_sld_unit_cmd_ready &&
-    wsld_config_valid && (circular_entry_words_q == wsld_slot_words_in) && !circular_base_q[0];
+    (wsld_global_write || (wsld_config_valid &&
+     (circular_entry_words_q == wsld_slot_words_in) && !circular_base_q[0]));
   assign tensor_sld_circular_ready = circular_config_valid &&
     !sld_circular_active_q && !wsld_active_q && !circular_wld_active_q &&
     (circular_entry_words_q == 16'd2);
@@ -352,6 +358,7 @@ module edge_accel_data_ctrl #(
       wsld_group_active_q <= 1'b0;
       wsld_transpose_q <= 1'b0;
       wsld_config_q <= 32'h00020804;
+      wsld_global_q<=16'h3f80;
       wsld_sld_issued_q <= 9'd0;
       wsld_sld_done_q <= 1'b0;
       wsld_wld_issued_q <= 9'd0;
@@ -477,9 +484,14 @@ module edge_accel_data_ctrl #(
         end
       end
       if (tensor_cmd_wsld_circular_req && tensor_wsld_circular_ready) begin
+        if(wsld_global_write)begin
+          // Positive FP32-container operand. Low16 are intentionally ignored.
+          wsld_global_q<={1'b0,tensor_cmd_wsld_circular_config[30:16]};
+        end else begin
         wsld_active_q <= 1'b1;
         wsld_transpose_q <= tensor_cmd_wsld_circular_transpose;
         wsld_config_q <= wsld_config_in;
+        end
       end
       if (tensor_cmd_sld_circular_req && tensor_sld_circular_ready)
         sld_circular_active_q <= 1'b1;

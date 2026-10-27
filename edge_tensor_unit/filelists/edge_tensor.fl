@@ -8,6 +8,7 @@
 ../../../edge-asic/rtl/tensor/edge_psum.v
 ../../../edge-asic/rtl/tensor/edge_wld_fixed_group_buffer.v
 ../rtl/compute/edge_bf16_mul8_pipe.v
+../rtl/compute/edge_tensor_scale_mul.v
 ../rtl/compute/edge_tensor_scale_psum8.v
 ../rtl/weight/edge_tensor_weights.v
 ../rtl/compute/edge_dot8_weight_bank.v

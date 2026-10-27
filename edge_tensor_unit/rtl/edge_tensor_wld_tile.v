@@ -1,5 +1,5 @@
 // Formal-WLD-compatible boundary with selectable local relay / circular weight routing.
-module edge_tensor_wld_tile(
+module edge_tensor_wld_tile #(parameter SCALE_BF20=0)(
   clk, rst_b,
   start, start_ready, start_wtype, start_transpose,
   busy, done,
@@ -8,7 +8,7 @@ module edge_tensor_wld_tile(
   weight_active_valid, weight_pending_valid,
   compute_valid, late_psum_mode_i, late_psum_valid_i,
   input_bf16_i, psum_bf16_i,
-  scale_enable_i, scale_bf16_i, rsum_enable_i, rsum_first_i, rsum_last_i,
+  scale_enable_i, scale_bf16_i, scale_extra_i, rsum_enable_i, rsum_first_i, rsum_last_i,
   dot_ready_o, output_valid, output_bf16_o,
   wide_enable_i, psum_fp32_i, output_fp32_o
 );
@@ -32,6 +32,7 @@ input late_psum_mode_i, late_psum_valid_i;
 input [127:0] input_bf16_i, psum_bf16_i;
 input scale_enable_i;
 input [127:0] scale_bf16_i;
+input [31:0] scale_extra_i;
 input rsum_enable_i, rsum_first_i, rsum_last_i;
 output dot_ready_o;
 output output_valid;
@@ -49,7 +50,7 @@ wire unused_load_idx = &{1'b0, load_idx};
 
 assign busy = !start_ready;
 
-edge_tensor_weight_banks x_packed_bank (
+edge_tensor_weight_banks #(.SCALE_BF20(SCALE_BF20)) x_packed_bank (
   .clk(clk), .rst_b(rst_b),
   .weight_start_i(start), .weight_start_ready_o(start_ready),
   .weight_format_i(weight_format), .weight_transpose_i(start_transpose),
@@ -65,6 +66,7 @@ edge_tensor_weight_banks x_packed_bank (
       .psum_bf16_i(psum_bf16_i), .late_psum_mode_i(late_psum_mode_i),
   .late_psum_valid_i(late_psum_valid_i), .scale_enable_i(scale_enable_i),
   .scale_bf16_i(scale_bf16_i),
+  .scale_extra_i(SCALE_BF20 ? scale_extra_i : 32'b0),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
   .rsum_last_i(rsum_last_i), .dot_ready_o(dot_ready_o),
   .output_valid_o(output_valid), .output_bf16_o(output_bf16_o)

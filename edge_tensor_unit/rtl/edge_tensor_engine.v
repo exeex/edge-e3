@@ -1,6 +1,6 @@
 module edge_tensor_engine(
   clk, cpurst_b, start, in_base_addr, psum_base_addr, out_base_addr,
-  vector_count, start_mode, start_dtype, scale_bf16,
+  vector_count, start_mode, start_dtype, scale_bf16, scale_extra, scale_stream_extra,
   scale_stream_valid, scale_stream_data, scale_stream_ready,
   weight_pending_valid,
   weight_active_valid, weight_preactivate, start_use_active, weight_idle,
@@ -28,6 +28,7 @@ module edge_tensor_engine(
   stream_psum_prefetch_accept
 );
 
+parameter SCALE_BF20=0;
 parameter LOWER_SIX = 1;
 // Product-default wide H4 backend. fabric_phase carries {wide_phase[2:0],1'b0}.
 parameter WIDE_H4 = 1;
@@ -74,6 +75,7 @@ input [VECTOR_COUNT_WIDTH-1:0] vector_count;
 input [7:0] start_mode;
 input [3:0] start_dtype;
 input [127:0] scale_bf16;
+input [31:0] scale_extra,scale_stream_extra;
 input scale_stream_valid;
 input [127:0] scale_stream_data;
 output scale_stream_ready;
@@ -325,6 +327,7 @@ reg [PAIR_WIDTH-1:0] rsum_drain_data_q;
 reg scale_enable_q;
 reg scale_stream_enable_q;
 reg [127:0] scale_bf16_q;
+reg [31:0] scale_extra_q;
 reg psum_once_mode_q;
 reg psum_none_mode_q;
 reg rsum_mode_q;
@@ -1110,7 +1113,7 @@ edge_tensor_input_window #(
   .prefetch_valid(next_input_slot_valid_q)
 );
 
-edge_tensor_tile_backend x_tile8x8 (
+edge_tensor_tile_backend #(.SCALE_BF20(SCALE_BF20)) x_tile8x8 (
   .clk(clk), .rst_b(cpurst_b), .compute_valid(compute_valid_q),
   .late_psum_mode_i(dot_needs_psum),
   .late_psum_valid_i(dot_needs_psum ? aligned_psum_valid : 1'b1),
@@ -1119,6 +1122,7 @@ edge_tensor_tile_backend x_tile8x8 (
   .output_fp32_o(tensor_core_output_fp32),
   .scale_enable_i(scale_enable_q),
   .scale_bf16_i(scale_stream_enable_q ? scale_stream_data : scale_bf16_q),
+  .scale_extra_i(SCALE_BF20 ? (scale_stream_enable_q ? scale_stream_extra : scale_extra_q) : 32'b0),
   .rsum_enable_i(rsum_mode_q),
   .rsum_first_i(rsum_mode_q
                 && (input_consume_count_q == {VECTOR_COUNT_WIDTH{1'b0}})),
@@ -1193,7 +1197,7 @@ always @(posedge clk or negedge cpurst_b) begin
     rsum_drain_data_q <= 0; rsum_drain_fp32_q <= 0;
     scale_enable_q <= 1'b0;
     scale_stream_enable_q <= 1'b0;
-    scale_bf16_q <= 0;
+    scale_bf16_q <= 0;scale_extra_q<=0;
     psum_once_mode_q <= 1'b0;
     psum_none_mode_q <= 1'b0;
     rsum_mode_q <= 1'b0;
@@ -1266,7 +1270,7 @@ always @(posedge clk or negedge cpurst_b) begin
       next_input_issue_count_q <= 0;
       scale_enable_q <= start_mode[0] && !start_mode[4];
       scale_stream_enable_q <= start_mode[3] && !start_mode[4];
-      scale_bf16_q <= scale_bf16;
+      scale_bf16_q <= scale_bf16;scale_extra_q<=SCALE_BF20?scale_extra:32'b0;
       psum_once_mode_q <= start_mode[1] && !start_mode[2]
                        && !start_mode[4];
       psum_none_mode_q <= start_mode[2] || start_mode[4];

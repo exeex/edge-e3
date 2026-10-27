@@ -1,5 +1,5 @@
 // Packed tensor sidecar with automatic double-bank ownership.
-module edge_tensor_weight_banks(
+module edge_tensor_weight_banks #(parameter SCALE_BF20=0)(
   clk, rst_b,
   weight_start_i, weight_start_ready_o,
   weight_format_i, weight_transpose_i,
@@ -9,7 +9,7 @@ module edge_tensor_weight_banks(
   weight_active_valid_o, weight_pending_valid_o,
   compute_valid_i, input_bf16_i, psum_bf16_i,
   late_psum_mode_i, late_psum_valid_i,
-  scale_enable_i, scale_bf16_i,
+  scale_enable_i, scale_bf16_i, scale_extra_i,
   rsum_enable_i, rsum_first_i, rsum_last_i,
   dot_ready_o, output_valid_o, output_bf16_o,
   wide_enable_i, psum_fp32_i, output_fp32_o
@@ -36,6 +36,7 @@ input [127:0] input_bf16_i, psum_bf16_i;
 input late_psum_mode_i, late_psum_valid_i;
 input scale_enable_i;
 input [127:0] scale_bf16_i;
+input [31:0] scale_extra_i;
 input rsum_enable_i, rsum_first_i, rsum_last_i;
 output dot_ready_o;
 output output_valid_o;
@@ -60,7 +61,7 @@ assign weight_active_valid_o = active_valid_q;
 assign weight_pending_valid_o = pending_valid_q;
 assign weight_done_o = inner_done;
 
-edge_tensor_datapath x_packed (
+edge_tensor_datapath #(.SCALE_BF20(SCALE_BF20)) x_packed (
   .clk(clk), .rst_b(rst_b),
   .weight_start_i(weight_start_i && weight_start_ready_o),
   .weight_start_ready_o(inner_start_ready),
@@ -78,6 +79,7 @@ edge_tensor_datapath x_packed (
       .psum_bf16_i(psum_bf16_i), .late_psum_mode_i(late_psum_mode_i),
   .late_psum_valid_i(late_psum_valid_i), .scale_enable_i(scale_enable_i),
   .scale_bf16_i(scale_bf16_i),
+  .scale_extra_i(SCALE_BF20 ? scale_extra_i : 32'b0),
   .rsum_enable_i(rsum_enable_i), .rsum_first_i(rsum_first_i),
   .rsum_last_i(rsum_last_i), .dot_ready_o(dot_ready_o),
   .output_valid_o(output_valid_o), .output_bf16_o(output_bf16_o)
