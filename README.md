@@ -58,6 +58,17 @@ cmake -S . -B build-e3-edge32
 The wrapper retains the AXI128, 64-bit scalar-DTCM compatibility, DMA, Tensor,
 ACTU, and CMPU platform. Edge-32 supplies ASIC32 directly.
 
+## Product software interface
+
+The [E3 SDK](include/README.md) in `include/edge_e3/` owns the product
+intrinsic entry point, linker-symbol memory map, scalar low-precision adapters
+and simulator console. Consumers add `include/` and the matching Edge-32
+`include/` backend to their compiler search paths. Libnn and the model compiler
+are maintained in the separate edge-nnc package.
+
+The SDK software under `include/` is Apache-2.0 licensed; see
+[include/LICENSE](include/LICENSE). The following hardware terms apply to RTL.
+
 ## License
 
 edge-e3 is available under the custom edge-e3 Hardware License 1.0. Simulation,

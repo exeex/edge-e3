@@ -16,4 +16,4 @@ if(EDGE_E3_VERILATOR)
 endif()
 
 # Product software validation is owned by the maintained Edge-32 harnesses.
-# E3 contributes its ASIC configuration and accelerator composition only.
+# E3 supplies ASIC configuration, accelerator composition and the include/ SDK.
