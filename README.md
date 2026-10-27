@@ -71,6 +71,13 @@ hardware license, not an OSI-approved open-source license.
 
 ### Tensor/DTCM product layout
 
+The tensor product entry is `edge_tensor_unit/edge_tensor_unit.v`, containing
+module `edge_tensor_unit_bank16`. The maintained packed backend selects the
+dot-local relay (`RELAY_WEIGHT=2`) and supports FP4 weights together with
+BF22-in-FP32 psum. Earlier tensor, DTCM bridge and unused core-debug sources
+are retained in each owning block's `legacy/` directory. Production filelists
+exclude them; historical tests and synthesis comparisons opt in explicitly.
+
 The public `edge_dtcm_subsys` boundary defaults to wide H4 when `SRAM_H4=1`.
 P and O use native 256-bit group rotation; I, WSLD, shared LSU/ACTU/CMPU,
 and DMA use locally exchanged 128-bit halves. WSLD and DMA restore contiguous

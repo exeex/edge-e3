@@ -1,1840 +1,1216 @@
-module edge_tensor_unit(
-  clk,
-  cmd_setcsr_dtype,
-  cmd_setcsr_req,
-  cmd_setcsr_wtype,
-  cmd_setin_ptr,
-  cmd_setin_req,
-  cmd_setn_req,
-  cmd_setn_value,
-  cmd_setout_ptr,
-  cmd_setout_req,
-  cmd_setpsum_ptr,
-  cmd_setpsum_req,
-  cmd_start_req,
-  cmd_start_tile_req,
-  cmd_sync_req,
-  cmd_wld_ptr,
-  cmd_wld_req,
-  cmd_wld_trans_req,
-  cpurst_b,
-  cur_tensor_in_req_mask,
-  cur_tensor_out_req_mask,
-  cur_tensor_prefetch_req_mask,
-  dbg_dtype,
-  dbg_i_comp_delay,
-  dbg_i_lease_channel,
-  dbg_i_lease_cycles,
-  dbg_i_lease_delay,
-  dbg_iopsum_plan_valid,
-  dbg_o_comp_delay,
-  dbg_o_lease_channel,
-  dbg_o_lease_cycles,
-  dbg_o_lease_delay,
-  dbg_phase,
-  dbg_psum_comp_delay,
-  dbg_psum_lease_channel,
-  dbg_psum_lease_cycles,
-  dbg_psum_lease_delay,
-  dbg_step,
-  dbg_start_phase,
-  dbg_wtype,
-  dma_delay_req,
-  lsu_resv_plus1,
-  tensor_busy,
-  tensor_addr,
-  tensor_cmd_ready,
-  tensor_start_ready,
-  tensor_io_lease_channel_mask,
-  tensor_io_lease_cycles,
-  tensor_io_lease_delay,
-  tensor_io_lease1_channel_mask,
-  tensor_io_lease1_cycles,
-  tensor_io_lease1_delay,
-  tensor_io_lease1_valid,
-  tensor_io_lease2_channel_mask,
-  tensor_io_lease2_cycles,
-  tensor_io_lease2_delay,
-  tensor_io_lease2_valid,
-  tensor_io_lease_valid,
-  tensor_lane1_addr,
-  tensor_lane1_data,
-  tensor_lane1_hi,
-  tensor_lane1_pair_rdata,
-  tensor_lane1_pair_rvalid,
-  tensor_lane1_ready,
-  tensor_lane1_req,
-  tensor_lane1_role,
-  tensor_lane1_valid,
-  tensor_lane1_wdata,
-  tensor_lane1_we,
-  tensor_lane1_wstrb,
-  tensor_lane2_addr,
-  tensor_lane2_data,
-  tensor_lane2_hi,
-  tensor_lane2_ready,
-  tensor_lane2_req,
-  tensor_lane2_role,
-  tensor_lane2_valid,
-  tensor_lane2_pair_wdata,
-  tensor_lane2_pair_wstrb,
-  tensor_lane2_wdata,
-  tensor_lane2_we,
-  tensor_lane2_wstrb,
-  tensor_pair_rdata,
-  tensor_pair_rvalid,
-  tensor_pair_rsp_high,
-  tensor_rdata,
-  tensor_ready,
-  tensor_req,
-  tensor_resv_plus2_mask,
-  tensor_resv_plus2_req,
-  tensor_rvalid,
-  tensor_sync_stall,
-  tensor_wdata,
-  tensor_we,
-  tensor_wstrb,
-  tensor_wld_cmd_ready,
-  tensor_wld_addr,
-  tensor_wld_lease_channel_mask,
-  tensor_wld_lease_cycles,
-  tensor_wld_lease_delay,
-  tensor_wld_lease_valid,
-  tensor_wld_rdata,
-  tensor_wld_ready,
-  tensor_wld_req,
-  tensor_wld_rvalid
+module edge_tensor_unit_bank16 #(
+  parameter ADDR_WIDTH = 16,
+  parameter BANK_NUM = 16,
+  parameter BANK_INDEX_WIDTH = 4,
+  parameter SRAM_ADDR_WIDTH = 10,
+  parameter DATA_WIDTH = 64,
+  parameter VECTOR_COUNT_WIDTH = 16,
+  parameter SEQ_ID_WIDTH = 8,
+  parameter EPOCH_WIDTH = 4,
+  parameter READ_LATENCY = 1,
+  parameter LOWER_SIX = 0,
+  parameter WIDE_H4 = 0,
+  parameter PACKED_WEIGHT = 0
+) (
+  input  wire                         clk,
+  input  wire                         cpurst_b,
+
+  input wire wsld_active,
+  input wire [3:0] wsld_wtype,
+  input  wire [3:0]                   cmd_setcsr_dtype,
+  input  wire                         cmd_setcsr_req,
+  input  wire [3:0]                   cmd_setcsr_wtype,
+  input  wire [ADDR_WIDTH-1:0]        cmd_setin_ptr,
+  input  wire                         cmd_setin_req,
+  input  wire                         cmd_setn_req,
+  input  wire [15:0]                  cmd_setn_value,
+  input  wire [ADDR_WIDTH-1:0]        cmd_setout_ptr,
+  input  wire                         cmd_setout_req,
+  input  wire [ADDR_WIDTH-1:0]        cmd_setpsum_ptr,
+  input  wire                         cmd_setpsum_req,
+  input  wire                         cmd_start_req,
+  input  wire                         cmd_start_tile_req,
+  input  wire [7:0]                   cmd_start_mode,
+  input  wire [SEQ_ID_WIDTH-1:0]      cmd_start_seq_id,
+  input  wire [EPOCH_WIDTH-1:0]       cmd_start_epoch,
+  input  wire [ADDR_WIDTH-1:0]        cmd_wld_ptr,
+  input  wire                         cmd_wld_req,
+  input  wire                         cmd_wld_trans_req,
+  input  wire                         cmd_wld_reuse,
+  input  wire [ADDR_WIDTH-1:0]        cmd_sld_ptr,
+  input  wire                         cmd_sld_req,
+  input  wire                         cmd_sld_reuse,
+  input  wire                         cmd_sld_stream,
+  input  wire [ADDR_WIDTH-1:0]        cmd_sld_stream_setup_ptr,
+  input  wire                         cmd_sld_stream_setup_req,
+
+  output wire                         tensor_busy,
+  output wire                         tensor_cmd_ready,
+  output wire                         tensor_start_ready,
+  output wire                         tensor_wld_cmd_ready,
+  output wire                         tensor_sld_cmd_ready,
+  output wire                         tensor_sld_fill_done,
+  output wire [ADDR_WIDTH-1:0]        tensor_sld_addr,
+  output wire                         tensor_sld_req,
+  input  wire                         tensor_sld_ready,
+  input  wire [127:0]                 tensor_sld_rdata,
+  input  wire                         tensor_sld_rvalid,
+  output wire [ADDR_WIDTH-1:0]        tensor_wld_addr,
+  output wire                         tensor_wld_req,
+  input  wire                         tensor_wld_ready,
+  input  wire [127:0]                 tensor_wld_rdata,
+  input  wire                         tensor_wld_rvalid,
+  output wire                         tensor_wld_fill_done,
+  output wire [4:0]                   tensor_wld_tile_words,
+  output wire                         tensor_sync_stall,
+  output wire                         tensor_start_retire_valid,
+  output wire [SEQ_ID_WIDTH-1:0]      tensor_start_retire_seq_id,
+  output wire [EPOCH_WIDTH-1:0]       tensor_start_retire_epoch,
+
+  output wire [7:0]                   tensor_io_lease_channel_mask,
+  output wire [8:0]                   tensor_io_lease_cycles,
+  output wire [3:0]                   tensor_io_lease_delay,
+  output wire [7:0]                   tensor_io_lease1_channel_mask,
+  output wire [8:0]                   tensor_io_lease1_cycles,
+  output wire [3:0]                   tensor_io_lease1_delay,
+  output wire                         tensor_io_lease1_valid,
+  output wire [7:0]                   tensor_io_lease2_channel_mask,
+  output wire [8:0]                   tensor_io_lease2_cycles,
+  output wire [3:0]                   tensor_io_lease2_delay,
+  output wire                         tensor_io_lease2_valid,
+  output wire                         tensor_io_lease_valid,
+  output wire [7:0]                   tensor_wld_lease_channel_mask,
+  output wire [8:0]                   tensor_wld_lease_cycles,
+  output wire [3:0]                   tensor_wld_lease_delay,
+  output wire                         tensor_wld_lease_valid,
+
+  output wire [BANK_NUM-1:0]          tensor_bank_req,
+  output wire [BANK_NUM-1:0]          tensor_bank_we,
+  output wire [BANK_NUM*SRAM_ADDR_WIDTH-1:0] tensor_bank_addr,
+  output wire [BANK_NUM*DATA_WIDTH-1:0] tensor_bank_wdata,
+  output wire [BANK_NUM*(DATA_WIDTH/8)-1:0] tensor_bank_wstrb,
+  input  wire [BANK_NUM*DATA_WIDTH-1:0] tensor_bank_rdata,
+  output wire [BANK_NUM-1:0]          tensor_active_mask,
+  input  wire [BANK_INDEX_WIDTH-1:0]  tensor_phase
 );
 
-parameter ADDR_WIDTH       = 16;
-parameter BANK_NUM         = 16;
-parameter BANK_INDEX_WIDTH = 4;
-parameter [ADDR_WIDTH-1:0] PIPELINE_LATENCY = 30;
-parameter STEP_NUM         = 4;
-parameter STEP_WIDTH       = 3;
-parameter [3:0] LEASE_DELAY = 4'd2;
-parameter [3:0] TENSOR_IO_LEASE_DELAY = LEASE_DELAY;
-parameter [3:0] TENSOR_WLD_LEASE_DELAY = LEASE_DELAY;
-parameter [8:0] TENSOR_IO_PLAN_CYCLES = 9'd100;
-parameter [3:0] TENSOR_I_BASE_DELAY = 4'd1;
-parameter [3:0] TENSOR_PSUM_BASE_DELAY = 4'd6;
-parameter [3:0] TENSOR_O_BASE_DELAY = 4'd7;
-parameter STREAM_FIFO_DEPTH = 16;
-parameter STREAM_FIFO_INDEX_WIDTH = 4;
-localparam RUN_COUNT_WIDTH = 16;
+localparam BYTE_WIDTH = DATA_WIDTH / 8;
+localparam BYTE_INDEX_WIDTH = $clog2(BYTE_WIDTH);
+localparam PAIR_WIDTH = DATA_WIDTH * 2;
 
-input                         clk;
-input  [3:0]                  cmd_setcsr_dtype;
-input                         cmd_setcsr_req;
-input  [3:0]                  cmd_setcsr_wtype;
-input  [ADDR_WIDTH-1:0]       cmd_setin_ptr;
-input                         cmd_setin_req;
-input                         cmd_setn_req;
-input  [15:0]                 cmd_setn_value;
-input  [ADDR_WIDTH-1:0]       cmd_setout_ptr;
-input                         cmd_setout_req;
-input  [ADDR_WIDTH-1:0]       cmd_setpsum_ptr;
-input                         cmd_setpsum_req;
-input                         cmd_start_req;
-input                         cmd_start_tile_req;
-input                         cmd_sync_req;
-input  [ADDR_WIDTH-1:0]       cmd_wld_ptr;
-input                         cmd_wld_req;
-input                         cmd_wld_trans_req;
-input                         cpurst_b;
-input  [BANK_NUM-1:0]         lsu_resv_plus1;
-input  [63:0]                 tensor_lane1_data;
-input                         tensor_lane1_hi;
-input  [127:0]                tensor_lane1_pair_rdata;
-input                         tensor_lane1_pair_rvalid;
-input                         tensor_lane1_ready;
-input  [1:0]                  tensor_lane1_role;
-input                         tensor_lane1_valid;
-input  [63:0]                 tensor_lane2_data;
-input                         tensor_lane2_hi;
-input                         tensor_lane2_ready;
-input  [1:0]                  tensor_lane2_role;
-input                         tensor_lane2_valid;
-input  [127:0]                tensor_pair_rdata;
-input                         tensor_pair_rvalid;
-input                         tensor_pair_rsp_high;
-input  [63:0]                 tensor_rdata;
-input                         tensor_ready;
-input                         tensor_rvalid;
-input  [127:0]                tensor_wld_rdata;
-input                         tensor_wld_ready;
-input                         tensor_wld_rvalid;
+reg  [3:0]                    cfg_dtype_q [0:1];
+reg  [3:0]                    cfg_wtype_q [0:1];
+wire [3:0] load_wtype = wsld_active ? wsld_wtype : cfg_wtype_q[cfg_write_sel_q];
+reg  [ADDR_WIDTH-1:0]         cfg_in_ptr_q [0:1];
+reg  [ADDR_WIDTH-1:0]         cfg_out_ptr_q [0:1];
+reg  [ADDR_WIDTH-1:0]         cfg_psum_ptr_q [0:1];
+reg  [VECTOR_COUNT_WIDTH-1:0] cfg_run_count_q [0:1];
+reg                           cfg_write_sel_q;
+reg                           weight_loaded_q;
+reg                           weight_reuse_token_q;
+reg                           queued_start_valid_q;
+reg                           queued_start_preactivated_q;
+reg  [7:0]                    queued_start_mode_q;
+reg  [3:0]                    queued_start_dtype_q;
+reg                           queued_start_reuse_weight_q;
+reg                           queued_start_scale_sel_q;
+reg  [SEQ_ID_WIDTH-1:0]       queued_start_seq_id_q;
+reg  [EPOCH_WIDTH-1:0]        queued_start_epoch_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] queued_count_q;
+reg  [ADDR_WIDTH-1:0]         queued_in_q;
+reg  [ADDR_WIDTH-1:0]         queued_out_q;
+reg  [ADDR_WIDTH-1:0]         queued_psum_q;
+reg                           start_pending_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] start_pending_count_q;
+reg  [ADDR_WIDTH-1:0]         start_pending_in_q;
+reg  [ADDR_WIDTH-1:0]         start_pending_out_q;
+reg  [ADDR_WIDTH-1:0]         start_pending_psum_q;
+reg                           start_pending_wld_pending_q;
+reg  [7:0]                    start_pending_mode_q;
+reg  [3:0]                    start_pending_dtype_q;
+reg                           start_pending_reuse_weight_q;
+reg                           start_pending_scale_sel_q;
+reg  [SEQ_ID_WIDTH-1:0]       start_pending_seq_id_q;
+reg  [EPOCH_WIDTH-1:0]        start_pending_epoch_q;
+reg                           wld_cmd_pending_q;
+reg                           wld_cmd_pending_transpose_q;
+reg [3:0]                     wld_cmd_pending_wtype_q;
+reg  [ADDR_WIDTH-1:0]         wld_cmd_pending_ptr_q;
+reg                           wld_cmd_pending_next_q;
+reg                           wld_cmd_pending_next_transpose_q;
+reg [3:0]                     wld_cmd_pending_next_wtype_q;
+reg  [ADDR_WIDTH-1:0]         wld_cmd_pending_next_ptr_q;
+reg                           wld_active_q;
+reg [3:0]                     wld_active_wtype_q;
+reg  [ADDR_WIDTH-1:0]         wld_base_q;
+reg  [2:0]                    wld_issue_idx_q;
+reg  [3:0]                    wld_read_count_q;
+wire [2:0] wld_rsp_idx_q;
+reg [2:0] wld_tag_pipe [0:READ_LATENCY-1];
+integer wld_stage;
+wire [BANK_INDEX_WIDTH-1:0] engine_host_rsp_bank;
+reg  [127:0]                  scale_buf_q [0:1];
+reg                           scale_active_sel_q;
+reg                           scale_active_valid_q;
+reg                           scale_pending_sel_q;
+reg                           scale_pending_valid_q;
+reg                           sld_pending_q;
+reg                           sld_wait_q;
+reg  [ADDR_WIDTH-1:0]         sld_ptr_q;
+reg                           sld_load_sel_q;
+reg                           sld_stream_q;
+reg  [127:0]                 scale_stream_fifo_q [0:7];
+reg  [2:0]                   scale_stream_head_q;
+reg  [2:0]                   scale_stream_tail_q;
+reg  [3:0]                   scale_stream_count_q;
+reg                          direct_sld_setup_valid_q;
+reg                          direct_sld_active_q;
+reg  [ADDR_WIDTH-1:0]        direct_sld_next_ptr_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] direct_sld_target_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] direct_sld_issued_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] direct_sld_received_q;
+reg                           copy_active_q;
+reg                           copy_write_q;
+reg  [ADDR_WIDTH-1:0]         copy_in_q;
+reg  [ADDR_WIDTH-1:0]         copy_out_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] copy_bytes_q;
+reg  [VECTOR_COUNT_WIDTH-1:0] copy_offset_q;
+reg  [DATA_WIDTH-1:0]         copy_data_q;
 
-output [BANK_NUM-1:0]         cur_tensor_in_req_mask;
-output [BANK_NUM-1:0]         cur_tensor_out_req_mask;
-output [BANK_NUM-1:0]         cur_tensor_prefetch_req_mask;
-output [3:0]                  dbg_dtype;
-output [1:0]                  dbg_i_comp_delay;
-output [2:0]                  dbg_i_lease_channel;
-output [8:0]                  dbg_i_lease_cycles;
-output [3:0]                  dbg_i_lease_delay;
-output                        dbg_iopsum_plan_valid;
-output [1:0]                  dbg_o_comp_delay;
-output [2:0]                  dbg_o_lease_channel;
-output [8:0]                  dbg_o_lease_cycles;
-output [3:0]                  dbg_o_lease_delay;
-output [2:0]                  dbg_phase;
-output [1:0]                  dbg_psum_comp_delay;
-output [2:0]                  dbg_psum_lease_channel;
-output [8:0]                  dbg_psum_lease_cycles;
-output [3:0]                  dbg_psum_lease_delay;
-output [STEP_WIDTH-1:0]       dbg_step;
-output [2:0]                  dbg_start_phase;
-output [3:0]                  dbg_wtype;
-output                        dma_delay_req;
-output                        tensor_busy;
-output [ADDR_WIDTH-1:0]       tensor_addr;
-output                        tensor_cmd_ready;
-output                        tensor_start_ready;
-output [7:0]                  tensor_io_lease_channel_mask;
-output [8:0]                  tensor_io_lease_cycles;
-output [3:0]                  tensor_io_lease_delay;
-output [7:0]                  tensor_io_lease1_channel_mask;
-output [8:0]                  tensor_io_lease1_cycles;
-output [3:0]                  tensor_io_lease1_delay;
-output                        tensor_io_lease1_valid;
-output [7:0]                  tensor_io_lease2_channel_mask;
-output [8:0]                  tensor_io_lease2_cycles;
-output [3:0]                  tensor_io_lease2_delay;
-output                        tensor_io_lease2_valid;
-output                        tensor_io_lease_valid;
-output [ADDR_WIDTH-1:0]       tensor_lane1_addr;
-output                        tensor_lane1_req;
-output [63:0]                 tensor_lane1_wdata;
-output                        tensor_lane1_we;
-output [7:0]                  tensor_lane1_wstrb;
-output [ADDR_WIDTH-1:0]       tensor_lane2_addr;
-output                        tensor_lane2_req;
-output [127:0]                tensor_lane2_pair_wdata;
-output [15:0]                 tensor_lane2_pair_wstrb;
-output [63:0]                 tensor_lane2_wdata;
-output                        tensor_lane2_we;
-output [7:0]                  tensor_lane2_wstrb;
-output                        tensor_req;
-output [BANK_NUM-1:0]         tensor_resv_plus2_mask;
-output                        tensor_resv_plus2_req;
-output                        tensor_sync_stall;
-output [63:0]                 tensor_wdata;
-output                        tensor_we;
-output [7:0]                  tensor_wstrb;
-output                        tensor_wld_cmd_ready;
-output [ADDR_WIDTH-1:0]       tensor_wld_addr;
-output [7:0]                  tensor_wld_lease_channel_mask;
-output [8:0]                  tensor_wld_lease_cycles;
-output [3:0]                  tensor_wld_lease_delay;
-output                        tensor_wld_lease_valid;
-output                        tensor_wld_req;
-
-reg  [3:0]                    dtype;
-reg  [3:0]                    wtype;
-reg                           setup_buf_sel;
-reg  [3:0]                    setup_dtype [0:1];
-reg  [3:0]                    setup_wtype [0:1];
-reg  [ADDR_WIDTH-1:0]         setup_in_ptr [0:1];
-reg  [ADDR_WIDTH-1:0]         setup_out_ptr [0:1];
-reg  [ADDR_WIDTH-1:0]         setup_psum_ptr [0:1];
-reg  [RUN_COUNT_WIDTH-1:0]    setup_run_count [0:1];
-reg                           setup_run_count_valid [0:1];
-reg  [ADDR_WIDTH-1:0]         active_in_ptr;
-reg  [ADDR_WIDTH-1:0]         active_out_ptr;
-reg  [ADDR_WIDTH-1:0]         active_psum_ptr;
-reg  [ADDR_WIDTH-1:0]         weight_ptr;
-reg  [RUN_COUNT_WIDTH-1:0]                    run_count;
-reg                           run_count_valid;
-reg  [RUN_COUNT_WIDTH-1:0]                    data_run_remaining;
-reg  [RUN_COUNT_WIDTH-1:0]                    data_vec_index;
-reg  [RUN_COUNT_WIDTH-1:0]                    stream_i_issue_index;
-reg  [RUN_COUNT_WIDTH-1:0]                    stream_psum_issue_index;
-reg  [RUN_COUNT_WIDTH-1:0]                    stream_compute_index;
-reg  [RUN_COUNT_WIDTH-1:0]                    stream_out_write_index;
-reg  [RUN_COUNT_WIDTH-1:0]                    stream_out_push_index;
-reg  [RUN_COUNT_WIDTH-1:0]                    queued_i_issue_index;
-reg  [RUN_COUNT_WIDTH-1:0]                    queued_psum_issue_index;
-reg  [ADDR_WIDTH-1:0]         cycles_left;
-reg  [STEP_WIDTH-1:0]         step;
-reg                           busy;
-reg  [3:0]                    dtcm_state;
-reg                           compute_valid_q;
-reg  [1:0]                    rsp_tag_role [0:3];
-reg  [3:0]                    rsp_tag_hi;
-reg  [1:0]                    rsp_tag_head;
-reg  [1:0]                    rsp_tag_tail;
-reg  [2:0]                    rsp_tag_count;
-reg  [2:0]                    wld_read_idx;
-reg  [2:0]                    wld_load_idx;
-reg  [63:0]                   wld_read_lo;
-reg                           wld_reg_drain_transpose;
-reg                           wld_cmd_pending;
-reg                           wld_cmd_pending_transpose;
-reg                           wld_cmd_pending_bf16;
-reg  [ADDR_WIDTH-1:0]         wld_cmd_pending_ptr;
-reg                           wld_fetch_active;
-reg                           wld_fetch_wait;
-reg                           wld_active_bf16;
-reg                           weight_active_buf_q;
-reg                           weight_active_valid;
-reg                           weight_load_buf_q;
-reg                           weight_loaded_buf_q;
-reg                           weight_loaded_valid;
-reg                           queued_start_valid;
-reg                           queued_start_tile;
-reg  [3:0]                    queued_dtype;
-reg  [3:0]                    queued_wtype;
-reg  [ADDR_WIDTH-1:0]         queued_in_ptr;
-reg  [ADDR_WIDTH-1:0]         queued_out_ptr;
-reg  [ADDR_WIDTH-1:0]         queued_psum_ptr;
-reg  [RUN_COUNT_WIDTH-1:0]    queued_run_count;
-reg                           queued_weight_buf;
-reg  [127:0]                  wld_reg_load_data_q;
-reg  [2:0]                    wld_reg_load_idx_q;
-reg                           wld_reg_load_valid_q;
-reg                           wld_ready;
-reg  [2:0]                    phase;
-reg  [2:0]                    start_phase;
-reg                           iopsum_plan_valid;
-reg  [3:0]                    i_lease_delay;
-reg  [3:0]                    psum_lease_delay;
-reg  [3:0]                    o_lease_delay;
-reg  [2:0]                    i_lease_channel;
-reg  [2:0]                    psum_lease_channel;
-reg  [2:0]                    o_lease_channel;
-reg  [8:0]                    i_lease_cycles;
-reg  [8:0]                    psum_lease_cycles;
-reg  [8:0]                    o_lease_cycles;
-reg  [1:0]                    i_comp_delay;
-reg  [1:0]                    psum_comp_delay;
-reg  [1:0]                    o_comp_delay;
-reg  [7:0]                    tensor_io_lease_channel_mask_q;
-reg  [8:0]                    tensor_io_lease_cycles_q;
-reg  [3:0]                    tensor_io_lease_delay_q;
-reg                           tensor_io_lease_valid_q;
-reg  [7:0]                    tensor_io_lease1_channel_mask_q;
-reg  [8:0]                    tensor_io_lease1_cycles_q;
-reg  [3:0]                    tensor_io_lease1_delay_q;
-reg                           tensor_io_lease1_valid_q;
-reg  [7:0]                    tensor_io_lease2_channel_mask_q;
-reg  [8:0]                    tensor_io_lease2_cycles_q;
-reg  [3:0]                    tensor_io_lease2_delay_q;
-reg                           tensor_io_lease2_valid_q;
-reg                           plan_table_valid;
-reg  [3:0]                    plan_table_i_delay [0:7];
-reg  [3:0]                    plan_table_psum_delay [0:7];
-reg  [3:0]                    plan_table_o_delay [0:7];
-reg  [2:0]                    plan_table_i_channel [0:7];
-reg  [2:0]                    plan_table_psum_channel [0:7];
-reg  [2:0]                    plan_table_o_channel [0:7];
-reg  [8:0]                    plan_table_i_cycles [0:7];
-reg  [8:0]                    plan_table_psum_cycles [0:7];
-reg  [8:0]                    plan_table_o_cycles [0:7];
-reg  [1:0]                    plan_table_i_comp [0:7];
-reg  [1:0]                    plan_table_psum_comp [0:7];
-reg  [1:0]                    plan_table_o_comp [0:7];
-reg  [127:0]                  stream_i_fifo [0:STREAM_FIFO_DEPTH-1];
-reg  [127:0]                  stream_psum_fifo [0:STREAM_FIFO_DEPTH-1];
-reg  [127:0]                  stream_out_fifo [0:STREAM_FIFO_DEPTH-1];
-reg  [ADDR_WIDTH-1:0]         stream_out_addr_fifo [0:STREAM_FIFO_DEPTH-1];
-reg  [127:0]                  stream_compute_input_q;
-reg  [127:0]                  stream_compute_psum_q;
-reg  [STREAM_FIFO_INDEX_WIDTH-1:0] stream_i_head;
-reg  [STREAM_FIFO_INDEX_WIDTH-1:0] stream_i_tail;
-reg  [STREAM_FIFO_INDEX_WIDTH:0]   stream_i_count;
-reg  [STREAM_FIFO_INDEX_WIDTH:0]   stream_i_inflight_count;
-reg  [STREAM_FIFO_INDEX_WIDTH-1:0] stream_psum_head;
-reg  [STREAM_FIFO_INDEX_WIDTH-1:0] stream_psum_tail;
-reg  [STREAM_FIFO_INDEX_WIDTH:0]   stream_psum_count;
-reg  [STREAM_FIFO_INDEX_WIDTH:0]   stream_psum_inflight_count;
-reg  [STREAM_FIFO_INDEX_WIDTH-1:0] stream_out_head;
-reg  [STREAM_FIFO_INDEX_WIDTH-1:0] stream_out_tail;
-reg  [STREAM_FIFO_INDEX_WIDTH:0]   stream_out_count;
-reg  [STREAM_FIFO_INDEX_WIDTH:0]   stream_out_inflight_count;
-reg                                stream_out_skid_valid;
-reg  [127:0]                       stream_out_skid_data;
-reg  [ADDR_WIDTH-1:0]              stream_out_skid_addr;
-
-wire [ADDR_WIDTH-1:0]         in_step_addr;
-wire [ADDR_WIDTH-1:0]         out_step_addr;
-wire [ADDR_WIDTH-1:0]         psum_step_addr;
-wire [ADDR_WIDTH-1:0]         weight_step_addr;
-wire [ADDR_WIDTH-1:0]         data_vec_word_offset;
-wire [ADDR_WIDTH-1:0]         stream_i_word_offset;
-wire [ADDR_WIDTH-1:0]         stream_psum_word_offset;
-wire [ADDR_WIDTH-1:0]         stream_out_word_offset;
-wire [ADDR_WIDTH-1:0]         stream_out_push_word_offset;
-wire [ADDR_WIDTH-1:0]         stream_i_addr;
-wire [ADDR_WIDTH-1:0]         stream_psum_addr;
-wire [ADDR_WIDTH-1:0]         stream_out_addr;
-wire [ADDR_WIDTH-1:0]         stream_out_push_addr;
-wire [ADDR_WIDTH-1:0]         queued_i_word_offset;
-wire [ADDR_WIDTH-1:0]         queued_psum_word_offset;
-wire [ADDR_WIDTH-1:0]         queued_i_addr;
-wire [ADDR_WIDTH-1:0]         queued_psum_addr;
-wire [RUN_COUNT_WIDTH-1:0]                    start_data_run_count;
-wire [3:0]                    iopsum_union_lease_delay;
-wire [8:0]                    iopsum_union_lease_cycles;
-wire [2:0]                    iopsum_union_i_channel;
-wire [2:0]                    iopsum_union_psum_channel;
-wire [2:0]                    iopsum_union_o_channel;
-wire [7:0]                    iopsum_union_channel_mask;
-wire [BANK_NUM-1:0]           in_mask;
-wire [BANK_NUM-1:0]           out_mask;
-wire [BANK_NUM-1:0]           psum_mask;
-wire [BANK_NUM-1:0]           weight_mask;
-wire [BANK_NUM-1:0]           step_mask;
-wire                          step_conflict;
-wire                          step_fire;
-wire [ADDR_WIDTH-1:0]         start_cycles;
-wire                          start_cmd_req;
+wire                          engine_busy;
+wire                          engine_done;
+wire                          engine_handoff_ready;
+wire                          engine_weight_idle;
+wire                          engine_start;
+wire                          engine_weight_preactivate;
+wire                          queued_weight_preactivate;
+wire                          wld_replace_preactivate;
+wire                          engine_start_use_active;
+wire                          tensor_weight_active_valid;
+wire                          start_weight_available;
+wire                          start_pending_weight_available;
+wire                          start_uses_pending_weight;
+wire                          start_uses_reuse_weight;
 wire                          start_accept;
+wire                          start_direct_accept;
 wire                          start_queue_accept;
-wire                          start_direct_launch;
-wire                          start_queue_launch;
-wire                          start_launch;
-wire                          launch_start_tile;
-wire [ADDR_WIDTH-1:0]         launch_in_ptr;
-wire [ADDR_WIDTH-1:0]         launch_out_ptr;
-wire [ADDR_WIDTH-1:0]         launch_psum_ptr;
-wire [RUN_COUNT_WIDTH-1:0]    launch_run_count;
-wire                          launch_weight_buf;
-wire                          tensor_read_req;
-wire                          tensor_iopsum_read_req;
-wire                          tensor_lane0_i_read_req;
-wire                          tensor_lane1_psum_read_req;
-wire                          tensor_lane1_read_accept;
-wire                          tensor_lane2_write_req;
-wire                          tensor_lane2_write_accept;
-wire                          tensor_wld_read_req;
-wire                          tensor_write_req;
-wire                          dtcm_active;
-wire                          tensor_start_base_ready;
-wire [2:0]                    start_phase_next;
-wire [2:0]                    in_pair;
-wire [2:0]                    psum_pair;
-wire [2:0]                    out_pair;
-wire                          setup_buf_next;
-wire [3:0]                    setup_cur_dtype;
-wire [3:0]                    setup_cur_wtype;
-wire [ADDR_WIDTH-1:0]         setup_cur_in_ptr;
-wire [ADDR_WIDTH-1:0]         setup_cur_psum_ptr;
-wire [ADDR_WIDTH-1:0]         setup_cur_out_ptr;
-wire [RUN_COUNT_WIDTH-1:0]    setup_cur_run_count;
-wire                          setup_cur_run_count_valid;
-wire [3:0]                    plan_next_dtype;
-wire [3:0]                    plan_next_wtype;
-wire [ADDR_WIDTH-1:0]         plan_next_in_ptr;
-wire [ADDR_WIDTH-1:0]         plan_next_psum_ptr;
-wire [ADDR_WIDTH-1:0]         plan_next_out_ptr;
-wire [RUN_COUNT_WIDTH-1:0]                    plan_next_run_count;
-wire                          plan_next_run_count_valid;
-wire                          plan_ptr_update;
-wire                          cmd_wld_any_req;
-wire                          tensor_core_output_valid;
-wire [127:0]                  tensor_core_output;
-wire [127:0]                  iopsum_input_vec;
-wire                          iopsum_input_ready;
-wire [127:0]                  iopsum_output_vec;
-wire                          iopsum_output_ready;
-wire [127:0]                  iopsum_psum_vec;
-wire                          iopsum_psum_ready;
-wire                          iopsum_clear_i_psum;
-wire                          iopsum_clear_o;
-wire                          iopsum_output_push_valid;
-wire                          tensor_read_accept;
-wire                          tensor_wld_read_accept;
-wire                          tensor_write_accept;
-wire                          tensor_read_issue_req;
-wire                          stream_active;
-wire                          stream_i_base_req;
-wire                          stream_i_current_req;
-wire                          stream_i_prefetch_base_req;
-wire                          stream_i_prefetch_req;
-wire                          stream_i_req;
-wire                          stream_psum_base_req;
-wire                          stream_psum_current_req;
-wire                          stream_psum_prefetch_base_req;
-wire                          stream_psum_prefetch_req;
-wire                          stream_psum_req;
-wire                          stream_out_base_req;
-wire                          stream_out_req;
-wire [STREAM_FIFO_INDEX_WIDTH:0] stream_out_total_pending;
-wire                          stream_i_current_accept;
-wire                          stream_i_prefetch_accept;
-wire                          stream_psum_current_accept;
-wire                          stream_psum_prefetch_accept;
-wire                          stream_i_push;
-wire                          stream_psum_push;
-wire                          stream_out_push;
-wire                          stream_compute_fire;
-wire                          stream_out_pop;
-wire                          stream_current_done;
-wire                          stream_done;
-wire                          rsp_tag_push;
-wire                          rsp_tag_pop;
-wire                          rsp_tag_full;
-wire                          rsp_tag_empty;
-wire [1:0]                    rsp_pop_role;
-wire                          rsp_pop_hi;
-wire                          tensor_pair_lane_valid;
-wire [63:0]                   tensor_pair_lane_data;
-wire                          tensor_pair_lane_hi;
-wire [1:0]                    tensor_pair_lane_role;
-wire                          wld_fill_start_req;
-wire                          wld_fill_start_ready;
-wire                          wld_fill_busy;
-wire                          wld_fill_done;
-wire                          wld_fill_load_done;
+wire                          start_wait_accept;
+wire                          start_pending_direct_launch;
+wire                          start_pending_queue_launch;
+wire                          start_consume_weight;
+wire [15:0]                   start_data_run_count;
+wire [ADDR_WIDTH-1:0]         start_data_in;
+wire [ADDR_WIDTH-1:0]         start_data_out;
+wire [ADDR_WIDTH-1:0]         start_data_psum;
+wire [ADDR_WIDTH-1:0]         engine_start_in;
+wire [ADDR_WIDTH-1:0]         engine_start_out;
+wire [ADDR_WIDTH-1:0]         engine_start_psum;
+wire [VECTOR_COUNT_WIDTH-1:0] engine_start_count;
+wire                          start_data_scale_sel;
+wire [7:0]                    engine_start_mode;
+wire [3:0]                    engine_start_dtype;
+wire                          engine_start_scale_sel;
+wire [127:0]                  engine_start_scale;
+wire                          wld_cmd_accept;
+wire                          wld_reuse_accept;
+wire                          sld_reuse_accept;
 wire                          wld_cmd_can_launch;
 wire                          wld_cmd_immediate_launch;
 wire                          wld_cmd_pending_launch;
 wire                          wld_cmd_launch;
-wire                          wld_cmd_queue_accept;
 wire [ADDR_WIDTH-1:0]         wld_cmd_launch_ptr;
 wire                          wld_cmd_launch_transpose;
-wire                          wld_cmd_launch_bf16;
-wire                          wld_reg_load_done;
-wire                          wld_reg_drain_busy;
-wire                          wld_reg_drain_done;
+wire [3:0]                    wld_cmd_launch_wtype;
+wire                          wld_fill_start_ready;
+wire                          wld_fill_done;
+wire                          wld_read_fire;
+wire                          wld_bank_conflict;
+wire                          cfg_cmd_ready;
+wire [ADDR_WIDTH-1:0]         wld_req_addr;
+wire [BANK_NUM-1:0]           wld_req_mask;
+wire [PAIR_WIDTH-1:0]         wld_load_data;
 wire                          tensor_weight_fill_start;
 wire                          tensor_weight_fill_bf16_mode;
 wire                          tensor_weight_fill_start_ready;
 wire                          tensor_weight_fill_valid;
 wire                          tensor_weight_fill_ready;
 wire [1:0]                    tensor_weight_fill_pair_idx;
-wire [127:0]                  tensor_weight_fill_data;
+wire [PAIR_WIDTH-1:0]         tensor_weight_fill_data;
 wire                          tensor_weight_fill_last;
-wire                          tensor_weight_activate_ready;
-wire                          tensor_weight_fill_busy;
 wire                          tensor_weight_pending_valid;
-wire [127:0]                  tensor_core_input_vec;
-wire [127:0]                  tensor_core_psum_vec;
-integer                       plan_phase_i;
-integer                       rsp_tag_i;
-integer                       setup_i;
+wire                          packed_weight_start_ready;
+wire                          packed_weight_busy;
+wire                          packed_weight_done;
+wire                          packed_weight_load_ready;
+wire [BANK_NUM-1:0]           engine_bank_req;
+wire [BANK_NUM-1:0]           engine_bank_we;
+wire [BANK_NUM*SRAM_ADDR_WIDTH-1:0] engine_bank_addr;
+wire [BANK_NUM*DATA_WIDTH-1:0] engine_bank_wdata;
+wire [BANK_NUM*BYTE_WIDTH-1:0] engine_bank_wstrb;
+wire                          engine_host_bank_req;
+wire                          engine_host_bank_we;
+wire [BANK_INDEX_WIDTH-1:0]   engine_host_bank;
+wire [SRAM_ADDR_WIDTH-1:0]    engine_host_bank_addr;
+wire [DATA_WIDTH-1:0]         engine_host_bank_wdata;
+wire [BYTE_WIDTH-1:0]         engine_host_bank_wstrb;
+wire [DATA_WIDTH-1:0]         engine_host_bank_rdata;
+wire                          engine_host_ready;
+wire [DATA_WIDTH-1:0]         engine_host_rdata;
+wire                          engine_host_rvalid;
+wire                          engine_i_pair_req;
+wire [BANK_INDEX_WIDTH-1:0]   engine_i_pair_bank0;
+wire [BANK_INDEX_WIDTH-1:0]   engine_i_pair_bank1;
+wire [SRAM_ADDR_WIDTH-1:0]    engine_i_pair_addr;
+wire [BANK_INDEX_WIDTH-1:0]   engine_i_pair_rsp_bank0;
+wire [BANK_INDEX_WIDTH-1:0]   engine_i_pair_rsp_bank1;
+wire [PAIR_WIDTH-1:0]         engine_i_pair_rdata;
+wire                          engine_psum_pair_req;
+wire [BANK_INDEX_WIDTH-1:0]   engine_psum_pair_bank0;
+wire [BANK_INDEX_WIDTH-1:0]   engine_psum_pair_bank1;
+wire [SRAM_ADDR_WIDTH-1:0]    engine_psum_pair_addr;
+wire [BANK_INDEX_WIDTH-1:0]   engine_psum_pair_rsp_bank0;
+wire [BANK_INDEX_WIDTH-1:0]   engine_psum_pair_rsp_bank1;
+wire [PAIR_WIDTH-1:0]         engine_psum_pair_rdata;
+wire                          engine_o_pair_req;
+wire [BANK_INDEX_WIDTH-1:0]   engine_o_pair_bank0;
+wire [BANK_INDEX_WIDTH-1:0]   engine_o_pair_bank1;
+wire [SRAM_ADDR_WIDTH-1:0]    engine_o_pair_addr;
+wire [2*PAIR_WIDTH-1:0]       engine_o_pair_wdata;
+wire engine_psum_pair_req_fp32, engine_o_pair_fp32;
+wire [BANK_INDEX_WIDTH-1:0] engine_psum_pair_bank2, engine_psum_pair_bank3;
+wire [SRAM_ADDR_WIDTH-1:0] engine_psum_pair_extra_addr;
+wire [BANK_INDEX_WIDTH-1:0] engine_psum_pair_rsp_bank2, engine_psum_pair_rsp_bank3;
+wire [BANK_INDEX_WIDTH-1:0] engine_o_pair_bank2, engine_o_pair_bank3;
+wire [SRAM_ADDR_WIDTH-1:0] engine_o_pair_extra_addr;
+wire [PAIR_WIDTH-1:0] engine_psum_pair_extra_rdata;
+wire                          stream_out_push;
+wire                          stream_i_prefetch_accept;
+wire                          stream_psum_prefetch_accept;
+wire                          start_queue_launch;
+wire                          unused_cmd_bits;
+wire                          engine_scale_stream_ready;
+wire                          scale_stream_push;
+wire                          direct_sld_launch;
+wire [BANK_NUM-1:0]           lower_owned_mask;
+wire                          wld_req_owned;
+wire                          copy_mode_req;
+wire                          copy_start_accept;
+wire                          copy_host_req;
+wire                          copy_host_we;
+wire [ADDR_WIDTH-1:0]         copy_host_addr;
+wire [BYTE_WIDTH-1:0]         copy_host_wstrb;
+genvar                        bank_gen_i;
 
-localparam DTCM_IDLE         = 4'd0;
-localparam DTCM_RD_IN_LO     = 4'd1;
-localparam DTCM_WAIT_IN_LO   = 4'd2;
-localparam DTCM_RD_IN_HI     = 4'd3;
-localparam DTCM_WAIT_IN_HI   = 4'd4;
-localparam DTCM_RD_PSUM_LO   = 4'd5;
-localparam DTCM_WAIT_PSUM_LO = 4'd6;
-localparam DTCM_RD_PSUM_HI   = 4'd7;
-localparam DTCM_WAIT_PSUM_HI = 4'd8;
-localparam DTCM_COMPUTE      = 4'd9;
-localparam DTCM_WAIT_COMPUTE = 4'd10;
-localparam DTCM_WR_OUT_LO    = 4'd11;
-localparam DTCM_WR_OUT_HI    = 4'd12;
-localparam DTCM_STREAM       = 4'd15;
-
-localparam [1:0] TENSOR_RSP_ROLE_NONE = 2'd0;
-localparam [1:0] TENSOR_RSP_ROLE_I    = 2'd1;
-localparam [1:0] TENSOR_RSP_ROLE_PSUM = 2'd2;
-localparam [1:0] TENSOR_RSP_ROLE_O    = 2'd3;
-
-localparam [2:0] TENSOR_STREAM_I_CHANNEL    = 3'd0;
-localparam [2:0] TENSOR_STREAM_PSUM_CHANNEL = 3'd2;
-localparam [2:0] TENSOR_STREAM_OUT_CHANNEL  = 3'd4;
-
-function [BANK_NUM-1:0] tensor_bank_pair_mask;
+function [BANK_NUM-1:0] pair_mask;
   input [ADDR_WIDTH-1:0] addr;
-  integer                mask_idx;
-  reg [ADDR_WIDTH-1:0]   addr_next;
+  integer i;
+  reg [ADDR_WIDTH-1:0] addr_next;
 begin
   addr_next = addr + {{ADDR_WIDTH-1{1'b0}}, 1'b1};
-  tensor_bank_pair_mask[BANK_NUM-1:0] = {BANK_NUM{1'b0}};
-  for (mask_idx = 0; mask_idx < BANK_NUM; mask_idx = mask_idx + 1) begin
-    if (addr[BANK_INDEX_WIDTH-1:0] == mask_idx[BANK_INDEX_WIDTH-1:0])
-      tensor_bank_pair_mask[mask_idx] = 1'b1;
-    if (addr_next[BANK_INDEX_WIDTH-1:0] == mask_idx[BANK_INDEX_WIDTH-1:0])
-      tensor_bank_pair_mask[mask_idx] = 1'b1;
+  pair_mask[BANK_NUM-1:0] = {BANK_NUM{1'b0}};
+  for (i = 0; i < BANK_NUM; i = i + 1) begin
+    if (addr[BANK_INDEX_WIDTH-1:0] == i[BANK_INDEX_WIDTH-1:0])
+      pair_mask[i] = 1'b1;
+    if (addr_next[BANK_INDEX_WIDTH-1:0] == i[BANK_INDEX_WIDTH-1:0])
+      pair_mask[i] = 1'b1;
   end
 end
 endfunction
 
-function [7:0] tensor_channel_onehot;
+function [DATA_WIDTH-1:0] bank_data;
+  input [BANK_NUM*DATA_WIDTH-1:0] data;
+  input [BANK_INDEX_WIDTH-1:0] bank;
+begin
+  bank_data[DATA_WIDTH-1:0] = data[bank*DATA_WIDTH +: DATA_WIDTH];
+end
+endfunction
+
+function [BANK_INDEX_WIDTH-1:0] next_bank;
   input [ADDR_WIDTH-1:0] addr;
 begin
-  tensor_channel_onehot[7:0] = 8'b0;
-  tensor_channel_onehot[addr[3:1]] = 1'b1;
+  next_bank[BANK_INDEX_WIDTH-1:0] =
+      addr[BANK_INDEX_WIDTH-1:0] + {{BANK_INDEX_WIDTH-1{1'b0}}, 1'b1};
 end
 endfunction
 
-function [2:0] tensor_plan_channel;
-  input [2:0] pair;
-  input [2:0] phase_at_start;
-  input [3:0] delay;
-begin
-  tensor_plan_channel[2:0] = pair[2:0]
-                           - (phase_at_start[2:0] + delay[2:0]);
-end
-endfunction
-
-function tensor_stream_phase_match;
-  input [2:0] phase_in;
-  input [2:0] channel_in;
-  input [ADDR_WIDTH-1:0] addr;
-begin
-  tensor_stream_phase_match = ((phase_in[2:0] + channel_in[2:0])
-                               === addr[3:1]);
-end
-endfunction
-
-function [7:0] tensor_channel_id_onehot;
-  input [2:0] channel_id;
-begin
-  tensor_channel_id_onehot[7:0] = 8'b0;
-  tensor_channel_id_onehot[channel_id[2:0]] = 1'b1;
-end
-endfunction
-
-function [1:0] tensor_plan_o_comp;
-  input [2:0] i_pair_in;
-  input [2:0] out_pair_in;
-  input [2:0] phase_in;
-  reg [2:0] i_ch;
-  reg [2:0] out_ch;
-begin
-  i_ch = tensor_plan_channel(i_pair_in, phase_in,
-                             TENSOR_I_BASE_DELAY[3:0]);
-  out_ch = tensor_plan_channel(out_pair_in, phase_in,
-                               TENSOR_O_BASE_DELAY[3:0]);
-  tensor_plan_o_comp = (out_ch == i_ch) ? 2'd1 : 2'd0;
-end
-endfunction
-
-function [1:0] tensor_plan_psum_comp;
-  input [2:0] i_pair_in;
-  input [2:0] out_pair_in;
-  input [2:0] psum_pair_in;
-  input [2:0] phase_in;
-  input [1:0] o_comp_in;
-  reg [2:0] i_ch;
-  reg [2:0] out_ch;
-  reg [2:0] psum_ch;
-  reg [3:0] out_delay;
-  reg [3:0] psum_delay;
-  integer loop_i;
-begin
-  i_ch = tensor_plan_channel(i_pair_in, phase_in,
-                             TENSOR_I_BASE_DELAY[3:0]);
-  out_delay = TENSOR_O_BASE_DELAY[3:0] + {2'b0, o_comp_in[1:0]};
-  out_ch = tensor_plan_channel(out_pair_in, phase_in,
-                               out_delay[3:0]);
-  tensor_plan_psum_comp = 2'd0;
-  for (loop_i = 0; loop_i < 2; loop_i = loop_i + 1) begin
-    psum_delay = TENSOR_PSUM_BASE_DELAY[3:0]
-               + {2'b0, tensor_plan_psum_comp[1:0]};
-    psum_ch = tensor_plan_channel(psum_pair_in, phase_in,
-                                  psum_delay[3:0]);
-    if ((psum_ch == i_ch || psum_ch == out_ch)
-        && tensor_plan_psum_comp != 2'd2)
-      tensor_plan_psum_comp = tensor_plan_psum_comp + 2'd1;
+assign tensor_busy = engine_busy
+                  || copy_active_q
+                  || queued_start_valid_q
+                  || start_pending_q
+                  || wld_cmd_pending_q
+                  || wld_cmd_pending_next_q
+                  || wld_active_q
+                  || sld_pending_q
+                  || sld_wait_q
+                  || direct_sld_active_q
+                  || (scale_stream_count_q != 0);
+assign cfg_cmd_ready = !queued_start_valid_q && !start_pending_q;
+assign tensor_cmd_ready = cfg_cmd_ready;
+assign tensor_start_ready = !queued_start_valid_q
+                         && !start_pending_q
+                         && (!cmd_start_mode[0]
+                             || cmd_start_mode[3]
+                             || cmd_start_mode[4]
+                             || scale_pending_valid_q)
+                         && (cmd_start_mode[5]
+                             ? (!engine_busy && !copy_active_q)
+                             : start_weight_available);
+assign tensor_wld_cmd_ready = cmd_wld_reuse
+                            ? (tensor_weight_active_valid
+                               && !tensor_weight_pending_valid
+                               && !weight_loaded_q
+                               && !weight_reuse_token_q
+                               && !wld_active_q
+                               && !wld_cmd_pending_q
+                               && !wld_cmd_pending_next_q
+                               && !queued_start_valid_q
+                               && !start_pending_q)
+                            : (!wld_cmd_pending_next_q
+                               && !weight_reuse_token_q
+                               && !queued_start_valid_q
+                               && !start_pending_q);
+assign tensor_sld_cmd_ready = cmd_sld_reuse
+                            ? (scale_active_valid_q
+                               && !sld_pending_q
+                               && !sld_wait_q
+                               && !scale_pending_valid_q
+                               && !queued_start_valid_q
+                               && !start_pending_q)
+                            : (!sld_pending_q
+                               && !sld_wait_q
+                               && !scale_pending_valid_q
+                               && (scale_stream_count_q != 4'd8)
+                               && !queued_start_valid_q
+                               && !start_pending_q);
+assign tensor_sld_addr[ADDR_WIDTH-1:0] = sld_ptr_q[ADDR_WIDTH-1:0];
+assign tensor_sld_req = sld_pending_q && !sld_wait_q;
+assign tensor_sld_fill_done = tensor_sld_rvalid && sld_wait_q;
+assign scale_stream_push = tensor_sld_rvalid && sld_wait_q && sld_stream_q;
+assign tensor_wld_fill_done = wld_fill_done;
+assign tensor_wld_tile_words[4:0] =
+    (cfg_wtype_q[cfg_write_sel_q] == 4'd1) ? 5'd16 :
+    (cfg_wtype_q[cfg_write_sel_q] == 4'd4) ? 5'd4 : 5'd8;
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b) begin
+    for (wld_stage=0; wld_stage<READ_LATENCY; wld_stage=wld_stage+1)
+      wld_tag_pipe[wld_stage] <= 0;
+  end else begin
+    wld_tag_pipe[0] <= wld_issue_idx_q;
+    for (wld_stage=1; wld_stage<READ_LATENCY; wld_stage=wld_stage+1)
+      wld_tag_pipe[wld_stage] <= wld_tag_pipe[wld_stage-1];
   end
 end
-endfunction
+assign wld_rsp_idx_q = wld_tag_pipe[READ_LATENCY-1];
 
-function [8:0] tensor_plan_cycles;
-  input [3:0] delay_in;
-  input [8:0] run_cycles_in;
-  reg [3:0] delay_delta;
-begin
-  delay_delta = (delay_in > TENSOR_I_BASE_DELAY[3:0])
-              ? (delay_in - TENSOR_I_BASE_DELAY[3:0])
-              : 4'b0;
-  tensor_plan_cycles = run_cycles_in[8:0] + {5'b0, delay_delta[3:0]};
-end
-endfunction
+assign tensor_sync_stall = engine_busy
+                         || copy_active_q
+                         || queued_start_valid_q
+                         || start_pending_q
+                         || wld_cmd_pending_q
+                         || wld_cmd_pending_next_q
+                         || wld_active_q
+                         || sld_pending_q
+                         || sld_wait_q
+                         || direct_sld_active_q
+                         || (scale_stream_count_q != 0);
+assign direct_sld_launch = direct_sld_active_q
+                        && (direct_sld_issued_q < direct_sld_target_q)
+                        && !sld_pending_q && !sld_wait_q
+                        && (scale_stream_count_q != 4'd8);
 
-assign dtcm_active = dtcm_state[3:0] != DTCM_IDLE;
-assign cmd_wld_any_req = cmd_wld_req || cmd_wld_trans_req;
-assign tensor_cmd_ready = !wld_fetch_active
-                        && !wld_cmd_pending
-                        && !wld_fill_busy
-                        && wld_ready;
-assign wld_cmd_can_launch = !wld_fetch_active
-                          && !queued_start_valid
-                          && wld_fill_start_ready;
-assign tensor_wld_cmd_ready = !wld_cmd_pending && wld_cmd_can_launch;
-assign wld_cmd_immediate_launch = cmd_wld_any_req
-                                && !wld_cmd_pending
+assign tensor_io_lease_channel_mask[7:0] = 8'b0;
+assign tensor_io_lease_cycles[8:0] = 9'b0;
+assign tensor_io_lease_delay[3:0] = 4'b0;
+assign tensor_io_lease1_channel_mask[7:0] = 8'b0;
+assign tensor_io_lease1_cycles[8:0] = 9'b0;
+assign tensor_io_lease1_delay[3:0] = 4'b0;
+assign tensor_io_lease1_valid = 1'b0;
+assign tensor_io_lease2_channel_mask[7:0] = 8'b0;
+assign tensor_io_lease2_cycles[8:0] = 9'b0;
+assign tensor_io_lease2_delay[3:0] = 4'b0;
+assign tensor_io_lease2_valid = 1'b0;
+assign tensor_io_lease_valid = 1'b0;
+assign tensor_wld_lease_channel_mask[7:0] = 8'b0;
+assign tensor_wld_lease_cycles[8:0] = 9'b0;
+assign tensor_wld_lease_delay[3:0] = 4'b0;
+assign tensor_wld_lease_valid = 1'b0;
+assign tensor_active_mask[BANK_NUM-1:0] = tensor_bank_req[BANK_NUM-1:0];
+assign start_accept = (cmd_start_req || cmd_start_tile_req)
+                   && tensor_start_ready;
+assign copy_mode_req = cmd_start_req && cmd_start_mode[5];
+assign copy_start_accept = start_accept && copy_mode_req;
+assign start_weight_available =
+    weight_reuse_token_q
+    || weight_loaded_q
+    || wld_active_q
+    || wld_cmd_pending_q
+    || wld_cmd_pending_next_q;
+assign start_pending_weight_available =
+    start_pending_reuse_weight_q ? tensor_weight_active_valid
+                                 : weight_loaded_q;
+assign start_uses_pending_weight =
+    (start_direct_accept && weight_loaded_q)
+    || (start_queue_accept && weight_loaded_q)
+    || (start_pending_direct_launch && weight_loaded_q)
+    || (start_pending_queue_launch && weight_loaded_q);
+assign start_uses_reuse_weight =
+    (start_direct_accept && weight_reuse_token_q)
+    || (start_queue_accept && weight_reuse_token_q)
+    || (start_pending_direct_launch && start_pending_reuse_weight_q)
+    || (start_pending_queue_launch && start_pending_reuse_weight_q);
+assign start_direct_accept =
+    start_accept && !copy_mode_req
+    && (weight_reuse_token_q || weight_loaded_q)
+    && !queued_start_valid_q && !engine_busy;
+assign start_queue_accept =
+    start_accept && !copy_mode_req
+    && (weight_reuse_token_q || weight_loaded_q)
+    && !queued_start_valid_q && engine_busy;
+assign start_wait_accept = start_accept
+                        && !copy_mode_req
+                        && !((weight_reuse_token_q || weight_loaded_q)
+                             && !queued_start_valid_q);
+assign start_pending_direct_launch =
+    start_pending_q && start_pending_weight_available
+    && !queued_start_valid_q && !engine_busy;
+assign start_pending_queue_launch =
+    start_pending_q && start_pending_weight_available
+    && !queued_start_valid_q && engine_busy;
+assign start_consume_weight =
+    start_uses_pending_weight;
+assign start_data_run_count[15:0] =
+    cmd_start_tile_req ? 16'd1 :
+                         cfg_run_count_q[cfg_write_sel_q][15:0];
+assign start_data_scale_sel = scale_pending_valid_q
+                            ? scale_pending_sel_q : 1'b0;
+// The accepted descriptor is immutable while waiting for its weight. Use
+// that time to fill the younger I window; pending->queued preserves identity.
+// This does not activate weights or allow compute before weight readiness.
+wire input_prefetch_pending = WIDE_H4 && start_pending_q && !queued_start_valid_q;
+wire input_prefetch_valid = queued_start_valid_q || input_prefetch_pending;
+wire [ADDR_WIDTH-1:0] input_prefetch_base = input_prefetch_pending
+    ? start_pending_in_q : queued_in_q;
+wire [ADDR_WIDTH-1:0] input_prefetch_psum = input_prefetch_pending
+    ? start_pending_psum_q : queued_psum_q;
+wire [7:0] input_prefetch_mode = input_prefetch_pending
+    ? start_pending_mode_q : queued_start_mode_q;
+wire [VECTOR_COUNT_WIDTH-1:0] input_prefetch_count = input_prefetch_pending
+    ? start_pending_count_q : queued_count_q;
+
+assign start_queue_launch = queued_start_valid_q &&
+                            (engine_handoff_ready ||
+                             (!engine_busy && (queued_start_preactivated_q ||
+                                              (queued_start_reuse_weight_q &&
+                                               !tensor_weight_pending_valid))));
+assign queued_weight_preactivate = queued_start_valid_q
+                                  && !queued_start_preactivated_q
+                                  && engine_weight_idle
+                                  && tensor_weight_pending_valid;
+// A younger WLD before any start supersedes the previously loaded tile.  The
+// dot8x8 fill boundary cannot overwrite a pending buffer directly, so rotate
+// that unused tile active while the engine is idle; the next cycle can fill
+// the other physical buffer.  Never rotate a tile already owned by a pending
+// or queued start.
+assign wld_replace_preactivate = wld_cmd_pending_q
+                               && weight_loaded_q
+                               && !wld_active_q
+                               && !engine_busy
+                               && !queued_start_valid_q
+                               && !start_pending_q
+                               && tensor_weight_pending_valid;
+assign engine_weight_preactivate = queued_weight_preactivate
+                                 || wld_replace_preactivate;
+assign engine_start_use_active =
+    (start_queue_launch && (queued_start_preactivated_q ||
+                            (queued_start_reuse_weight_q &&
+                             !tensor_weight_pending_valid)))
+    || (start_direct_accept && weight_reuse_token_q)
+    || (start_pending_direct_launch && start_pending_reuse_weight_q);
+assign engine_start = start_direct_accept
+                   || start_pending_direct_launch
+                   || start_queue_launch;
+assign tensor_start_retire_valid = engine_start || copy_start_accept;
+assign tensor_start_retire_seq_id = copy_start_accept ? cmd_start_seq_id :
+                                    start_direct_accept ? cmd_start_seq_id :
+                                    (start_pending_direct_launch ?
+                                     start_pending_seq_id_q : queued_start_seq_id_q);
+assign tensor_start_retire_epoch = copy_start_accept ? cmd_start_epoch :
+                                   start_direct_accept ? cmd_start_epoch :
+                                   (start_pending_direct_launch ?
+                                    start_pending_epoch_q : queued_start_epoch_q);
+assign start_data_in[ADDR_WIDTH-1:0] =
+    cfg_in_ptr_q[cfg_write_sel_q][ADDR_WIDTH-1:0];
+assign start_data_out[ADDR_WIDTH-1:0] =
+    cfg_out_ptr_q[cfg_write_sel_q][ADDR_WIDTH-1:0];
+assign start_data_psum[ADDR_WIDTH-1:0] =
+    cfg_psum_ptr_q[cfg_write_sel_q][ADDR_WIDTH-1:0];
+assign engine_start_in[ADDR_WIDTH-1:0] =
+    start_queue_launch ? queued_in_q[ADDR_WIDTH-1:0]
+  : start_pending_direct_launch ? start_pending_in_q[ADDR_WIDTH-1:0]
+                       : start_data_in[ADDR_WIDTH-1:0];
+assign engine_start_out[ADDR_WIDTH-1:0] =
+    start_queue_launch ? queued_out_q[ADDR_WIDTH-1:0]
+  : start_pending_direct_launch ? start_pending_out_q[ADDR_WIDTH-1:0]
+                       : start_data_out[ADDR_WIDTH-1:0];
+assign engine_start_psum[ADDR_WIDTH-1:0] =
+    start_queue_launch ? queued_psum_q[ADDR_WIDTH-1:0]
+  : start_pending_direct_launch ? start_pending_psum_q[ADDR_WIDTH-1:0]
+                       : start_data_psum[ADDR_WIDTH-1:0];
+assign engine_start_count[VECTOR_COUNT_WIDTH-1:0] =
+    start_queue_launch ? queued_count_q[VECTOR_COUNT_WIDTH-1:0]
+  : start_pending_direct_launch ? start_pending_count_q[VECTOR_COUNT_WIDTH-1:0]
+                       : start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
+assign engine_start_dtype = start_queue_launch ? queued_start_dtype_q
+    : start_pending_direct_launch ? start_pending_dtype_q
+                                  : cfg_dtype_q[cfg_write_sel_q];
+assign engine_start_mode[7:0] =
+    start_queue_launch ? queued_start_mode_q[7:0]
+  : start_pending_direct_launch ? start_pending_mode_q[7:0]
+                                : cmd_start_mode[7:0];
+assign engine_start_scale_sel =
+    start_queue_launch ? queued_start_scale_sel_q
+  : start_pending_direct_launch ? start_pending_scale_sel_q
+                                : start_data_scale_sel;
+assign engine_start_scale[127:0] = scale_buf_q[engine_start_scale_sel][127:0];
+assign wld_reuse_accept = (cmd_wld_req || cmd_wld_trans_req)
+                       && cmd_wld_reuse
+                       && tensor_wld_cmd_ready;
+assign wld_cmd_accept = (cmd_wld_req || cmd_wld_trans_req)
+                     && !cmd_wld_reuse
+                     && tensor_wld_cmd_ready;
+assign sld_reuse_accept = cmd_sld_req
+                       && cmd_sld_reuse
+                       && tensor_sld_cmd_ready;
+assign wld_cmd_can_launch = !wld_active_q && !weight_loaded_q &&
+                            wld_fill_start_ready;
+assign wld_cmd_immediate_launch = wld_cmd_accept
+                                && !wld_cmd_pending_q
                                 && wld_cmd_can_launch;
-assign wld_cmd_pending_launch = wld_cmd_pending && wld_cmd_can_launch;
-assign wld_cmd_launch = wld_cmd_pending_launch || wld_cmd_immediate_launch;
-assign wld_cmd_queue_accept = cmd_wld_any_req
-                            && !wld_cmd_pending
-                            && !wld_cmd_can_launch;
+assign wld_cmd_pending_launch = wld_cmd_pending_q && wld_cmd_can_launch;
+assign wld_cmd_launch = wld_cmd_immediate_launch || wld_cmd_pending_launch;
 assign wld_cmd_launch_ptr[ADDR_WIDTH-1:0] =
-       wld_cmd_pending_launch ? wld_cmd_pending_ptr[ADDR_WIDTH-1:0]
-                              : cmd_wld_ptr[ADDR_WIDTH-1:0];
+    wld_cmd_pending_launch ? wld_cmd_pending_ptr_q[ADDR_WIDTH-1:0]
+                           : cmd_wld_ptr[ADDR_WIDTH-1:0];
 assign wld_cmd_launch_transpose =
-       wld_cmd_pending_launch ? wld_cmd_pending_transpose
-                              : cmd_wld_trans_req;
-assign wld_cmd_launch_bf16 =
-       wld_cmd_pending_launch ? wld_cmd_pending_bf16
-                              : (setup_cur_wtype[3:0] == 4'd1);
-assign wld_fill_start_req = wld_cmd_launch;
-assign wld_reg_load_done = wld_fill_load_done;
-assign wld_reg_drain_busy = wld_fill_busy;
-assign wld_reg_drain_done = wld_fill_done;
-assign tensor_start_base_ready = !busy && !dtcm_active;
-assign tensor_start_ready = wld_ready && weight_loaded_valid
-                          && (tensor_start_base_ready || !queued_start_valid);
-assign start_cmd_req = cmd_start_req || cmd_start_tile_req;
-assign start_accept = start_cmd_req && tensor_start_ready;
-assign start_queue_accept = start_accept && !tensor_start_base_ready;
-assign start_direct_launch = start_accept && tensor_start_base_ready;
-assign start_queue_launch = stream_done && queued_start_valid;
-assign start_launch = start_direct_launch || start_queue_launch;
-assign start_phase_next[2:0] = phase[2:0];
-assign setup_buf_next = !setup_buf_sel;
-assign setup_cur_dtype[3:0] = setup_dtype[setup_buf_sel][3:0];
-assign setup_cur_wtype[3:0] = setup_wtype[setup_buf_sel][3:0];
-assign setup_cur_in_ptr[ADDR_WIDTH-1:0] =
-       setup_in_ptr[setup_buf_sel][ADDR_WIDTH-1:0];
-assign setup_cur_psum_ptr[ADDR_WIDTH-1:0] =
-       setup_psum_ptr[setup_buf_sel][ADDR_WIDTH-1:0];
-assign setup_cur_out_ptr[ADDR_WIDTH-1:0] =
-       setup_out_ptr[setup_buf_sel][ADDR_WIDTH-1:0];
-assign setup_cur_run_count[RUN_COUNT_WIDTH-1:0] =
-       setup_run_count[setup_buf_sel][RUN_COUNT_WIDTH-1:0];
-assign setup_cur_run_count_valid = setup_run_count_valid[setup_buf_sel];
-assign plan_next_dtype[3:0] =
-       cmd_setcsr_req ? cmd_setcsr_dtype[3:0]
-                      : setup_cur_dtype[3:0];
-assign plan_next_wtype[3:0] =
-       cmd_setcsr_req ? cmd_setcsr_wtype[3:0]
-                      : setup_cur_wtype[3:0];
-assign plan_next_in_ptr[ADDR_WIDTH-1:0] =
-       cmd_setin_req ? cmd_setin_ptr[ADDR_WIDTH-1:0]
-                     : setup_cur_in_ptr[ADDR_WIDTH-1:0];
-assign plan_next_psum_ptr[ADDR_WIDTH-1:0] =
-       cmd_setpsum_req ? cmd_setpsum_ptr[ADDR_WIDTH-1:0]
-                       : setup_cur_psum_ptr[ADDR_WIDTH-1:0];
-assign plan_next_out_ptr[ADDR_WIDTH-1:0] =
-       cmd_setout_req ? cmd_setout_ptr[ADDR_WIDTH-1:0]
-                      : setup_cur_out_ptr[ADDR_WIDTH-1:0];
-assign plan_next_run_count[RUN_COUNT_WIDTH-1:0] =
-       cmd_setn_req ? cmd_setn_value[RUN_COUNT_WIDTH-1:0]
-                    : setup_cur_run_count[RUN_COUNT_WIDTH-1:0];
-assign plan_next_run_count_valid =
-       cmd_setn_req || setup_cur_run_count_valid;
-assign plan_ptr_update = cmd_setin_req || cmd_setout_req || cmd_setpsum_req
-                       || cmd_setn_req;
-assign start_data_run_count[RUN_COUNT_WIDTH-1:0] =
-       cmd_start_tile_req ? {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1} :
-       (plan_next_run_count_valid ? plan_next_run_count[RUN_COUNT_WIDTH-1:0]
-                                  : {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1});
-assign launch_start_tile = start_queue_launch ? queued_start_tile
-                                               : cmd_start_tile_req;
-assign launch_in_ptr[ADDR_WIDTH-1:0] =
-       start_queue_launch ? queued_in_ptr[ADDR_WIDTH-1:0]
-                          : plan_next_in_ptr[ADDR_WIDTH-1:0];
-assign launch_out_ptr[ADDR_WIDTH-1:0] =
-       start_queue_launch ? queued_out_ptr[ADDR_WIDTH-1:0]
-                          : plan_next_out_ptr[ADDR_WIDTH-1:0];
-assign launch_psum_ptr[ADDR_WIDTH-1:0] =
-       start_queue_launch ? queued_psum_ptr[ADDR_WIDTH-1:0]
-                          : plan_next_psum_ptr[ADDR_WIDTH-1:0];
-assign launch_run_count[RUN_COUNT_WIDTH-1:0] =
-       launch_start_tile ? {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1} :
-       (start_queue_launch ? queued_run_count[RUN_COUNT_WIDTH-1:0]
-                           : start_data_run_count[RUN_COUNT_WIDTH-1:0]);
-assign launch_weight_buf = start_queue_launch ? queued_weight_buf
-                                              : weight_loaded_buf_q;
-assign iopsum_union_lease_delay[3:0] = TENSOR_IO_LEASE_DELAY[3:0];
-assign iopsum_union_lease_cycles[8:0] =
-       launch_run_count[8:0] + 9'd16;
-assign iopsum_union_i_channel[2:0] =
-       tensor_plan_channel(launch_in_ptr[3:1],
-                           start_phase_next[2:0],
-                           iopsum_union_lease_delay[3:0]);
-assign iopsum_union_psum_channel[2:0] =
-       tensor_plan_channel(launch_psum_ptr[3:1],
-                           start_phase_next[2:0],
-                           iopsum_union_lease_delay[3:0]);
-assign iopsum_union_o_channel[2:0] =
-       tensor_plan_channel(launch_out_ptr[3:1],
-                           start_phase_next[2:0],
-                           iopsum_union_lease_delay[3:0]);
-assign iopsum_union_channel_mask[7:0] =
-       tensor_channel_id_onehot(iopsum_union_i_channel[2:0])
-     | tensor_channel_id_onehot(iopsum_union_psum_channel[2:0])
-     | tensor_channel_id_onehot(iopsum_union_o_channel[2:0]);
-assign data_vec_word_offset[ADDR_WIDTH-1:0] =
-       {data_vec_index[ADDR_WIDTH-2:0], 1'b0};
-assign stream_i_word_offset[ADDR_WIDTH-1:0] =
-       {stream_i_issue_index[ADDR_WIDTH-2:0], 1'b0};
-assign stream_psum_word_offset[ADDR_WIDTH-1:0] =
-       {stream_psum_issue_index[ADDR_WIDTH-2:0], 1'b0};
-assign stream_out_word_offset[ADDR_WIDTH-1:0] =
-       {stream_out_write_index[ADDR_WIDTH-2:0], 1'b0};
-assign stream_out_push_word_offset[ADDR_WIDTH-1:0] =
-       {stream_out_push_index[ADDR_WIDTH-2:0], 1'b0};
-assign queued_i_word_offset[ADDR_WIDTH-1:0] =
-       {queued_i_issue_index[ADDR_WIDTH-2:0], 1'b0};
-assign queued_psum_word_offset[ADDR_WIDTH-1:0] =
-       {queued_psum_issue_index[ADDR_WIDTH-2:0], 1'b0};
-assign stream_i_addr[ADDR_WIDTH-1:0] =
-       active_in_ptr[ADDR_WIDTH-1:0] + stream_i_word_offset[ADDR_WIDTH-1:0];
-assign stream_psum_addr[ADDR_WIDTH-1:0] =
-       active_psum_ptr[ADDR_WIDTH-1:0] + stream_psum_word_offset[ADDR_WIDTH-1:0];
-assign stream_out_addr[ADDR_WIDTH-1:0] =
-       stream_out_addr_fifo[stream_out_head][ADDR_WIDTH-1:0];
-assign stream_out_push_addr[ADDR_WIDTH-1:0] =
-       active_out_ptr[ADDR_WIDTH-1:0]
-     + stream_out_push_word_offset[ADDR_WIDTH-1:0];
-assign queued_i_addr[ADDR_WIDTH-1:0] =
-       queued_in_ptr[ADDR_WIDTH-1:0] + queued_i_word_offset[ADDR_WIDTH-1:0];
-assign queued_psum_addr[ADDR_WIDTH-1:0] =
-       queued_psum_ptr[ADDR_WIDTH-1:0] + queued_psum_word_offset[ADDR_WIDTH-1:0];
+    wld_cmd_pending_launch ? wld_cmd_pending_transpose_q
+                           : cmd_wld_trans_req;
+assign wld_cmd_launch_wtype =
+    wld_cmd_pending_launch ? wld_cmd_pending_wtype_q
+                           : load_wtype;
+assign wld_req_addr[ADDR_WIDTH-1:0] =
+    wld_base_q[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-4{1'b0}},
+                                  wld_issue_idx_q[2:0], 1'b0};
+assign tensor_wld_addr[ADDR_WIDTH-1:0] = wld_req_addr[ADDR_WIDTH-1:0];
+assign tensor_wld_req = wld_active_q
+                     && (wld_read_count_q[3:0]
+                         < (wld_active_wtype_q==4'd1 ? 4'd8 : wld_active_wtype_q==4'd4 ? 4'd2 : 4'd4));
+assign wld_read_fire = tensor_wld_req && tensor_wld_ready;
+assign wld_load_data[PAIR_WIDTH-1:0] = tensor_wld_rdata[PAIR_WIDTH-1:0];
+assign engine_host_bank_rdata[DATA_WIDTH-1:0] =
+    bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_host_rsp_bank);
+assign copy_host_req = copy_active_q && engine_host_ready
+                     && (WIDE_H4 ?
+                         ((copy_host_addr[3:2] == tensor_phase[2:1]) ||
+                          (copy_host_addr[3:2] == 2'(tensor_phase[2:1]+1)) ||
+                          (copy_host_addr[3:1] == {2'(tensor_phase[2:1]+2),tensor_phase[3]})) : LOWER_SIX ?
+                         ((3'(copy_host_addr[3:1]-tensor_phase[3:1]) < 3'd3) ||
+                          (3'(copy_host_addr[3:1]-tensor_phase[3:1]) == 3'd5) ||
+                          (3'(copy_host_addr[3:1]-tensor_phase[3:1]) == 3'd6))
+                                       : (copy_host_addr[1] == tensor_phase[1]))
+                     && (copy_write_q || !engine_host_rvalid);
+assign copy_host_we = copy_write_q;
+assign copy_host_addr[ADDR_WIDTH-1:0] =
+    (copy_write_q ? copy_out_q : copy_in_q)
+    + (copy_offset_q[ADDR_WIDTH-1:0] >> BYTE_INDEX_WIDTH);
+assign copy_host_wstrb[BYTE_WIDTH-1:0] =
+    (copy_bytes_q - copy_offset_q >= BYTE_WIDTH)
+    ? {BYTE_WIDTH{1'b1}}
+    : ({BYTE_WIDTH{1'b1}} >> (BYTE_WIDTH - (copy_bytes_q - copy_offset_q)));
+assign engine_i_pair_rdata[PAIR_WIDTH-1:0] =
+    {bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_i_pair_rsp_bank1),
+     bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_i_pair_rsp_bank0)};
+assign engine_psum_pair_rdata[PAIR_WIDTH-1:0] =
+    {bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_psum_pair_rsp_bank1),
+     bank_data(tensor_bank_rdata[BANK_NUM*DATA_WIDTH-1:0], engine_psum_pair_rsp_bank0)};
+assign engine_psum_pair_extra_rdata =
+    {bank_data(tensor_bank_rdata, engine_psum_pair_rsp_bank3),
+     bank_data(tensor_bank_rdata, engine_psum_pair_rsp_bank2)};
+assign unused_cmd_bits = cmd_setcsr_req || (|cmd_setcsr_dtype[3:0])
+                      || (|cmd_setcsr_wtype[3:0])
+                      || cmd_wld_trans_req
+                      || engine_done;
 
-assign out_step_addr[ADDR_WIDTH-1:0] =
-       active_out_ptr[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-STEP_WIDTH{1'b0}}, step};
-assign in_step_addr[ADDR_WIDTH-1:0] =
-       active_in_ptr[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-STEP_WIDTH{1'b0}}, step};
-assign psum_step_addr[ADDR_WIDTH-1:0] =
-       active_psum_ptr[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-STEP_WIDTH{1'b0}}, step};
-assign weight_step_addr[ADDR_WIDTH-1:0] =
-       weight_ptr[ADDR_WIDTH-1:0] + {{ADDR_WIDTH-STEP_WIDTH{1'b0}}, step};
-
-assign out_mask[BANK_NUM-1:0] =
-       tensor_bank_pair_mask(out_step_addr[ADDR_WIDTH-1:0]);
-assign in_mask[BANK_NUM-1:0] =
-       tensor_bank_pair_mask(in_step_addr[ADDR_WIDTH-1:0]);
-assign psum_mask[BANK_NUM-1:0] =
-       tensor_bank_pair_mask(psum_step_addr[ADDR_WIDTH-1:0]);
-assign weight_mask[BANK_NUM-1:0] =
-       tensor_bank_pair_mask(weight_step_addr[ADDR_WIDTH-1:0]);
-assign step_mask[BANK_NUM-1:0] =
-       out_mask[BANK_NUM-1:0]
-     | in_mask[BANK_NUM-1:0]
-     | psum_mask[BANK_NUM-1:0]
-     | weight_mask[BANK_NUM-1:0];
-
-assign step_conflict = busy
-                    && ((step_mask[BANK_NUM-1:0]
-                         & lsu_resv_plus1[BANK_NUM-1:0])
-                        != {BANK_NUM{1'b0}});
-assign step_fire = busy && !step_conflict;
-assign start_cycles[ADDR_WIDTH-1:0] =
-       {{ADDR_WIDTH-1{1'b0}}, 1'b1}
-     + PIPELINE_LATENCY[ADDR_WIDTH-1:0];
-
-assign tensor_resv_plus2_req = step_fire;
-assign tensor_resv_plus2_mask[BANK_NUM-1:0] =
-       step_fire ? step_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}};
-assign dma_delay_req = step_conflict;
-assign tensor_sync_stall = dtcm_active || wld_fetch_active || !wld_ready
-                         || queued_start_valid;
-assign tensor_busy = tensor_sync_stall;
-assign stream_active = dtcm_state == DTCM_STREAM;
-assign stream_current_done =
-       stream_active
-    && (stream_i_issue_index[RUN_COUNT_WIDTH-1:0] >= data_run_remaining[RUN_COUNT_WIDTH-1:0])
-    && (stream_psum_issue_index[RUN_COUNT_WIDTH-1:0] >= data_run_remaining[RUN_COUNT_WIDTH-1:0])
-    && (stream_compute_index[RUN_COUNT_WIDTH-1:0] >= data_run_remaining[RUN_COUNT_WIDTH-1:0])
-    && (stream_out_push_index[RUN_COUNT_WIDTH-1:0] >= data_run_remaining[RUN_COUNT_WIDTH-1:0])
-    && (stream_out_inflight_count[STREAM_FIFO_INDEX_WIDTH:0]
-        == {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}});
-assign stream_i_base_req = stream_active
-                        && (stream_i_issue_index[RUN_COUNT_WIDTH-1:0]
-                            < data_run_remaining[RUN_COUNT_WIDTH-1:0])
-                        && ((stream_i_count[STREAM_FIFO_INDEX_WIDTH:0]
-                             + stream_i_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                            < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
-                            || stream_compute_fire);
-assign stream_i_current_req = stream_i_base_req
-                           && tensor_stream_phase_match(
-                                phase[2:0],
-                                TENSOR_STREAM_I_CHANNEL[2:0],
-                                stream_i_addr[ADDR_WIDTH-1:0]);
-assign stream_i_prefetch_base_req = stream_active
-                                 && queued_start_valid
-                                 && !stream_current_done
-                                 && (stream_i_issue_index[RUN_COUNT_WIDTH-1:0]
-                                     >= data_run_remaining[RUN_COUNT_WIDTH-1:0])
-                                 && (queued_i_issue_index[RUN_COUNT_WIDTH-1:0]
-                                     < queued_run_count[RUN_COUNT_WIDTH-1:0])
-                                 && ((stream_i_count[STREAM_FIFO_INDEX_WIDTH:0]
-                                      + stream_i_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                                     < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
-                                     || stream_compute_fire);
-assign stream_i_prefetch_req = !stream_i_current_req
-                            && stream_i_prefetch_base_req
-                            && tensor_stream_phase_match(
-                                 phase[2:0],
-                                 TENSOR_STREAM_I_CHANNEL[2:0],
-                                 queued_i_addr[ADDR_WIDTH-1:0]);
-assign stream_i_req = stream_i_current_req || stream_i_prefetch_req;
-assign stream_psum_base_req = stream_active
-                           && (stream_psum_issue_index[RUN_COUNT_WIDTH-1:0]
-                               < data_run_remaining[RUN_COUNT_WIDTH-1:0])
-                           && ((stream_psum_count[STREAM_FIFO_INDEX_WIDTH:0]
-                                + stream_psum_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                               < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
-                               || stream_compute_fire);
-assign stream_psum_current_req = stream_psum_base_req
-                              && tensor_stream_phase_match(
-                                   phase[2:0],
-                                   TENSOR_STREAM_PSUM_CHANNEL[2:0],
-                                   stream_psum_addr[ADDR_WIDTH-1:0]);
-assign stream_psum_prefetch_base_req = stream_active
-                                    && queued_start_valid
-                                    && !stream_current_done
-                                    && (stream_psum_issue_index[RUN_COUNT_WIDTH-1:0]
-                                        >= data_run_remaining[RUN_COUNT_WIDTH-1:0])
-                                    && (queued_psum_issue_index[RUN_COUNT_WIDTH-1:0]
-                                        < queued_run_count[RUN_COUNT_WIDTH-1:0])
-                                    && ((stream_psum_count[STREAM_FIFO_INDEX_WIDTH:0]
-                                         + stream_psum_inflight_count[STREAM_FIFO_INDEX_WIDTH:0])
-                                        < STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0]
-                                        || stream_compute_fire);
-assign stream_psum_prefetch_req = !stream_psum_current_req
-                               && stream_psum_prefetch_base_req
-                               && tensor_stream_phase_match(
-                                    phase[2:0],
-                                    TENSOR_STREAM_PSUM_CHANNEL[2:0],
-                                    queued_psum_addr[ADDR_WIDTH-1:0]);
-assign stream_psum_req = stream_psum_current_req || stream_psum_prefetch_req;
-assign stream_out_base_req = stream_active
-                          && (stream_out_count[STREAM_FIFO_INDEX_WIDTH:0]
-                              != {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}});
-assign stream_out_req = stream_out_base_req
-                     && tensor_stream_phase_match(
-                          phase[2:0],
-                          TENSOR_STREAM_OUT_CHANNEL[2:0],
-                          stream_out_addr[ADDR_WIDTH-1:0]);
-assign tensor_lane0_i_read_req = stream_i_req
-                              || (dtcm_state == DTCM_RD_IN_LO)
-                              || (dtcm_state == DTCM_RD_IN_HI);
-assign tensor_lane1_psum_read_req = stream_psum_req
-                                 || (dtcm_state == DTCM_RD_PSUM_LO)
-                                 || (dtcm_state == DTCM_RD_PSUM_HI);
-assign tensor_iopsum_read_req = tensor_lane0_i_read_req;
-assign tensor_wld_read_req = wld_fetch_active && !wld_fetch_wait;
-assign tensor_read_req = tensor_iopsum_read_req;
-assign tensor_lane2_write_req = stream_out_req
-                             || (dtcm_state == DTCM_WR_OUT_LO)
-                             || (dtcm_state == DTCM_WR_OUT_HI);
-assign tensor_write_req = 1'b0;
-assign rsp_tag_empty = rsp_tag_count[2:0] == 3'b0;
-assign rsp_tag_full = rsp_tag_count[2:0] == 3'd4;
-assign tensor_read_issue_req = tensor_read_req && !rsp_tag_full;
-assign tensor_read_accept = tensor_read_issue_req && tensor_ready;
-assign tensor_wld_read_accept = tensor_wld_read_req && tensor_wld_ready;
-assign tensor_lane1_read_accept =
-       tensor_lane1_psum_read_req && tensor_lane1_ready;
-assign tensor_lane2_write_accept =
-       tensor_lane2_write_req && tensor_lane2_ready;
-assign tensor_write_accept = tensor_lane2_write_accept;
-assign stream_i_current_accept = tensor_read_accept && stream_i_current_req;
-assign stream_i_prefetch_accept = tensor_read_accept && stream_i_prefetch_req;
-assign stream_psum_current_accept =
-       tensor_lane1_read_accept && stream_psum_current_req;
-assign stream_psum_prefetch_accept =
-       tensor_lane1_read_accept && stream_psum_prefetch_req;
-assign rsp_tag_push = tensor_read_accept && tensor_iopsum_read_req;
-assign rsp_tag_pop = tensor_rvalid && !rsp_tag_empty;
-assign tensor_req = tensor_read_issue_req || tensor_write_req;
-assign tensor_we = tensor_write_req;
-assign tensor_addr[ADDR_WIDTH-1:0] =
-       stream_i_current_req              ? stream_i_addr[ADDR_WIDTH-1:0]
-     : stream_i_prefetch_req             ? queued_i_addr[ADDR_WIDTH-1:0]
-     : (dtcm_state == DTCM_RD_IN_LO)     ? active_in_ptr[ADDR_WIDTH-1:0]
-                                           + data_vec_word_offset[ADDR_WIDTH-1:0]
-     : (dtcm_state == DTCM_RD_IN_HI)     ? active_in_ptr[ADDR_WIDTH-1:0]
-                                           + data_vec_word_offset[ADDR_WIDTH-1:0]
-                                           + {{ADDR_WIDTH-1{1'b0}}, 1'b1}
-                                        : {ADDR_WIDTH{1'b0}};
-assign tensor_wld_req = tensor_wld_read_req;
-assign tensor_wld_addr[ADDR_WIDTH-1:0] =
-       weight_ptr[ADDR_WIDTH-1:0]
-     + {{ADDR_WIDTH-4{1'b0}}, wld_read_idx[2:0], 1'b0};
-assign tensor_wdata[63:0] = 64'b0;
-assign tensor_wstrb[7:0] = tensor_write_req ? 8'hff : 8'h00;
-assign tensor_io_lease_valid = tensor_io_lease_valid_q;
-assign tensor_io_lease_channel_mask[7:0] =
-       tensor_io_lease_channel_mask_q[7:0];
-assign tensor_io_lease_cycles[8:0] = tensor_io_lease_cycles_q[8:0];
-assign tensor_io_lease_delay[3:0] = tensor_io_lease_delay_q[3:0];
-assign tensor_io_lease1_valid = tensor_io_lease1_valid_q;
-assign tensor_io_lease1_channel_mask[7:0] =
-       tensor_io_lease1_channel_mask_q[7:0];
-assign tensor_io_lease1_cycles[8:0] = tensor_io_lease1_cycles_q[8:0];
-assign tensor_io_lease1_delay[3:0] = tensor_io_lease1_delay_q[3:0];
-assign tensor_io_lease2_valid = tensor_io_lease2_valid_q;
-assign tensor_io_lease2_channel_mask[7:0] =
-       tensor_io_lease2_channel_mask_q[7:0];
-assign tensor_io_lease2_cycles[8:0] = tensor_io_lease2_cycles_q[8:0];
-assign tensor_io_lease2_delay[3:0] = tensor_io_lease2_delay_q[3:0];
-assign tensor_wld_lease_valid = cmd_wld_any_req;
-assign tensor_lane1_addr[ADDR_WIDTH-1:0] =
-       stream_psum_current_req
-       ? stream_psum_addr[ADDR_WIDTH-1:0]
-       : stream_psum_prefetch_req
-       ? queued_psum_addr[ADDR_WIDTH-1:0]
-       : (dtcm_state == DTCM_RD_PSUM_HI)
-       ? active_psum_ptr[ADDR_WIDTH-1:0]
-       + data_vec_word_offset[ADDR_WIDTH-1:0]
-       + {{ADDR_WIDTH-1{1'b0}}, 1'b1}
-       : active_psum_ptr[ADDR_WIDTH-1:0]
-       + data_vec_word_offset[ADDR_WIDTH-1:0];
-assign tensor_lane1_req = tensor_lane1_psum_read_req;
-assign tensor_lane1_wdata[63:0] = 64'b0;
-assign tensor_lane1_we = 1'b0;
-assign tensor_lane1_wstrb[7:0] = 8'b0;
-assign tensor_lane2_addr[ADDR_WIDTH-1:0] =
-       stream_out_req
-       ? stream_out_addr[ADDR_WIDTH-1:0]
-       : (dtcm_state == DTCM_WR_OUT_HI)
-       ? active_out_ptr[ADDR_WIDTH-1:0]
-       + data_vec_word_offset[ADDR_WIDTH-1:0]
-       + {{ADDR_WIDTH-1{1'b0}}, 1'b1}
-       : active_out_ptr[ADDR_WIDTH-1:0]
-       + data_vec_word_offset[ADDR_WIDTH-1:0];
-assign tensor_lane2_req = tensor_lane2_write_req;
-assign tensor_lane2_wdata[63:0] =
-       stream_out_req ? stream_out_fifo[stream_out_head][63:0]
-     : (dtcm_state == DTCM_WR_OUT_HI) ? iopsum_output_vec[127:64]
-                                      : iopsum_output_vec[63:0];
-assign tensor_lane2_we = tensor_lane2_write_req;
-assign tensor_lane2_wstrb[7:0] = tensor_lane2_write_req ? 8'hff : 8'h00;
-assign tensor_lane2_pair_wdata[127:0] =
-       stream_out_req ? stream_out_fifo[stream_out_head][127:0]
-                      : iopsum_output_vec[127:0];
-assign tensor_lane2_pair_wstrb[15:0] =
-       stream_out_req ? 16'hffff
-     : tensor_lane2_write_req && (dtcm_state == DTCM_WR_OUT_LO)
-       ? 16'hffff : 16'h0000;
-assign tensor_wld_lease_channel_mask[7:0] =
-       tensor_channel_onehot(cmd_wld_ptr[ADDR_WIDTH-1:0]);
-assign tensor_wld_lease_cycles[8:0] =
-       (setup_cur_wtype[3:0] == 4'd1) ? 9'd8 : 9'd4;
-assign tensor_wld_lease_delay[3:0] = TENSOR_WLD_LEASE_DELAY[3:0];
-
-assign in_pair[2:0] = active_in_ptr[3:1];
-assign psum_pair[2:0] = active_psum_ptr[3:1];
-assign out_pair[2:0] = active_out_ptr[3:1];
-
-assign cur_tensor_out_req_mask[BANK_NUM-1:0] =
-       step_fire ? out_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}};
-assign cur_tensor_in_req_mask[BANK_NUM-1:0] =
-       step_fire ? in_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}};
-assign cur_tensor_prefetch_req_mask[BANK_NUM-1:0] =
-       step_fire ? weight_mask[BANK_NUM-1:0] : {BANK_NUM{1'b0}};
-
-assign dbg_dtype[3:0] = setup_cur_dtype[3:0];
-assign dbg_wtype[3:0] = setup_cur_wtype[3:0];
-assign dbg_step[STEP_WIDTH-1:0] = step[STEP_WIDTH-1:0];
-assign dbg_phase[2:0] = phase[2:0];
-assign dbg_start_phase[2:0] = start_phase[2:0];
-assign dbg_iopsum_plan_valid = iopsum_plan_valid;
-assign dbg_i_lease_delay[3:0] = i_lease_delay[3:0];
-assign dbg_psum_lease_delay[3:0] = psum_lease_delay[3:0];
-assign dbg_o_lease_delay[3:0] = o_lease_delay[3:0];
-assign dbg_i_lease_channel[2:0] = i_lease_channel[2:0];
-assign dbg_psum_lease_channel[2:0] = psum_lease_channel[2:0];
-assign dbg_o_lease_channel[2:0] = o_lease_channel[2:0];
-assign dbg_i_lease_cycles[8:0] = i_lease_cycles[8:0];
-assign dbg_psum_lease_cycles[8:0] = psum_lease_cycles[8:0];
-assign dbg_o_lease_cycles[8:0] = o_lease_cycles[8:0];
-assign dbg_i_comp_delay[1:0] = i_comp_delay[1:0];
-assign dbg_psum_comp_delay[1:0] = psum_comp_delay[1:0];
-assign dbg_o_comp_delay[1:0] = o_comp_delay[1:0];
-assign rsp_pop_role[1:0] =
-       rsp_tag_empty ? TENSOR_RSP_ROLE_NONE : rsp_tag_role[rsp_tag_head];
-assign rsp_pop_hi = rsp_tag_empty ? 1'b0 : rsp_tag_hi[rsp_tag_head];
-assign tensor_pair_lane_valid = rsp_tag_pop
-                             && tensor_pair_rvalid
-                             && (rsp_pop_role[1:0] != TENSOR_RSP_ROLE_NONE)
-                             && (tensor_pair_rsp_high == rsp_pop_hi);
-assign tensor_pair_lane_data[63:0] =
-       rsp_pop_hi ? tensor_pair_rdata[63:0]
-                  : tensor_pair_rdata[127:64];
-assign tensor_pair_lane_hi = !rsp_pop_hi;
-assign tensor_pair_lane_role[1:0] = rsp_pop_role[1:0];
-assign iopsum_clear_i_psum = compute_valid_q || start_launch;
-assign iopsum_clear_o = tensor_write_accept
-                     && (dtcm_state == DTCM_WR_OUT_LO)
-                     || start_launch;
-assign iopsum_output_push_valid = tensor_core_output_valid;
-assign tensor_core_input_vec[127:0] =
-       stream_active ? stream_compute_input_q[127:0]
-                     : iopsum_input_vec[127:0];
-assign tensor_core_psum_vec[127:0] =
-       stream_active ? stream_compute_psum_q[127:0]
-                     : iopsum_psum_vec[127:0];
-assign stream_i_push = stream_active && tensor_pair_rvalid;
-assign stream_psum_push = stream_active && tensor_lane1_pair_rvalid;
-assign stream_compute_fire =
-       stream_active
-    && (stream_compute_index[RUN_COUNT_WIDTH-1:0] < data_run_remaining[RUN_COUNT_WIDTH-1:0])
-    && (stream_i_count[STREAM_FIFO_INDEX_WIDTH:0]
-        != {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}})
-    && (stream_psum_count[STREAM_FIFO_INDEX_WIDTH:0]
-        != {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}})
-    && ((stream_out_total_pending[STREAM_FIFO_INDEX_WIDTH:0]
-         <= STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0])
-        || stream_out_pop);
-assign stream_out_push = stream_active && tensor_core_output_valid;
-assign stream_out_pop = stream_active && tensor_write_accept;
-assign stream_out_total_pending[STREAM_FIFO_INDEX_WIDTH:0] =
-       stream_out_count[STREAM_FIFO_INDEX_WIDTH:0]
-     + stream_out_inflight_count[STREAM_FIFO_INDEX_WIDTH:0]
-     + {{STREAM_FIFO_INDEX_WIDTH{1'b0}}, stream_out_skid_valid};
-assign stream_done =
-       stream_current_done
-    && (queued_start_valid
-        || ((stream_i_count[STREAM_FIFO_INDEX_WIDTH:0]
-             == {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}})
-            && (stream_i_inflight_count[STREAM_FIFO_INDEX_WIDTH:0]
-                == {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}})
-            && (stream_psum_count[STREAM_FIFO_INDEX_WIDTH:0]
-                == {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}})
-            && (stream_psum_inflight_count[STREAM_FIFO_INDEX_WIDTH:0]
-                == {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}})
-            && (stream_out_count[STREAM_FIFO_INDEX_WIDTH:0]
-                == {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}})
-            && !stream_out_skid_valid));
-
-edge_tensor_iopsum_remux x_edge_tensor_iopsum_remux (
-  .clk              (clk),
-  .clear_i_psum     (iopsum_clear_i_psum),
-  .clear_o          (iopsum_clear_o),
-  .input_vec        (iopsum_input_vec[127:0]),
-  .input_vec_ready  (iopsum_input_ready),
-  .lane0_data       (tensor_rdata[63:0]),
-  .lane0_hi         (rsp_pop_hi),
-  .lane0_role       (rsp_pop_role[1:0]),
-  .lane0_valid      (rsp_tag_pop),
-  .lane1_data       (tensor_pair_lane_valid
-                     ? tensor_pair_lane_data[63:0]
-                     : tensor_lane1_data[63:0]),
-  .lane1_hi         (tensor_pair_lane_valid
-                     ? tensor_pair_lane_hi
-                     : tensor_lane1_hi),
-  .lane1_role       (tensor_pair_lane_valid
-                     ? tensor_pair_lane_role[1:0]
-                     : tensor_lane1_role[1:0]),
-  .lane1_valid      (tensor_pair_lane_valid || tensor_lane1_valid),
-  .lane1_pair_data  (tensor_lane1_pair_rdata[127:0]),
-  .lane1_pair_role  (TENSOR_RSP_ROLE_PSUM),
-  .lane1_pair_valid (tensor_lane1_pair_rvalid),
-  .lane2_data       (tensor_lane2_data[63:0]),
-  .lane2_hi         (tensor_lane2_hi),
-  .lane2_role       (tensor_lane2_role[1:0]),
-  .lane2_valid      (tensor_lane2_valid),
-  .output_push_data (tensor_core_output[127:0]),
-  .output_push_valid(iopsum_output_push_valid),
-  .output_vec       (iopsum_output_vec[127:0]),
-  .output_vec_ready (iopsum_output_ready),
-  .psum_vec         (iopsum_psum_vec[127:0]),
-  .psum_vec_ready   (iopsum_psum_ready),
-  .rst_b            (cpurst_b)
-);
-
-edge_tensor_wld8x8_fill x_edge_tensor_wld8x8_fill (
-  .clk                    (clk),
-  .rst_b                  (cpurst_b),
-  .start                  (wld_fill_start_req),
-  .start_ready            (wld_fill_start_ready),
-  .start_bf16_mode        (wld_cmd_launch_bf16),
-  .start_transpose        (wld_cmd_launch_transpose),
-  .busy                   (wld_fill_busy),
-  .done                   (wld_fill_done),
-  .load_valid             (wld_reg_load_valid_q),
-  .load_idx               (wld_reg_load_idx_q[2:0]),
-  .load_data              (wld_reg_load_data_q[127:0]),
-  .load_done              (wld_fill_load_done),
-  .weight_fill_start      (tensor_weight_fill_start),
-  .weight_fill_bf16_mode  (tensor_weight_fill_bf16_mode),
+edge_tensor_engine #(
+  .LOWER_SIX(LOWER_SIX),
+  .WIDE_H4(WIDE_H4),
+  .READ_LATENCY(READ_LATENCY),
+  .ADDR_WIDTH(ADDR_WIDTH),
+  .SRAM_ADDR_WIDTH(SRAM_ADDR_WIDTH),
+  .DATA_WIDTH(DATA_WIDTH),
+  .BANK_NUM(BANK_NUM),
+  .BANK_INDEX_WIDTH(BANK_INDEX_WIDTH),
+  .VECTOR_COUNT_WIDTH(VECTOR_COUNT_WIDTH),
+  .PACKED_WEIGHT(PACKED_WEIGHT)
+) x_tensor_engine (
+  .clk(clk),
+  .cpurst_b(cpurst_b),
+  .start(engine_start),
+  .in_base_addr(engine_start_in[ADDR_WIDTH-1:0]),
+  .psum_base_addr(engine_start_psum[ADDR_WIDTH-1:0]),
+  .out_base_addr(engine_start_out[ADDR_WIDTH-1:0]),
+  .vector_count(engine_start_count[VECTOR_COUNT_WIDTH-1:0]),
+  .start_mode(engine_start_mode[7:0]),
+  .start_dtype(engine_start_dtype),
+  .scale_bf16(engine_start_scale[127:0]),
+  .scale_stream_valid(scale_stream_count_q != 0),
+  .scale_stream_data(scale_stream_fifo_q[scale_stream_head_q]),
+  .scale_stream_ready(engine_scale_stream_ready),
+  .weight_fill_bf16_mode(tensor_weight_fill_bf16_mode),
+  .weight_fill_start(tensor_weight_fill_start),
   .weight_fill_start_ready(tensor_weight_fill_start_ready),
-  .weight_fill_valid      (tensor_weight_fill_valid),
-  .weight_fill_ready      (tensor_weight_fill_ready),
-  .weight_fill_pair_idx   (tensor_weight_fill_pair_idx[1:0]),
-  .weight_fill_data       (tensor_weight_fill_data[127:0]),
-  .weight_fill_last       (tensor_weight_fill_last)
-);
-
-edge_tile8x8_unit x_tile8x8 (
-  .clk                 (clk),
-  .rst_b               (cpurst_b),
-  .compute_valid       (compute_valid_q),
-  .late_psum_mode_i    (1'b0),
-  .late_psum_valid_i   (1'b1),
-  .input_bf16_i        (tensor_core_input_vec[127:0]),
-  .scale_enable_i      (1'b0),
-  .scale_bf16_i        (128'b0),
-  .rsum_enable_i       (1'b0),
-  .rsum_first_i        (1'b0),
-  .rsum_last_i         (1'b0),
-  .weight_fill_bf16_mode_i(tensor_weight_fill_bf16_mode),
-  .output_bf16_o       (tensor_core_output[127:0]),
-  .output_valid        (tensor_core_output_valid),
-  .psum_bf16_i         (tensor_core_psum_vec[127:0]),
-  .weight_fill_start   (tensor_weight_fill_start),
-  .weight_fill_start_ready(tensor_weight_fill_start_ready),
-  .weight_fill_valid   (tensor_weight_fill_valid),
-  .weight_fill_ready   (tensor_weight_fill_ready),
+  .weight_fill_valid(tensor_weight_fill_valid),
+  .weight_fill_ready(tensor_weight_fill_ready),
   .weight_fill_pair_idx(tensor_weight_fill_pair_idx[1:0]),
-  .weight_fill_data    (tensor_weight_fill_data[127:0]),
-  .weight_fill_last    (tensor_weight_fill_last),
-  .weight_activate     (start_launch),
-  .weight_activate_ready(tensor_weight_activate_ready),
-  .weight_fill_busy    (tensor_weight_fill_busy),
+  .weight_fill_data(tensor_weight_fill_data[PAIR_WIDTH-1:0]),
+  .weight_fill_last(tensor_weight_fill_last),
   .weight_pending_valid(tensor_weight_pending_valid),
-  .dot_ready_o         ()
+  .weight_active_valid(tensor_weight_active_valid),
+  .weight_preactivate(engine_weight_preactivate),
+  .start_use_active(engine_start_use_active),
+  .weight_idle(engine_weight_idle),
+  .packed_weight_start(PACKED_WEIGHT ? wld_cmd_launch : 1'b0),
+  .packed_weight_start_ready(packed_weight_start_ready),
+  .packed_weight_wtype(wld_cmd_launch_wtype),
+  .packed_weight_transpose(wld_cmd_launch_transpose),
+  .packed_weight_busy(packed_weight_busy),
+  .packed_weight_done(packed_weight_done),
+  .packed_weight_load_valid(PACKED_WEIGHT ? tensor_wld_rvalid : 1'b0),
+  .packed_weight_load_ready(packed_weight_load_ready),
+  .packed_weight_load_idx(wld_rsp_idx_q[2:0]),
+  .packed_weight_load_data(wld_load_data[PAIR_WIDTH-1:0]),
+  .next_input_weight_ready(queued_start_valid_q),
+  .next_input_prefetch_valid(input_prefetch_valid),
+  .next_input_prefetch_base_addr(input_prefetch_base),
+  .next_input_prefetch_psum_base_addr(input_prefetch_psum),
+  .next_input_prefetch_mode(input_prefetch_mode),
+  .next_input_prefetch_vector_count(
+      input_prefetch_count),
+  .handoff_ready(engine_handoff_ready),
+  .busy(engine_busy),
+  .done(engine_done),
+  .host_req(copy_host_req),
+  .host_we(copy_host_we),
+  .host_addr(copy_host_addr),
+  .host_wdata(copy_data_q),
+  .host_wstrb(copy_host_wstrb),
+  .host_ready(engine_host_ready),
+  .host_rdata(engine_host_rdata),
+  .host_rvalid(engine_host_rvalid),
+  .host_rsp_bank(engine_host_rsp_bank),
+  .fabric_phase(tensor_phase[BANK_INDEX_WIDTH-1:0]),
+  .host_bank_req(engine_host_bank_req),
+  .host_bank_we(engine_host_bank_we),
+  .host_bank(engine_host_bank[BANK_INDEX_WIDTH-1:0]),
+  .host_bank_addr(engine_host_bank_addr[SRAM_ADDR_WIDTH-1:0]),
+  .host_bank_wdata(engine_host_bank_wdata[DATA_WIDTH-1:0]),
+  .host_bank_wstrb(engine_host_bank_wstrb[BYTE_WIDTH-1:0]),
+  .host_bank_rdata(engine_host_bank_rdata[DATA_WIDTH-1:0]),
+  .i_pair_req(engine_i_pair_req),
+  .i_pair_bank0(engine_i_pair_bank0[BANK_INDEX_WIDTH-1:0]),
+  .i_pair_bank1(engine_i_pair_bank1[BANK_INDEX_WIDTH-1:0]),
+  .i_pair_addr(engine_i_pair_addr[SRAM_ADDR_WIDTH-1:0]),
+  .i_pair_rsp_bank0(engine_i_pair_rsp_bank0[BANK_INDEX_WIDTH-1:0]),
+  .i_pair_rsp_bank1(engine_i_pair_rsp_bank1[BANK_INDEX_WIDTH-1:0]),
+  .i_pair_rdata(engine_i_pair_rdata[PAIR_WIDTH-1:0]),
+  .psum_pair_req(engine_psum_pair_req),
+  .psum_pair_bank0(engine_psum_pair_bank0[BANK_INDEX_WIDTH-1:0]),
+  .psum_pair_bank1(engine_psum_pair_bank1[BANK_INDEX_WIDTH-1:0]),
+  .psum_pair_addr(engine_psum_pair_addr[SRAM_ADDR_WIDTH-1:0]),
+  .psum_pair_rsp_bank0(engine_psum_pair_rsp_bank0[BANK_INDEX_WIDTH-1:0]),
+  .psum_pair_rsp_bank1(engine_psum_pair_rsp_bank1[BANK_INDEX_WIDTH-1:0]),
+  .psum_pair_rdata(engine_psum_pair_rdata[PAIR_WIDTH-1:0]),
+  .psum_pair_extra_rdata(engine_psum_pair_extra_rdata),
+  .psum_pair_req_fp32(engine_psum_pair_req_fp32),
+  .psum_pair_bank2(engine_psum_pair_bank2),
+  .psum_pair_bank3(engine_psum_pair_bank3),
+  .psum_pair_extra_addr(engine_psum_pair_extra_addr),
+  .psum_pair_rsp_bank2(engine_psum_pair_rsp_bank2),
+  .psum_pair_rsp_bank3(engine_psum_pair_rsp_bank3),
+  .o_pair_req(engine_o_pair_req),
+  .o_pair_bank0(engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0]),
+  .o_pair_bank1(engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0]),
+  .o_pair_addr(engine_o_pair_addr[SRAM_ADDR_WIDTH-1:0]),
+  .o_pair_wdata(engine_o_pair_wdata),
+  .o_pair_fp32(engine_o_pair_fp32),
+  .o_pair_bank2(engine_o_pair_bank2),
+  .o_pair_bank3(engine_o_pair_bank3),
+  .o_pair_extra_addr(engine_o_pair_extra_addr),
+  .stream_out_push(stream_out_push),
+  .stream_i_prefetch_accept(stream_i_prefetch_accept),
+  .stream_psum_prefetch_accept(stream_psum_prefetch_accept)
 );
+
+generate
+  if (PACKED_WEIGHT) begin : GEN_PACKED_WLD
+    assign wld_fill_start_ready = packed_weight_start_ready;
+    assign wld_fill_done = packed_weight_done;
+    assign tensor_weight_fill_start = 1'b0;
+    assign tensor_weight_fill_bf16_mode = 1'b0;
+    assign tensor_weight_fill_valid = 1'b0;
+    assign tensor_weight_fill_pair_idx = 2'b0;
+    assign tensor_weight_fill_data = {PAIR_WIDTH{1'b0}};
+    assign tensor_weight_fill_last = 1'b0;
+  end else begin : GEN_LEGACY_WLD
+    edge_tensor_wld8x8_fill #(
+      .DATA_WIDTH(DATA_WIDTH), .PAIR_WIDTH(PAIR_WIDTH)
+    ) x_edge_tensor_wld8x8_fill (
+      .clk(clk), .rst_b(cpurst_b), .start(wld_cmd_launch),
+      .start_ready(wld_fill_start_ready),
+      .start_bf16_mode(wld_cmd_launch_wtype==4'd1),
+      .start_transpose(wld_cmd_launch_transpose), .busy(),
+      .done(wld_fill_done), .load_valid(tensor_wld_rvalid),
+      .load_idx(wld_rsp_idx_q[2:0]),
+      .load_data(wld_load_data[PAIR_WIDTH-1:0]), .load_done(),
+      .weight_fill_start(tensor_weight_fill_start),
+      .weight_fill_bf16_mode(tensor_weight_fill_bf16_mode),
+      .weight_fill_start_ready(tensor_weight_fill_start_ready),
+      .weight_fill_valid(tensor_weight_fill_valid),
+      .weight_fill_ready(tensor_weight_fill_ready),
+      .weight_fill_pair_idx(tensor_weight_fill_pair_idx[1:0]),
+      .weight_fill_data(tensor_weight_fill_data[PAIR_WIDTH-1:0]),
+      .weight_fill_last(tensor_weight_fill_last)
+    );
+  end
+endgenerate
+
+wire unused_packed_weight_status = packed_weight_busy
+                                 || packed_weight_load_ready;
+
+generate
+  for (bank_gen_i = 0; bank_gen_i < BANK_NUM; bank_gen_i = bank_gen_i + 1) begin: MERGE_BANK
+    wire output_match = engine_o_pair_req &&
+        (engine_o_pair_bank0 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         engine_o_pair_bank1 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         (engine_o_pair_fp32 &&
+          (engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+           engine_o_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0])));
+    wire psum_match = engine_psum_pair_req &&
+        (engine_psum_pair_bank0 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         engine_psum_pair_bank1 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+         (engine_psum_pair_req_fp32 &&
+          (engine_psum_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+           engine_psum_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0])));
+    assign engine_bank_req[bank_gen_i] =
+        engine_host_bank_req
+        && (engine_host_bank[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+      || engine_i_pair_req
+        && ((engine_i_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+            || (engine_i_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+      || engine_psum_pair_req
+        && ((engine_psum_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+            || (engine_psum_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+      || engine_psum_pair_req_fp32
+        && ((engine_psum_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+            || (engine_psum_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+      || engine_o_pair_req
+        && ((engine_o_pair_bank0[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+            || (engine_o_pair_bank1[BANK_INDEX_WIDTH-1:0] == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+      || engine_o_pair_req && engine_o_pair_fp32
+        && ((engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+            || (engine_o_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]));
+    assign engine_bank_we[bank_gen_i] =
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_we : output_match;
+    // A vector may wrap bank 15 -> 0. Wrapped banks belong to the next
+    // SRAM row even though the bank number itself has returned to zero.
+    assign engine_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_addr : output_match
+          ? ((engine_o_pair_fp32 &&
+              (engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+               engine_o_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+             ? engine_o_pair_extra_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_o_pair_bank2)
+             : engine_o_pair_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_o_pair_bank0))
+          : psum_match
+          ? ((engine_psum_pair_req_fp32 &&
+              (engine_psum_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ||
+               engine_psum_pair_bank3 == bank_gen_i[BANK_INDEX_WIDTH-1:0]))
+             ? engine_psum_pair_extra_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_psum_pair_bank2)
+             : engine_psum_pair_addr +
+                 (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_psum_pair_bank0))
+          : engine_i_pair_addr +
+              (bank_gen_i[BANK_INDEX_WIDTH-1:0] < engine_i_pair_bank0);
+    assign engine_bank_wdata[bank_gen_i*DATA_WIDTH +: DATA_WIDTH] =
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_wdata :
+        engine_o_pair_bank0 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ? engine_o_pair_wdata[0*DATA_WIDTH +: DATA_WIDTH] :
+        engine_o_pair_bank1 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ? engine_o_pair_wdata[1*DATA_WIDTH +: DATA_WIDTH] :
+        engine_o_pair_bank2 == bank_gen_i[BANK_INDEX_WIDTH-1:0] ? engine_o_pair_wdata[2*DATA_WIDTH +: DATA_WIDTH] :
+                                                                      engine_o_pair_wdata[3*DATA_WIDTH +: DATA_WIDTH];
+    assign engine_bank_wstrb[bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH] =
+        (engine_host_bank_req && engine_host_bank == bank_gen_i[BANK_INDEX_WIDTH-1:0])
+        ? engine_host_bank_wstrb : {BYTE_WIDTH{output_match}};
+
+    assign tensor_bank_req[bank_gen_i] = engine_bank_req[bank_gen_i];
+    assign tensor_bank_we[bank_gen_i] = engine_bank_we[bank_gen_i];
+    assign tensor_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH] =
+        engine_bank_addr[bank_gen_i*SRAM_ADDR_WIDTH +: SRAM_ADDR_WIDTH];
+    assign tensor_bank_wdata[bank_gen_i*DATA_WIDTH +: DATA_WIDTH] =
+        engine_bank_wdata[bank_gen_i*DATA_WIDTH +: DATA_WIDTH];
+    assign tensor_bank_wstrb[bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH] =
+        engine_bank_wstrb[bank_gen_i*BYTE_WIDTH +: BYTE_WIDTH];
+  end
+endgenerate
 
 always @(posedge clk or negedge cpurst_b) begin
   if (!cpurst_b) begin
-    dtype[3:0] <= 4'b0;
-    wtype[3:0] <= 4'b0;
-    setup_buf_sel <= 1'b0;
-    for (setup_i = 0; setup_i < 2; setup_i = setup_i + 1) begin
-      setup_dtype[setup_i][3:0] <= 4'b0;
-      setup_wtype[setup_i][3:0] <= 4'b0;
-      setup_in_ptr[setup_i][ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-      setup_out_ptr[setup_i][ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-      setup_psum_ptr[setup_i][ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-      setup_run_count[setup_i][RUN_COUNT_WIDTH-1:0] <= {{RUN_COUNT_WIDTH-9{1'b0}}, TENSOR_IO_PLAN_CYCLES[8:0]};
-      setup_run_count_valid[setup_i] <= 1'b0;
-    end
-    active_in_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    active_out_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    active_psum_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    weight_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    run_count[RUN_COUNT_WIDTH-1:0] <= {{RUN_COUNT_WIDTH-9{1'b0}}, TENSOR_IO_PLAN_CYCLES[8:0]};
-    run_count_valid <= 1'b0;
-    data_run_remaining[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    data_vec_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    stream_i_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    stream_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    stream_compute_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    stream_out_write_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    stream_out_push_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    queued_i_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    queued_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    cycles_left[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    step[STEP_WIDTH-1:0] <= {STEP_WIDTH{1'b0}};
-    busy <= 1'b0;
-    dtcm_state[3:0] <= DTCM_IDLE;
-    compute_valid_q <= 1'b0;
-    rsp_tag_hi[3:0] <= 4'b0;
-    rsp_tag_head[1:0] <= 2'b0;
-    rsp_tag_tail[1:0] <= 2'b0;
-    rsp_tag_count[2:0] <= 3'b0;
-    wld_read_idx[2:0] <= 3'b0;
-    wld_load_idx[2:0] <= 3'b0;
-    wld_read_lo[63:0] <= 64'b0;
-    wld_reg_drain_transpose <= 1'b0;
-    wld_cmd_pending <= 1'b0;
-    wld_cmd_pending_transpose <= 1'b0;
-    wld_cmd_pending_bf16 <= 1'b0;
-    wld_cmd_pending_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    wld_fetch_active <= 1'b0;
-    wld_fetch_wait <= 1'b0;
-    wld_active_bf16 <= 1'b0;
-    weight_active_buf_q <= 1'b0;
-    weight_active_valid <= 1'b0;
-    weight_load_buf_q <= 1'b1;
-    weight_loaded_buf_q <= 1'b0;
-    weight_loaded_valid <= 1'b0;
-    queued_start_valid <= 1'b0;
-    queued_start_tile <= 1'b0;
-    queued_dtype[3:0] <= 4'b0;
-    queued_wtype[3:0] <= 4'b0;
-    queued_in_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    queued_out_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    queued_psum_ptr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    queued_run_count[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-    queued_weight_buf <= 1'b0;
-    wld_reg_load_data_q[127:0] <= 128'b0;
-    wld_reg_load_idx_q[2:0] <= 3'b0;
-    wld_reg_load_valid_q <= 1'b0;
-    wld_ready <= 1'b1;
-    phase[2:0] <= 3'b0;
-    start_phase[2:0] <= 3'b0;
-    iopsum_plan_valid <= 1'b0;
-    i_lease_delay[3:0] <= 4'b0;
-    psum_lease_delay[3:0] <= 4'b0;
-    o_lease_delay[3:0] <= 4'b0;
-    i_lease_channel[2:0] <= 3'b0;
-    psum_lease_channel[2:0] <= 3'b0;
-    o_lease_channel[2:0] <= 3'b0;
-    i_lease_cycles[8:0] <= 9'b0;
-    psum_lease_cycles[8:0] <= 9'b0;
-    o_lease_cycles[8:0] <= 9'b0;
-    i_comp_delay[1:0] <= 2'b0;
-    psum_comp_delay[1:0] <= 2'b0;
-    o_comp_delay[1:0] <= 2'b0;
-    tensor_io_lease_channel_mask_q[7:0] <= 8'b0;
-    tensor_io_lease_cycles_q[8:0] <= 9'b0;
-    tensor_io_lease_delay_q[3:0] <= 4'b0;
-    tensor_io_lease_valid_q <= 1'b0;
-    tensor_io_lease1_channel_mask_q[7:0] <= 8'b0;
-    tensor_io_lease1_cycles_q[8:0] <= 9'b0;
-    tensor_io_lease1_delay_q[3:0] <= 4'b0;
-    tensor_io_lease1_valid_q <= 1'b0;
-    tensor_io_lease2_channel_mask_q[7:0] <= 8'b0;
-    tensor_io_lease2_cycles_q[8:0] <= 9'b0;
-    tensor_io_lease2_delay_q[3:0] <= 4'b0;
-    tensor_io_lease2_valid_q <= 1'b0;
-    plan_table_valid <= 1'b0;
-    stream_i_head <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-    stream_i_tail <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-    stream_i_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-    stream_i_inflight_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-    stream_psum_head <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-    stream_psum_tail <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-    stream_psum_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-    stream_psum_inflight_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-    stream_out_head <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-    stream_out_tail <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-    stream_out_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-    stream_out_inflight_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-    stream_out_skid_valid <= 1'b0;
-    stream_out_skid_data[127:0] <= 128'b0;
-    stream_out_skid_addr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-    stream_compute_input_q[127:0] <= 128'b0;
-    stream_compute_psum_q[127:0] <= 128'b0;
-    for (plan_phase_i = 0; plan_phase_i < 8; plan_phase_i = plan_phase_i + 1) begin
-      plan_table_i_delay[plan_phase_i] <= 4'b0;
-      plan_table_psum_delay[plan_phase_i] <= 4'b0;
-      plan_table_o_delay[plan_phase_i] <= 4'b0;
-      plan_table_i_channel[plan_phase_i] <= 3'b0;
-      plan_table_psum_channel[plan_phase_i] <= 3'b0;
-      plan_table_o_channel[plan_phase_i] <= 3'b0;
-      plan_table_i_cycles[plan_phase_i] <= 9'b0;
-      plan_table_psum_cycles[plan_phase_i] <= 9'b0;
-      plan_table_o_cycles[plan_phase_i] <= 9'b0;
-      plan_table_i_comp[plan_phase_i] <= 2'b0;
-      plan_table_psum_comp[plan_phase_i] <= 2'b0;
-      plan_table_o_comp[plan_phase_i] <= 2'b0;
-    end
-    for (rsp_tag_i = 0; rsp_tag_i < 4; rsp_tag_i = rsp_tag_i + 1) begin
-      rsp_tag_role[rsp_tag_i] <= TENSOR_RSP_ROLE_NONE;
-    end
+    cfg_dtype_q[0] <= 4'b0;
+    cfg_dtype_q[1] <= 4'b0;
+    cfg_wtype_q[0] <= 4'b0;
+    cfg_wtype_q[1] <= 4'b0;
+    cfg_in_ptr_q[0] <= {ADDR_WIDTH{1'b0}};
+    cfg_in_ptr_q[1] <= {ADDR_WIDTH{1'b0}};
+    cfg_out_ptr_q[0] <= {ADDR_WIDTH{1'b0}};
+    cfg_out_ptr_q[1] <= {ADDR_WIDTH{1'b0}};
+    cfg_psum_ptr_q[0] <= {ADDR_WIDTH{1'b0}};
+    cfg_psum_ptr_q[1] <= {ADDR_WIDTH{1'b0}};
+    cfg_run_count_q[0] <= {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1};
+    cfg_run_count_q[1] <= {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1};
+    cfg_write_sel_q <= 1'b0;
+    weight_loaded_q <= 1'b0;
+    weight_reuse_token_q <= 1'b0;
+    queued_start_valid_q <= 1'b0;
+    queued_start_preactivated_q <= 1'b0;
+    queued_start_mode_q <= 8'b0;
+    queued_start_dtype_q <= 4'b0;
+    queued_start_reuse_weight_q <= 1'b0;
+    queued_start_scale_sel_q <= 1'b0;
+    queued_start_seq_id_q <= {SEQ_ID_WIDTH{1'b0}};
+    queued_start_epoch_q <= {EPOCH_WIDTH{1'b0}};
+    queued_count_q <= {{VECTOR_COUNT_WIDTH-1{1'b0}}, 1'b1};
+    queued_in_q <= {ADDR_WIDTH{1'b0}};
+    queued_out_q <= {ADDR_WIDTH{1'b0}};
+    queued_psum_q <= {ADDR_WIDTH{1'b0}};
+    start_pending_q <= 1'b0;
+    start_pending_count_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    start_pending_in_q <= {ADDR_WIDTH{1'b0}};
+    start_pending_out_q <= {ADDR_WIDTH{1'b0}};
+    start_pending_psum_q <= {ADDR_WIDTH{1'b0}};
+    start_pending_wld_pending_q <= 1'b0;
+    start_pending_mode_q <= 8'b0;
+    start_pending_dtype_q <= 4'b0;
+    start_pending_reuse_weight_q <= 1'b0;
+    start_pending_scale_sel_q <= 1'b0;
+    start_pending_seq_id_q <= {SEQ_ID_WIDTH{1'b0}};
+    start_pending_epoch_q <= {EPOCH_WIDTH{1'b0}};
+    wld_cmd_pending_q <= 1'b0;
+    wld_cmd_pending_transpose_q <= 1'b0;
+    wld_cmd_pending_wtype_q <= 4'b0;
+    wld_cmd_pending_ptr_q <= {ADDR_WIDTH{1'b0}};
+    wld_cmd_pending_next_q <= 1'b0;
+    wld_cmd_pending_next_transpose_q <= 1'b0;
+    wld_cmd_pending_next_wtype_q <= 4'b0;
+    wld_cmd_pending_next_ptr_q <= {ADDR_WIDTH{1'b0}};
+    wld_active_q <= 1'b0;
+    wld_active_wtype_q <= 4'b0;
+    wld_base_q <= {ADDR_WIDTH{1'b0}};
+    wld_issue_idx_q <= 3'b0;
+    wld_read_count_q <= 4'b0;
+    scale_buf_q[0] <= 128'b0;
+    scale_buf_q[1] <= 128'b0;
+    scale_active_sel_q <= 1'b0;
+    scale_active_valid_q <= 1'b0;
+    scale_pending_sel_q <= 1'b0;
+    scale_pending_valid_q <= 1'b0;
+    sld_pending_q <= 1'b0;
+    sld_wait_q <= 1'b0;
+    sld_ptr_q <= {ADDR_WIDTH{1'b0}};
+    sld_load_sel_q <= 1'b0;
+    sld_stream_q <= 1'b0;
+    scale_stream_head_q <= 3'b0;
+    scale_stream_tail_q <= 3'b0;
+    scale_stream_count_q <= 4'b0;
+    direct_sld_setup_valid_q <= 1'b0;
+    direct_sld_active_q <= 1'b0;
+    direct_sld_next_ptr_q <= {ADDR_WIDTH{1'b0}};
+    direct_sld_target_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    direct_sld_issued_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    direct_sld_received_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    copy_active_q <= 1'b0;
+    copy_write_q <= 1'b0;
+    copy_in_q <= {ADDR_WIDTH{1'b0}};
+    copy_out_q <= {ADDR_WIDTH{1'b0}};
+    copy_bytes_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    copy_offset_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    copy_data_q <= {DATA_WIDTH{1'b0}};
   end else begin
-    phase[2:0] <= phase[2:0] + 3'd1;
-    tensor_io_lease_valid_q <= 1'b0;
-    tensor_io_lease1_valid_q <= 1'b0;
-    tensor_io_lease2_valid_q <= 1'b0;
-    compute_valid_q <= 1'b0;
-    wld_reg_load_valid_q <= 1'b0;
-
-    if (wld_fill_done) begin
-      wld_ready <= 1'b1;
-      weight_loaded_valid <= 1'b1;
-      weight_loaded_buf_q <= weight_load_buf_q;
-    end
-
-    if (wld_fetch_active && tensor_wld_rvalid) begin
-      wld_reg_load_data_q[127:0] <= tensor_wld_rdata[127:0];
-      wld_reg_load_idx_q[2:0] <= wld_load_idx[2:0];
-      wld_reg_load_valid_q <= 1'b1;
-      wld_load_idx[2:0] <= wld_load_idx[2:0] + 3'd1;
-      if (wld_fetch_wait
-          && wld_load_idx[2:0] == (wld_active_bf16 ? 3'd7 : 3'd3)) begin
-        wld_fetch_active <= 1'b0;
-        wld_fetch_wait <= 1'b0;
+    if (copy_start_accept) begin
+      copy_active_q <= (start_data_run_count != 0);
+      copy_write_q <= 1'b0;
+      copy_in_q <= start_data_in[ADDR_WIDTH-1:0];
+      copy_out_q <= start_data_out[ADDR_WIDTH-1:0];
+      copy_bytes_q <= start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
+      copy_offset_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+    end else if (copy_active_q && !copy_write_q && engine_host_rvalid) begin
+      copy_data_q <= engine_host_rdata[DATA_WIDTH-1:0];
+      copy_write_q <= 1'b1;
+    end else if (copy_active_q && copy_write_q && copy_host_req) begin
+      if (copy_offset_q + BYTE_WIDTH >= copy_bytes_q) begin
+        copy_active_q <= 1'b0;
+        copy_write_q <= 1'b0;
+      end else begin
+        copy_offset_q <= copy_offset_q + BYTE_WIDTH;
+        copy_write_q <= 1'b0;
       end
     end
 
-    if (rsp_tag_pop) begin
-      rsp_tag_role[rsp_tag_head] <= TENSOR_RSP_ROLE_NONE;
-      rsp_tag_hi[rsp_tag_head] <= 1'b0;
-      rsp_tag_head[1:0] <= rsp_tag_head[1:0] + 2'd1;
+    if (cmd_sld_stream_setup_req && tensor_cmd_ready) begin
+      direct_sld_setup_valid_q <= 1'b1;
+      direct_sld_next_ptr_q <= cmd_sld_stream_setup_ptr[ADDR_WIDTH-1:0];
     end
 
-    if (rsp_tag_push) begin
-      rsp_tag_tail[1:0] <= rsp_tag_tail[1:0] + 2'd1;
+    if (direct_sld_launch) begin
+      sld_pending_q <= 1'b1;
+      sld_ptr_q <= direct_sld_next_ptr_q[ADDR_WIDTH-1:0];
+      sld_stream_q <= 1'b1;
+      direct_sld_next_ptr_q <= direct_sld_next_ptr_q +
+                               {{ADDR_WIDTH-2{1'b0}}, 2'b10};
+      direct_sld_issued_q <= direct_sld_issued_q + 1'b1;
+    end else if (sld_reuse_accept) begin
+      // Reuse is an explicit parameter token.  It snapshots the active scale
+      // slot without issuing a DTCM read or changing the ping-pong selector.
+      scale_pending_sel_q <= scale_active_sel_q;
+      scale_pending_valid_q <= 1'b1;
+    end else if (cmd_sld_req && tensor_sld_cmd_ready) begin
+      sld_pending_q <= 1'b1;
+      sld_ptr_q <= cmd_sld_ptr[ADDR_WIDTH-1:0];
+      sld_load_sel_q <= scale_active_valid_q ? !scale_active_sel_q : 1'b0;
+      sld_stream_q <= cmd_sld_stream;
     end
-
-    case ({rsp_tag_push, rsp_tag_pop})
-      2'b10: rsp_tag_count[2:0] <= rsp_tag_count[2:0] + 3'd1;
-      2'b01: rsp_tag_count[2:0] <= rsp_tag_count[2:0] - 3'd1;
-      default: begin
+    if (tensor_sld_req && tensor_sld_ready) begin
+      sld_pending_q <= 1'b0;
+      sld_wait_q <= 1'b1;
+    end
+    if (tensor_sld_rvalid && sld_wait_q) begin
+      if (sld_stream_q) begin
+        scale_stream_fifo_q[scale_stream_tail_q] <= tensor_sld_rdata[127:0];
+        scale_stream_tail_q <= scale_stream_tail_q + 1'b1;
+        if (direct_sld_active_q) begin
+          direct_sld_received_q <= direct_sld_received_q + 1'b1;
+          if ((direct_sld_received_q + 1'b1) >= direct_sld_target_q) begin
+            direct_sld_active_q <= 1'b0;
+            direct_sld_setup_valid_q <= 1'b0;
+          end
+        end
+      end else begin
+        scale_buf_q[sld_load_sel_q] <= tensor_sld_rdata[127:0];
+        scale_pending_sel_q <= sld_load_sel_q;
+        scale_pending_valid_q <= 1'b1;
       end
+      sld_wait_q <= 1'b0;
+    end
+
+    if (engine_scale_stream_ready)
+      scale_stream_head_q <= scale_stream_head_q + 1'b1;
+    case ({scale_stream_push, engine_scale_stream_ready})
+      2'b10: scale_stream_count_q <= scale_stream_count_q + 1'b1;
+      2'b01: scale_stream_count_q <= scale_stream_count_q - 1'b1;
+      default: begin end
     endcase
 
     if (cmd_setcsr_req) begin
-      setup_dtype[setup_buf_sel][3:0] <= cmd_setcsr_dtype[3:0];
-      setup_wtype[setup_buf_sel][3:0] <= cmd_setcsr_wtype[3:0];
+      cfg_dtype_q[cfg_write_sel_q] <= cmd_setcsr_dtype[3:0];
+      cfg_wtype_q[cfg_write_sel_q] <= cmd_setcsr_wtype[3:0];
     end
-
-    if (stream_active) begin
-      if (stream_i_current_accept)
-        stream_i_issue_index[RUN_COUNT_WIDTH-1:0] <= stream_i_issue_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-      if (stream_i_prefetch_accept)
-        queued_i_issue_index[RUN_COUNT_WIDTH-1:0] <= queued_i_issue_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-      case ({tensor_read_accept && stream_i_req, stream_i_push})
-        2'b10: stream_i_inflight_count <= stream_i_inflight_count + 1'b1;
-        2'b01: stream_i_inflight_count <= stream_i_inflight_count - 1'b1;
-        default: begin
-        end
-      endcase
-
-      if (stream_psum_current_accept)
-        stream_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= stream_psum_issue_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-      if (stream_psum_prefetch_accept)
-        queued_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= queued_psum_issue_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-      case ({tensor_lane1_read_accept && stream_psum_req, stream_psum_push})
-        2'b10: stream_psum_inflight_count <= stream_psum_inflight_count + 1'b1;
-        2'b01: stream_psum_inflight_count <= stream_psum_inflight_count - 1'b1;
-        default: begin
-        end
-      endcase
-
-      if (stream_i_push) begin
-        stream_i_fifo[stream_i_tail][127:0] <= tensor_pair_rdata[127:0];
-        stream_i_tail <= stream_i_tail + 1'b1;
-      end
-      if (stream_compute_fire)
-        stream_i_head <= stream_i_head + 1'b1;
-      case ({stream_i_push, stream_compute_fire})
-        2'b10: stream_i_count <= stream_i_count + 1'b1;
-        2'b01: stream_i_count <= stream_i_count - 1'b1;
-        default: begin
-        end
-      endcase
-
-      if (stream_psum_push) begin
-        stream_psum_fifo[stream_psum_tail][127:0]
-          <= tensor_lane1_pair_rdata[127:0];
-        stream_psum_tail <= stream_psum_tail + 1'b1;
-      end
-      if (stream_compute_fire)
-        stream_psum_head <= stream_psum_head + 1'b1;
-      case ({stream_psum_push, stream_compute_fire})
-        2'b10: stream_psum_count <= stream_psum_count + 1'b1;
-        2'b01: stream_psum_count <= stream_psum_count - 1'b1;
-        default: begin
-        end
-      endcase
-
-      if (stream_compute_fire) begin
-        stream_compute_input_q[127:0] <= stream_i_fifo[stream_i_head][127:0];
-        stream_compute_psum_q[127:0] <= stream_psum_fifo[stream_psum_head][127:0];
-        stream_compute_index[RUN_COUNT_WIDTH-1:0] <= stream_compute_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-      end
-      case ({stream_compute_fire, stream_out_push})
-        2'b10: stream_out_inflight_count <= stream_out_inflight_count + 1'b1;
-        2'b01: stream_out_inflight_count <= stream_out_inflight_count - 1'b1;
-        default: begin
-        end
-      endcase
-
-      if (stream_out_pop) begin
-        stream_out_head <= stream_out_head + 1'b1;
-        stream_out_write_index[RUN_COUNT_WIDTH-1:0] <= stream_out_write_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-      end
-
-      if (stream_out_skid_valid) begin
-        if (stream_out_pop) begin
-          stream_out_fifo[stream_out_tail][127:0] <= stream_out_skid_data[127:0];
-          stream_out_addr_fifo[stream_out_tail][ADDR_WIDTH-1:0] <= stream_out_skid_addr[ADDR_WIDTH-1:0];
-          stream_out_tail <= stream_out_tail + 1'b1;
-          if (stream_out_push) begin
-            stream_out_skid_data[127:0] <= tensor_core_output[127:0];
-            stream_out_skid_addr[ADDR_WIDTH-1:0] <= stream_out_push_addr[ADDR_WIDTH-1:0];
-            stream_out_push_index[RUN_COUNT_WIDTH-1:0] <= stream_out_push_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-          end else begin
-            stream_out_skid_valid <= 1'b0;
-          end
-        end
-      end else if (stream_out_push) begin
-        if ((stream_out_count[STREAM_FIFO_INDEX_WIDTH:0]
-             == STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0])
-            && !stream_out_pop) begin
-          stream_out_skid_valid <= 1'b1;
-          stream_out_skid_data[127:0] <= tensor_core_output[127:0];
-          stream_out_skid_addr[ADDR_WIDTH-1:0] <= stream_out_push_addr[ADDR_WIDTH-1:0];
-          stream_out_push_index[RUN_COUNT_WIDTH-1:0] <= stream_out_push_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-        end else begin
-          stream_out_fifo[stream_out_tail][127:0] <= tensor_core_output[127:0];
-          stream_out_addr_fifo[stream_out_tail][ADDR_WIDTH-1:0] <= stream_out_push_addr[ADDR_WIDTH-1:0];
-          stream_out_tail <= stream_out_tail + 1'b1;
-          stream_out_push_index[RUN_COUNT_WIDTH-1:0] <= stream_out_push_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-        end
-      end
-
-      if (!stream_out_skid_valid) begin
-        case ({stream_out_push
-               && !((stream_out_count[STREAM_FIFO_INDEX_WIDTH:0]
-                     == STREAM_FIFO_DEPTH[STREAM_FIFO_INDEX_WIDTH:0])
-                    && !stream_out_pop),
-               stream_out_pop})
-          2'b10: stream_out_count <= stream_out_count + 1'b1;
-          2'b01: stream_out_count <= stream_out_count - 1'b1;
-          default: begin
-          end
-        endcase
-      end
-
-      if (stream_done) begin
-        dtcm_state[3:0] <= DTCM_IDLE;
-        data_run_remaining[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-        busy <= 1'b0;
-      end
-    end
-
-    if (cmd_setn_req) begin
-      setup_run_count[setup_buf_sel][RUN_COUNT_WIDTH-1:0] <=
-        cmd_setn_value[RUN_COUNT_WIDTH-1:0];
-      setup_run_count_valid[setup_buf_sel] <= 1'b1;
-    end
-
-    if (wld_cmd_pending_launch)
-      wld_cmd_pending <= 1'b0;
-
-    if (wld_cmd_queue_accept) begin
-      wld_cmd_pending <= 1'b1;
-      wld_cmd_pending_transpose <= cmd_wld_trans_req;
-      wld_cmd_pending_bf16 <= setup_cur_wtype[3:0] == 4'd1;
-      wld_cmd_pending_ptr[ADDR_WIDTH-1:0] <= cmd_wld_ptr[ADDR_WIDTH-1:0];
-      weight_loaded_valid <= 1'b0;
-      wld_ready <= 1'b0;
-    end
-
-    if (wld_fill_start_req) begin
-      weight_ptr[ADDR_WIDTH-1:0] <= wld_cmd_launch_ptr[ADDR_WIDTH-1:0];
-      wld_fetch_active <= 1'b1;
-      wld_fetch_wait <= 1'b0;
-      wld_active_bf16 <= wld_cmd_launch_bf16;
-      wld_read_idx[2:0] <= 3'b0;
-      wld_load_idx[2:0] <= 3'b0;
-      wld_reg_drain_transpose <= wld_cmd_launch_transpose;
-      weight_load_buf_q <= !weight_active_buf_q;
-      weight_loaded_valid <= 1'b0;
-      wld_ready <= 1'b0;
-    end
-
     if (cmd_setin_req)
-      setup_in_ptr[setup_buf_sel][ADDR_WIDTH-1:0] <=
-        cmd_setin_ptr[ADDR_WIDTH-1:0];
-
+      cfg_in_ptr_q[cfg_write_sel_q] <= cmd_setin_ptr[ADDR_WIDTH-1:0];
     if (cmd_setout_req)
-      setup_out_ptr[setup_buf_sel][ADDR_WIDTH-1:0] <=
-        cmd_setout_ptr[ADDR_WIDTH-1:0];
-
+      cfg_out_ptr_q[cfg_write_sel_q] <= cmd_setout_ptr[ADDR_WIDTH-1:0];
     if (cmd_setpsum_req)
-      setup_psum_ptr[setup_buf_sel][ADDR_WIDTH-1:0] <=
-        cmd_setpsum_ptr[ADDR_WIDTH-1:0];
+      cfg_psum_ptr_q[cfg_write_sel_q] <= cmd_setpsum_ptr[ADDR_WIDTH-1:0];
+    if (cmd_setn_req)
+      cfg_run_count_q[cfg_write_sel_q] <= cmd_setn_value[VECTOR_COUNT_WIDTH-1:0];
+    if (wld_cmd_pending_launch) begin
+      wld_cmd_pending_q <= wld_cmd_pending_next_q;
+      wld_cmd_pending_transpose_q <= wld_cmd_pending_next_transpose_q;
+      wld_cmd_pending_wtype_q <= wld_cmd_pending_next_wtype_q;
+      wld_cmd_pending_ptr_q <= wld_cmd_pending_next_ptr_q[ADDR_WIDTH-1:0];
+      wld_cmd_pending_next_q <= 1'b0;
+      start_pending_wld_pending_q <= 1'b0;
+    end
+
+    if (wld_cmd_accept && !wld_cmd_immediate_launch) begin
+      if (wld_cmd_pending_q && !wld_cmd_pending_launch) begin
+        wld_cmd_pending_next_q <= 1'b1;
+        wld_cmd_pending_next_transpose_q <= cmd_wld_trans_req;
+        wld_cmd_pending_next_wtype_q <=
+            load_wtype;
+        wld_cmd_pending_next_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
+      end else if (wld_cmd_pending_q && wld_cmd_pending_launch
+                   && wld_cmd_pending_next_q) begin
+        wld_cmd_pending_next_q <= 1'b1;
+        wld_cmd_pending_next_transpose_q <= cmd_wld_trans_req;
+        wld_cmd_pending_next_wtype_q <=
+            load_wtype;
+        wld_cmd_pending_next_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
+      end else begin
+        wld_cmd_pending_q <= 1'b1;
+        wld_cmd_pending_transpose_q <= cmd_wld_trans_req;
+        wld_cmd_pending_wtype_q <=
+            load_wtype;
+        wld_cmd_pending_ptr_q <= cmd_wld_ptr[ADDR_WIDTH-1:0];
+      end
+    end
+
+    if (wld_cmd_launch) begin
+      weight_loaded_q <= 1'b0;
+      wld_active_q <= 1'b1;
+      wld_active_wtype_q <= wld_cmd_launch_wtype;
+      wld_base_q <= wld_cmd_launch_ptr[ADDR_WIDTH-1:0];
+      wld_issue_idx_q <= 3'b0;
+      wld_read_count_q <= 4'b0;
+    end
+
+    if (wld_read_fire) begin
+      wld_issue_idx_q <= wld_issue_idx_q + 3'd1;
+      wld_read_count_q <= wld_read_count_q + 4'd1;
+    end
+
+    if (wld_fill_done) begin
+      weight_loaded_q <= 1'b1;
+      wld_active_q <= 1'b0;
+    end
+
+    if (wld_reuse_accept)
+      // The descriptor bit carried by the next start is the slot snapshot.
+      // No weight-fill request is generated and the active selector stays put.
+      weight_reuse_token_q <= 1'b1;
+
+    if (queued_weight_preactivate)
+      queued_start_preactivated_q <= 1'b1;
+
+    if (wld_replace_preactivate)
+      weight_loaded_q <= 1'b0;
+
+    if (start_queue_launch) begin
+      queued_start_valid_q <= 1'b0;
+      queued_start_preactivated_q <= 1'b0;
+    end
+
+    if (start_pending_direct_launch || start_pending_queue_launch) begin
+      start_pending_q <= 1'b0;
+      start_pending_wld_pending_q <= 1'b0;
+    end
+
+    if (start_queue_accept || start_pending_queue_launch) begin
+      queued_start_valid_q <= 1'b1;
+      queued_start_preactivated_q <= 1'b0;
+      queued_in_q <= start_pending_queue_launch
+                   ? start_pending_in_q[ADDR_WIDTH-1:0]
+                   : start_data_in[ADDR_WIDTH-1:0];
+      queued_out_q <= start_pending_queue_launch
+                    ? start_pending_out_q[ADDR_WIDTH-1:0]
+                    : start_data_out[ADDR_WIDTH-1:0];
+      queued_psum_q <= start_pending_queue_launch
+                     ? start_pending_psum_q[ADDR_WIDTH-1:0]
+                     : start_data_psum[ADDR_WIDTH-1:0];
+      queued_count_q <= start_pending_queue_launch
+                      ? start_pending_count_q[VECTOR_COUNT_WIDTH-1:0]
+                      : start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
+      queued_start_dtype_q <= start_pending_queue_launch
+                           ? start_pending_dtype_q : cfg_dtype_q[cfg_write_sel_q];
+      queued_start_mode_q <= start_pending_queue_launch
+                           ? start_pending_mode_q[7:0]
+                           : cmd_start_mode[7:0];
+      queued_start_reuse_weight_q <= start_pending_queue_launch
+                                   ? start_pending_reuse_weight_q
+                                   : weight_reuse_token_q;
+      queued_start_scale_sel_q <= start_pending_queue_launch
+                                ? start_pending_scale_sel_q
+                                : start_data_scale_sel;
+      queued_start_seq_id_q <= start_pending_queue_launch ?
+                               start_pending_seq_id_q : cmd_start_seq_id;
+      queued_start_epoch_q <= start_pending_queue_launch ?
+                              start_pending_epoch_q : cmd_start_epoch;
+    end
+
+    if (start_wait_accept) begin
+      start_pending_q <= 1'b1;
+      start_pending_in_q <= start_data_in[ADDR_WIDTH-1:0];
+      start_pending_out_q <= start_data_out[ADDR_WIDTH-1:0];
+      start_pending_psum_q <= start_data_psum[ADDR_WIDTH-1:0];
+      start_pending_count_q <= start_data_run_count[VECTOR_COUNT_WIDTH-1:0];
+      start_pending_wld_pending_q <= wld_cmd_pending_q
+                                  && !wld_active_q
+                                  && !weight_loaded_q;
+      start_pending_mode_q <= cmd_start_mode[7:0];
+      start_pending_dtype_q <= cfg_dtype_q[cfg_write_sel_q];
+      start_pending_reuse_weight_q <= weight_reuse_token_q;
+      start_pending_scale_sel_q <= start_data_scale_sel;
+      start_pending_seq_id_q <= cmd_start_seq_id;
+      start_pending_epoch_q <= cmd_start_epoch;
+    end
 
     if (start_accept) begin
-      setup_buf_sel <= setup_buf_next;
-      setup_dtype[setup_buf_next][3:0] <= plan_next_dtype[3:0];
-      setup_wtype[setup_buf_next][3:0] <= plan_next_wtype[3:0];
-      setup_in_ptr[setup_buf_next][ADDR_WIDTH-1:0] <=
-        plan_next_in_ptr[ADDR_WIDTH-1:0];
-      setup_out_ptr[setup_buf_next][ADDR_WIDTH-1:0] <=
-        plan_next_out_ptr[ADDR_WIDTH-1:0];
-      setup_psum_ptr[setup_buf_next][ADDR_WIDTH-1:0] <=
-        plan_next_psum_ptr[ADDR_WIDTH-1:0];
-      setup_run_count[setup_buf_next][RUN_COUNT_WIDTH-1:0] <=
-        plan_next_run_count[RUN_COUNT_WIDTH-1:0];
-      setup_run_count_valid[setup_buf_next] <= plan_next_run_count_valid;
-    end
-
-    if (start_queue_accept) begin
-      queued_start_valid <= 1'b1;
-      queued_start_tile <= cmd_start_tile_req;
-      queued_dtype[3:0] <= plan_next_dtype[3:0];
-      queued_wtype[3:0] <= plan_next_wtype[3:0];
-      queued_in_ptr[ADDR_WIDTH-1:0] <= plan_next_in_ptr[ADDR_WIDTH-1:0];
-      queued_out_ptr[ADDR_WIDTH-1:0] <= plan_next_out_ptr[ADDR_WIDTH-1:0];
-      queued_psum_ptr[ADDR_WIDTH-1:0] <= plan_next_psum_ptr[ADDR_WIDTH-1:0];
-      queued_run_count[RUN_COUNT_WIDTH-1:0] <= start_data_run_count[RUN_COUNT_WIDTH-1:0];
-      queued_weight_buf <= weight_loaded_buf_q;
-      queued_i_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      queued_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      weight_loaded_valid <= 1'b0;
-    end
-
-    if (plan_ptr_update) begin
-      plan_table_valid <= 1'b1;
-      for (plan_phase_i = 0; plan_phase_i < 8; plan_phase_i = plan_phase_i + 1) begin
-        plan_table_i_comp[plan_phase_i] <= 2'b0;
-        plan_table_o_comp[plan_phase_i] <=
-          tensor_plan_o_comp(plan_next_in_ptr[3:1],
-                             plan_next_out_ptr[3:1],
-                             plan_phase_i[2:0]);
-        plan_table_psum_comp[plan_phase_i] <=
-          tensor_plan_psum_comp(
-              plan_next_in_ptr[3:1],
-              plan_next_out_ptr[3:1],
-              plan_next_psum_ptr[3:1],
-              plan_phase_i[2:0],
-              tensor_plan_o_comp(plan_next_in_ptr[3:1],
-                                 plan_next_out_ptr[3:1],
-                                 plan_phase_i[2:0]));
-        plan_table_i_delay[plan_phase_i] <= TENSOR_I_BASE_DELAY[3:0];
-        plan_table_psum_delay[plan_phase_i] <=
-          TENSOR_PSUM_BASE_DELAY[3:0]
-        + {2'b0, tensor_plan_psum_comp(plan_next_in_ptr[3:1],
-                                       plan_next_out_ptr[3:1],
-                                       plan_next_psum_ptr[3:1],
-                                       plan_phase_i[2:0],
-                                       tensor_plan_o_comp(
-                                         plan_next_in_ptr[3:1],
-                                         plan_next_out_ptr[3:1],
-                                         plan_phase_i[2:0]))};
-        plan_table_o_delay[plan_phase_i] <=
-          TENSOR_O_BASE_DELAY[3:0]
-        + {2'b0, tensor_plan_o_comp(plan_next_in_ptr[3:1],
-                                    plan_next_out_ptr[3:1],
-                                    plan_phase_i[2:0])};
-        plan_table_i_channel[plan_phase_i] <=
-          tensor_plan_channel(plan_next_in_ptr[3:1],
-                              plan_phase_i[2:0],
-                              TENSOR_I_BASE_DELAY[3:0]);
-        plan_table_psum_channel[plan_phase_i] <=
-          tensor_plan_channel(
-              plan_next_psum_ptr[3:1],
-              plan_phase_i[2:0],
-              TENSOR_PSUM_BASE_DELAY[3:0]
-            + {2'b0, tensor_plan_psum_comp(plan_next_in_ptr[3:1],
-                                           plan_next_out_ptr[3:1],
-                                           plan_next_psum_ptr[3:1],
-                                           plan_phase_i[2:0],
-                                           tensor_plan_o_comp(
-                                             plan_next_in_ptr[3:1],
-                                             plan_next_out_ptr[3:1],
-                                             plan_phase_i[2:0]))});
-        plan_table_o_channel[plan_phase_i] <=
-          tensor_plan_channel(
-              plan_next_out_ptr[3:1],
-              plan_phase_i[2:0],
-              TENSOR_O_BASE_DELAY[3:0]
-            + {2'b0, tensor_plan_o_comp(plan_next_in_ptr[3:1],
-                                        plan_next_out_ptr[3:1],
-                                        plan_phase_i[2:0])});
-        plan_table_i_cycles[plan_phase_i] <=
-          plan_next_run_count[8:0];
-        plan_table_psum_cycles[plan_phase_i] <=
-          plan_next_run_count[8:0]
-        + {7'b0, tensor_plan_psum_comp(plan_next_in_ptr[3:1],
-                                       plan_next_out_ptr[3:1],
-                                       plan_next_psum_ptr[3:1],
-                                       plan_phase_i[2:0],
-                                       tensor_plan_o_comp(
-                                         plan_next_in_ptr[3:1],
-                                         plan_next_out_ptr[3:1],
-                                         plan_phase_i[2:0]))};
-        plan_table_o_cycles[plan_phase_i] <=
-          plan_next_run_count[8:0]
-        + {7'b0, tensor_plan_o_comp(plan_next_in_ptr[3:1],
-                                    plan_next_out_ptr[3:1],
-                                    plan_phase_i[2:0])};
+      cfg_dtype_q[!cfg_write_sel_q] <= cfg_dtype_q[cfg_write_sel_q];
+      cfg_wtype_q[!cfg_write_sel_q] <= cfg_wtype_q[cfg_write_sel_q];
+      cfg_in_ptr_q[!cfg_write_sel_q] <= cfg_in_ptr_q[cfg_write_sel_q];
+      cfg_out_ptr_q[!cfg_write_sel_q] <= cfg_out_ptr_q[cfg_write_sel_q];
+      cfg_psum_ptr_q[!cfg_write_sel_q] <= cfg_psum_ptr_q[cfg_write_sel_q];
+      cfg_run_count_q[!cfg_write_sel_q] <= cfg_run_count_q[cfg_write_sel_q];
+      cfg_write_sel_q <= !cfg_write_sel_q;
+      if (cmd_start_mode[0] && !cmd_start_mode[3] && !cmd_start_mode[4]
+          && scale_pending_valid_q) begin
+        scale_active_sel_q <= scale_pending_sel_q;
+        scale_active_valid_q <= 1'b1;
+        scale_pending_valid_q <= 1'b0;
       end
     end
 
-    if (start_launch) begin
-      dtype[3:0] <= start_queue_launch ? queued_dtype[3:0]
-                                       : plan_next_dtype[3:0];
-      wtype[3:0] <= start_queue_launch ? queued_wtype[3:0]
-                                       : plan_next_wtype[3:0];
-      active_in_ptr[ADDR_WIDTH-1:0] <= launch_in_ptr[ADDR_WIDTH-1:0];
-      active_out_ptr[ADDR_WIDTH-1:0] <= launch_out_ptr[ADDR_WIDTH-1:0];
-      active_psum_ptr[ADDR_WIDTH-1:0] <= launch_psum_ptr[ADDR_WIDTH-1:0];
-      run_count[RUN_COUNT_WIDTH-1:0] <= launch_run_count[RUN_COUNT_WIDTH-1:0];
-      run_count_valid <= 1'b1;
-      cycles_left[ADDR_WIDTH-1:0] <= start_cycles[ADDR_WIDTH-1:0];
-      step[STEP_WIDTH-1:0] <= {STEP_WIDTH{1'b0}};
-      data_run_remaining[RUN_COUNT_WIDTH-1:0] <= launch_run_count[RUN_COUNT_WIDTH-1:0];
-      data_vec_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      if (start_queue_launch) begin
-        stream_i_issue_index[RUN_COUNT_WIDTH-1:0] <= queued_i_issue_index[RUN_COUNT_WIDTH-1:0];
-        stream_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= queued_psum_issue_index[RUN_COUNT_WIDTH-1:0];
-      end else begin
-        stream_i_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-        stream_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      end
-      queued_i_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      queued_psum_issue_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      stream_compute_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      stream_out_write_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      stream_out_push_index[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-      if (!start_queue_launch) begin
-        stream_i_head <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-        stream_i_tail <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-        stream_i_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-        stream_i_inflight_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-        stream_psum_head <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-        stream_psum_tail <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-        stream_psum_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-        stream_psum_inflight_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-      end
-      if (!start_queue_launch) begin
-        stream_out_head <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-        stream_out_tail <= {STREAM_FIFO_INDEX_WIDTH{1'b0}};
-        stream_out_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-        stream_out_inflight_count <= {(STREAM_FIFO_INDEX_WIDTH+1){1'b0}};
-        stream_out_skid_valid <= 1'b0;
-        stream_out_skid_data[127:0] <= 128'b0;
-        stream_out_skid_addr[ADDR_WIDTH-1:0] <= {ADDR_WIDTH{1'b0}};
-      end
-      stream_compute_input_q[127:0] <= 128'b0;
-      stream_compute_psum_q[127:0] <= 128'b0;
-      busy <= 1'b1;
-      dtcm_state[3:0] <= DTCM_STREAM;
-      weight_active_buf_q <= launch_weight_buf;
-      weight_active_valid <= 1'b1;
-      weight_loaded_valid <= 1'b0;
-      if (start_queue_launch)
-        queued_start_valid <= 1'b0;
-      rsp_tag_hi[3:0] <= 4'b0;
-      rsp_tag_head[1:0] <= 2'b0;
-      rsp_tag_tail[1:0] <= 2'b0;
-      rsp_tag_count[2:0] <= 3'b0;
-      for (rsp_tag_i = 0; rsp_tag_i < 4; rsp_tag_i = rsp_tag_i + 1) begin
-        rsp_tag_role[rsp_tag_i] <= TENSOR_RSP_ROLE_NONE;
-      end
-      start_phase[2:0] <= start_phase_next[2:0];
-      iopsum_plan_valid <= 1'b1;
-      i_lease_delay[3:0] <= iopsum_union_lease_delay[3:0];
-      psum_lease_delay[3:0] <= iopsum_union_lease_delay[3:0];
-      o_lease_delay[3:0] <= iopsum_union_lease_delay[3:0];
-      i_lease_channel[2:0] <= iopsum_union_i_channel[2:0];
-      psum_lease_channel[2:0] <= iopsum_union_psum_channel[2:0];
-      o_lease_channel[2:0] <= iopsum_union_o_channel[2:0];
-      i_lease_cycles[8:0] <= iopsum_union_lease_cycles[8:0];
-      psum_lease_cycles[8:0] <= iopsum_union_lease_cycles[8:0];
-      o_lease_cycles[8:0] <= iopsum_union_lease_cycles[8:0];
-      i_comp_delay[1:0] <= 2'b0;
-      psum_comp_delay[1:0] <= 2'b0;
-      o_comp_delay[1:0] <= 2'b0;
-      tensor_io_lease_channel_mask_q[7:0] <= iopsum_union_channel_mask[7:0];
-      tensor_io_lease_cycles_q[8:0] <= iopsum_union_lease_cycles[8:0];
-      tensor_io_lease_delay_q[3:0] <= iopsum_union_lease_delay[3:0];
-      tensor_io_lease_valid_q <= 1'b1;
-      tensor_io_lease1_channel_mask_q[7:0] <= 8'b0;
-      tensor_io_lease1_cycles_q[8:0] <= 9'b0;
-      tensor_io_lease1_delay_q[3:0] <= 4'b0;
-      tensor_io_lease1_valid_q <= 1'b0;
-      tensor_io_lease2_channel_mask_q[7:0] <= 8'b0;
-      tensor_io_lease2_cycles_q[8:0] <= 9'b0;
-      tensor_io_lease2_delay_q[3:0] <= 4'b0;
-      tensor_io_lease2_valid_q <= 1'b0;
-    end else if (step_fire) begin
-      if (cycles_left[ADDR_WIDTH-1:0] <= {{ADDR_WIDTH-1{1'b0}}, 1'b1})
-        busy <= 1'b0;
-      else
-        cycles_left[ADDR_WIDTH-1:0] <= cycles_left[ADDR_WIDTH-1:0]
-                                     - {{ADDR_WIDTH-1{1'b0}}, 1'b1};
-      step[STEP_WIDTH-1:0] <= step[STEP_WIDTH-1:0]
-                            + {{STEP_WIDTH-1{1'b0}}, 1'b1};
+    if (engine_start && engine_start_mode[3] && !engine_start_mode[4]
+        && direct_sld_setup_valid_q) begin
+      direct_sld_active_q <= (engine_start_count != 0);
+      direct_sld_target_q <= engine_start_count;
+      direct_sld_issued_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+      direct_sld_received_q <= {VECTOR_COUNT_WIDTH{1'b0}};
+      if (engine_start_count == 0)
+        direct_sld_setup_valid_q <= 1'b0;
     end
 
-    case (dtcm_state[3:0])
-      DTCM_IDLE: begin
-        if (start_launch)
-          dtcm_state[3:0] <= DTCM_STREAM;
-      end
-      DTCM_RD_IN_LO: begin
-        if (tensor_read_accept) begin
-          rsp_tag_role[rsp_tag_tail] <= TENSOR_RSP_ROLE_I;
-          rsp_tag_hi[rsp_tag_tail] <= 1'b0;
-          dtcm_state[3:0] <= DTCM_RD_IN_HI;
-        end
-      end
-      DTCM_WAIT_IN_LO: begin
-        if (tensor_rvalid) begin
-          dtcm_state[3:0] <= DTCM_RD_IN_HI;
-        end
-      end
-      DTCM_RD_IN_HI: begin
-        if (iopsum_input_ready) begin
-          dtcm_state[3:0] <= DTCM_RD_PSUM_LO;
-        end else if (tensor_read_accept) begin
-          rsp_tag_role[rsp_tag_tail] <= TENSOR_RSP_ROLE_I;
-          rsp_tag_hi[rsp_tag_tail] <= 1'b1;
-          dtcm_state[3:0] <= DTCM_RD_PSUM_LO;
-        end
-      end
-      DTCM_WAIT_IN_HI: begin
-        if (tensor_rvalid) begin
-          dtcm_state[3:0] <= DTCM_RD_PSUM_LO;
-        end
-      end
-      DTCM_RD_PSUM_LO: begin
-        if (tensor_lane1_read_accept) begin
-          dtcm_state[3:0] <= DTCM_WAIT_PSUM_LO;
-        end
-      end
-      DTCM_WAIT_PSUM_LO: begin
-        if (iopsum_psum_ready) begin
-          dtcm_state[3:0] <= DTCM_COMPUTE;
-        end
-      end
-      DTCM_RD_PSUM_HI: begin
-        if (iopsum_psum_ready) begin
-          dtcm_state[3:0] <= DTCM_COMPUTE;
-        end else if (tensor_lane1_read_accept) begin
-          dtcm_state[3:0] <= DTCM_COMPUTE;
-        end
-      end
-      DTCM_WAIT_PSUM_HI: begin
-        if (tensor_rvalid) begin
-          dtcm_state[3:0] <= DTCM_COMPUTE;
-        end
-      end
-      DTCM_COMPUTE: begin
-        if (iopsum_input_ready && iopsum_psum_ready) begin
-          compute_valid_q <= 1'b1;
-          dtcm_state[3:0] <= DTCM_WAIT_COMPUTE;
-        end
-      end
-      DTCM_WAIT_COMPUTE: begin
-        if (iopsum_output_ready) begin
-          dtcm_state[3:0] <= DTCM_WR_OUT_LO;
-        end
-      end
-      DTCM_WR_OUT_LO: begin
-        if (tensor_write_accept) begin
-          if (data_run_remaining[RUN_COUNT_WIDTH-1:0] <= {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1}) begin
-            data_run_remaining[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-            dtcm_state[3:0] <= DTCM_IDLE;
-          end else begin
-            data_run_remaining[RUN_COUNT_WIDTH-1:0] <= data_run_remaining[RUN_COUNT_WIDTH-1:0] - {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-            data_vec_index[RUN_COUNT_WIDTH-1:0] <= data_vec_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-            dtcm_state[3:0] <= DTCM_RD_IN_LO;
-          end
-        end
-      end
-      DTCM_WR_OUT_HI: begin
-        if (tensor_write_accept) begin
-          if (data_run_remaining[RUN_COUNT_WIDTH-1:0] <= {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1}) begin
-            data_run_remaining[RUN_COUNT_WIDTH-1:0] <= {RUN_COUNT_WIDTH{1'b0}};
-            dtcm_state[3:0] <= DTCM_IDLE;
-          end else begin
-            data_run_remaining[RUN_COUNT_WIDTH-1:0] <= data_run_remaining[RUN_COUNT_WIDTH-1:0] - {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-            data_vec_index[RUN_COUNT_WIDTH-1:0] <= data_vec_index[RUN_COUNT_WIDTH-1:0] + {{RUN_COUNT_WIDTH-1{1'b0}}, 1'b1};
-            dtcm_state[3:0] <= DTCM_RD_IN_LO;
-          end
-        end
-      end
-      DTCM_STREAM: begin
-        if (stream_compute_fire)
-          compute_valid_q <= 1'b1;
-      end
-      default: begin
-        dtcm_state[3:0] <= DTCM_IDLE;
-      end
-    endcase
+    if (start_consume_weight) begin
+      weight_loaded_q <= 1'b0;
+    end
 
-    if (tensor_wld_read_accept) begin
-      if (wld_read_idx[2:0] == (wld_active_bf16 ? 3'd7 : 3'd3))
-        wld_fetch_wait <= 1'b1;
-      else
-        wld_read_idx[2:0] <= wld_read_idx[2:0] + 3'd1;
+    if (start_uses_reuse_weight)
+      weight_reuse_token_q <= 1'b0;
+
+    if (unused_cmd_bits) begin
     end
   end
 end
+
+`ifndef SYNTHESIS
+reg prefetch_previous_valid, prefetch_previous_start;
+reg [2*ADDR_WIDTH+VECTOR_COUNT_WIDTH+8-1:0] prefetch_previous_descriptor;
+always @(posedge clk or negedge cpurst_b) begin
+  if (!cpurst_b) begin
+    prefetch_previous_valid <= 1'b0;
+    prefetch_previous_start <= 1'b0;
+    prefetch_previous_descriptor <= 0;
+  end else begin
+    if (WIDE_H4 && prefetch_previous_valid && !prefetch_previous_start &&
+        (!input_prefetch_valid || prefetch_previous_descriptor !=
+         {input_prefetch_base,input_prefetch_psum,input_prefetch_mode,input_prefetch_count}))
+      $fatal(1,"younger I descriptor changed before engine START");
+    prefetch_previous_valid <= input_prefetch_valid;
+    prefetch_previous_start <= engine_start;
+    prefetch_previous_descriptor <=
+        {input_prefetch_base,input_prefetch_psum,input_prefetch_mode,input_prefetch_count};
+  end
+end
+`endif
 
 endmodule
