@@ -1380,6 +1380,7 @@ module edge_core_base #(
   );
 
   edge_ifu_icache #(
+    .FETCH_WIDTH(128), // Legacy frontend consumes a complete line.
     .PC_WIDTH(PC_WIDTH),
     .ICACHE_BYTES(ICACHE_BYTES)
   ) ifu_icache (
