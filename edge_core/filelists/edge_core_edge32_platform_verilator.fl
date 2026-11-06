@@ -7,9 +7,9 @@ edge_core/rtl/edge_core_read_axi_mux.v
 edge_core/rtl/edge_core_write_axi_mux.v
 edge_core/rtl/edge_core_strided_dma_ctrl.v
 edge_core/rtl/edge_accel_data_ctrl.v
-../edge-32/rtl/cache/edge_ifu_icache/edge_ifu_icache.v
-../edge-32/rtl/cache/edge_ifu_icache/rtl/edge_ifu_icache_data_array.v
-../edge-32/rtl/cache/edge_ifu_icache/rtl/edge_ifu_icache_tag_array.v
+../edge-32/rtl/cache/icache/edge_ifu_icache.v
+../edge-32/rtl/cache/icache/edge_ifu_icache_data_array.v
+../edge-32/rtl/cache/icache/edge_ifu_icache_tag_array.v
 ../edge-32/rtl/fpu/edge_fpu_misc/edge_fpu_misc.v
 ../edge-32/rtl/fpu/edge_fpu_cvt/edge_fpu_cvt.v
 ../edge-32/rtl/fpu/edge_fpu_complete_queue/edge_fpu_complete_queue.v
@@ -23,18 +23,18 @@ edge_core/rtl/edge_accel_data_ctrl.v
 ../edge-32/rtl/fpu/edge_fpu_fmac/rtl/edge_fpu_fmac_fp32_unpack.v
 ../edge-32/rtl/fpu/edge_fpu_fmac/rtl/edge_fpu_fmac_fp32_fused_round_pack.v
 ../edge-32/rtl/fpu/edge_fpu_fmac/edge_fpu_fmac.v
-../edge-32/rtl/edge_instruction_classifier.v
-../edge-32/rtl/edge_accel_pipe.v
+../edge-32/rtl/id/edge_instruction_classifier.v
+../edge-32/rtl/ex/asic_control/edge_accel_pipe.v
 -F edge_tensor_unit/filelists/edge_tensor.fl
 -F edge_dtcm_subsys/filelists/edge_accel.fl
-../edge-32/rtl/cache/edge_dcache/edge_dcache.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_mshr.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_hit_queue.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_lookup_buffer.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_registered_lookup_buffer.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_lookup_scheduler.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_pair_predictor.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_banked_data_array.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_tag_array.v
-../edge-32/rtl/cache/edge_dcache/rtl/edge_dcache_dirty_array.v
+../edge-32/rtl/cache/dcache/edge_dcache.v
+../edge-32/rtl/cache/dcache/edge_dcache_mshr.v
+../edge-32/rtl/cache/dcache/edge_dcache_hit_queue.v
+../edge-32/rtl/cache/dcache/edge_dcache_lookup_buffer.v
+../edge-32/rtl/cache/dcache/edge_dcache_registered_lookup_buffer.v
+../edge-32/rtl/cache/dcache/edge_dcache_lookup_scheduler.v
+../edge-32/rtl/cache/dcache/edge_dcache_pair_predictor.v
+../edge-32/rtl/cache/dcache/edge_dcache_banked_data_array.v
+../edge-32/rtl/cache/dcache/edge_dcache_tag_array.v
+../edge-32/rtl/cache/dcache/edge_dcache_dirty_array.v
 -F edge_dtcm_subsys/filelists/edge_dtcm.fl
